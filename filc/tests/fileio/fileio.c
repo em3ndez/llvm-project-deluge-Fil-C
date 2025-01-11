@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <sys/epoll.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 
 struct foo {
     char* a;
@@ -61,28 +62,28 @@ int main(int argc, char** argv)
     ZASSERT(!result);
     ZASSERT(!close(fd));
 
-    struct flock flock;
-    memset(&flock, 0, sizeof(flock));
-    flock.l_type = F_RDLCK;
-    int res = fcntl(fd2, F_GETLK, &flock);
+    struct flock file_lock;
+    memset(&file_lock, 0, sizeof(flock));
+    file_lock.l_type = F_RDLCK;
+    int res = fcntl(fd2, F_GETLK, &file_lock);
     ZASSERT(!res);
-    ZASSERT(flock.l_type == F_UNLCK);
-    ZASSERT(!flock.l_whence);
-    ZASSERT(!flock.l_start);
-    ZASSERT(!flock.l_len);
-    ZASSERT(!flock.l_pid);
+    ZASSERT(file_lock.l_type == F_UNLCK);
+    ZASSERT(!file_lock.l_whence);
+    ZASSERT(!file_lock.l_start);
+    ZASSERT(!file_lock.l_len);
+    ZASSERT(!file_lock.l_pid);
     ZASSERT(!close(fd2));
     
     fd = open("filc/tests/fileio/test.txt", O_RDONLY);
     ZASSERT(fd > 2);
-    flock.l_type = F_WRLCK;
-    res = fcntl(fd, F_GETLK, &flock);
+    file_lock.l_type = F_WRLCK;
+    res = fcntl(fd, F_GETLK, &file_lock);
     ZASSERT(!res);
-    ZASSERT(flock.l_type == F_UNLCK);
-    ZASSERT(!flock.l_whence);
-    ZASSERT(!flock.l_start);
-    ZASSERT(!flock.l_len);
-    ZASSERT(!flock.l_pid);
+    ZASSERT(file_lock.l_type == F_UNLCK);
+    ZASSERT(!file_lock.l_whence);
+    ZASSERT(!file_lock.l_start);
+    ZASSERT(!file_lock.l_len);
+    ZASSERT(!file_lock.l_pid);
 
     res = fcntl(fd, F_GETFD);
     ZASSERT(!res);
@@ -92,6 +93,11 @@ int main(int argc, char** argv)
 
     res = fcntl(fd, F_GETFD);
     ZASSERT(res == FD_CLOEXEC);
+
+    ZASSERT(!flock(fd, LOCK_EX));
+    ZASSERT(!flock(fd, LOCK_UN));
+    ZASSERT(!flock(fd, LOCK_SH));
+    ZASSERT(!flock(fd, LOCK_UN));
 
     ZASSERT(!isatty(fd));
     ZASSERT(!close(fd));

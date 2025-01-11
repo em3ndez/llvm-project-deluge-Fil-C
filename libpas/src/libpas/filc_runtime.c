@@ -837,6 +837,7 @@ static void handle_deferred_signals(filc_thread* my_thread)
     
     PAS_ASSERT(my_thread == filc_get_my_thread());
     PAS_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
+    PAS_ASSERT(!my_thread->special_signal_deferral_depth);
 
     for (;;) {
         uint8_t old_state = my_thread->state;
@@ -942,6 +943,7 @@ void filc_increase_special_signal_deferral_depth(filc_thread* my_thread)
     PAS_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
     my_thread->special_signal_deferral_depth++;
     PAS_ASSERT(my_thread->special_signal_deferral_depth);
+    pas_compiler_fence();
     for (;;) {
         uint8_t old_state = my_thread->state;
         PAS_ASSERT(old_state & FILC_THREAD_STATE_ENTERED);
@@ -957,7 +959,9 @@ void filc_increase_special_signal_deferral_depth(filc_thread* my_thread)
 
 static void handle_special_signal_deferral_depth_decrease(filc_thread* my_thread)
 {
+    pas_compiler_fence();
     if (!my_thread->special_signal_deferral_depth && my_thread->have_deferred_signal_special) {
+        my_thread->have_deferred_signal_special = false;
         for (;;) {
             uint8_t old_state = my_thread->state;
             PAS_ASSERT(old_state & FILC_THREAD_STATE_ENTERED);
@@ -1348,6 +1352,7 @@ static void signal_pizlonator(int signum)
             if (pas_compare_and_swap_uint8_weak(&thread->state, old_state, new_state))
                 break;
         }
+        PAS_ASSERT(!thread->special_signal_deferral_depth);
         return;
     }
 
@@ -4967,10 +4972,8 @@ static void longjmp_impl(filc_thread* my_thread, filc_ptr jmp_buf_ptr, int value
 
     PAS_ASSERT(my_thread->special_signal_deferral_depth
                >= jmp_buf->saved_special_signal_deferral_depth);
-    if (my_thread->special_signal_deferral_depth > jmp_buf->saved_special_signal_deferral_depth) {
-        my_thread->special_signal_deferral_depth = jmp_buf->saved_special_signal_deferral_depth;
-        handle_special_signal_deferral_depth_decrease(my_thread);
-    }
+    my_thread->special_signal_deferral_depth = jmp_buf->saved_special_signal_deferral_depth;
+    handle_special_signal_deferral_depth_decrease(my_thread);
 
     if (jmp_buf->did_save_sigmask)
         PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &jmp_buf->sigmask, NULL));
