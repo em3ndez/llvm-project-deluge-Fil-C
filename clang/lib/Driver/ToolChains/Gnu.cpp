@@ -643,7 +643,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       if (!Args.hasArg(options::OPT_nodefaultlibs))
         CmdArgs.push_back("-lc");
       CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("libgcc.a")));
-      CmdArgs.push_back("-lyolomusl");
+      CmdArgs.push_back("-lyoloc");
       CmdArgs.push_back("-lpizlo");
       if (ToolChain.ShouldLinkCXXStdlib(Args))
         ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);

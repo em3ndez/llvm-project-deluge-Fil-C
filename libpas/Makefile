@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,10 +28,10 @@ all: \
 PASCC = clang -march=x86-64-v2 -fPIC -pthread -nostdinc -isystem ../pizfix/yolo/include
 PASASM = clang -march=x86-64-v2 -fPIC
 FILCC = ../build/bin/clang
-SHLD = clang -Wl,-dynamic-linker,$(PWD)/../pizfix/yolo/lib/ld-musl-x86_64.so.1 \
+SHLD = clang -Wl,-dynamic-linker,$(PWD)/../pizfix/yolo/lib/ld-yolo-x86_64.so.1 \
 	-nostdlib -shared ../pizfix/yolo/lib/crti.o \
 	`./find_system_library_file.rb crtbeginS.o` -L../pizfix/yolo/lib
-SHLDPOST = `./find_system_library_file.rb libgcc.a` -lyolomusl \
+SHLDPOST = `./find_system_library_file.rb libgcc.a` -lyoloc \
 	`./find_system_library_file.rb crtendS.o` ../pizfix/yolo/lib/crtn.o
 
 include common.mk

@@ -429,7 +429,7 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
   if ((true)) {
     SmallString<128> P(getDriver().InstalledDir);
     llvm::sys::path::append(P, "..", "..", "pizfix", "yolo");
-    llvm::sys::path::append(P, "lib", "ld-musl-x86_64.so.1");
+    llvm::sys::path::append(P, "lib", "ld-yolo-x86_64.so.1");
     return std::string(P);
   }
 
