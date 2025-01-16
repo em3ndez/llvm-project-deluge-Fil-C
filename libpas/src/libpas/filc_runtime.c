@@ -1941,6 +1941,7 @@ char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread, filc_object* objec
     }
     PAS_TESTING_ASSERT(object);
     PAS_TESTING_ASSERT(object != &filc_free_singleton);
+    PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
     size_t size = filc_object_size_not_null(object);
     /* When freeing an object, there's a window of time when we might see the size being zero, but
        the free bit isn't set yet. There's no universe where we'd want to ensure aux for an object
@@ -5728,8 +5729,10 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
             thread->prev_thread = NULL;
             thread->next_thread = NULL;
             if (thread != my_thread) {
-                if (!thread->is_stopping)
+                if (!thread->is_stopping) {
+                    fugc_donate(&thread->mark_stack);
                     stop_thread_allocators(thread);
+                }
 
                 /* We can inspect the thread's TLC without any locks, since the thread is dead and
                    stopped. Also, start_thread (and other parts of the runtime) ensure that we only
