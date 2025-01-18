@@ -29,7 +29,7 @@ PASCC = clang -march=x86-64-v2 -fPIC -pthread -nostdinc -isystem ../pizfix/yolo/
 	-isystem `./find_clang_include_dir.rb`
 PASASM = clang -march=x86-64-v2 -fPIC
 FILCC = ../build/bin/clang
-SHLD = clang -Wl,-dynamic-linker,$(PWD)/../pizfix/yolo/lib/ld-yolo-x86_64.so.1 \
+SHLD = clang -Wl,-dynamic-linker,$(PWD)/../pizfix/yolo/lib/ld-yolo-x86_64.so \
 	-nostdlib -shared ../pizfix/yolo/lib/crti.o \
 	`./find_system_library_file.rb crtbeginS.o` -L../pizfix/yolo/lib
 SHLDPOST = `./find_system_library_file.rb libgcc.a` -lyoloc \
