@@ -116,7 +116,7 @@ void pas_lock_lock_slow(pas_lock* lock)
             PAS_ASSERT(old_state == PAS_LOCK_HELD_WAITING);
         locked_state = PAS_LOCK_HELD_WAITING;
 
-        futex_wait((volatile int*)&lock->lock, PAS_LOCK_HELD_WAITING, 0);
+        yolo_futex_wait((volatile int*)&lock->lock, PAS_LOCK_HELD_WAITING, 0);
     }
 }
 
@@ -132,7 +132,7 @@ void pas_lock_unlock_slow(pas_lock* lock)
 
         if (pas_compare_and_swap_uint32_strong(&lock->lock, PAS_LOCK_HELD_WAITING, PAS_LOCK_NOT_HELD)
             == PAS_LOCK_HELD_WAITING) {
-            futex_wake((volatile int*)&lock->lock, 1, 0);
+            yolo_futex_wake((volatile int*)&lock->lock, 1, 0);
             return;
         }
     }

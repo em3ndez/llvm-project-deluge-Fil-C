@@ -7632,7 +7632,7 @@ int filc_native_zsys_sendfile(filc_thread* my_thread, int out_fd, int in_fd, fil
 void filc_native_zsys_futex_wake(filc_thread* my_thread, filc_ptr addr_ptr, int cnt, int priv)
 {
     filc_exit(my_thread);
-    futex_wake((volatile int*)filc_ptr_ptr(addr_ptr), cnt, priv);
+    yolo_futex_wake((volatile int*)filc_ptr_ptr(addr_ptr), cnt, priv);
     filc_enter(my_thread);
 }
 
@@ -7640,7 +7640,7 @@ void filc_native_zsys_futex_wait(filc_thread* my_thread, filc_ptr addr_ptr, int 
 {
     filc_check_read(addr_ptr, sizeof(int));
     filc_exit(my_thread);
-    futex_wait((volatile int*)filc_ptr_ptr(addr_ptr), val, priv);
+    yolo_futex_wait((volatile int*)filc_ptr_ptr(addr_ptr), val, priv);
     filc_enter(my_thread);
 }
 
@@ -7651,8 +7651,8 @@ int filc_native_zsys_futex_timedwait(filc_thread* my_thread, filc_ptr addr_ptr, 
     if (filc_ptr_ptr(timeout_ptr))
         filc_check_read(timeout_ptr, sizeof(struct timespec));
     filc_exit(my_thread);
-    int result = futex_timedwait((volatile int*)filc_ptr_ptr(addr_ptr), val, clock_id,
-                                 (const struct timespec*)filc_ptr_ptr(timeout_ptr), priv);
+    int result = yolo_futex_timedwait((volatile int*)filc_ptr_ptr(addr_ptr), val, clock_id,
+                                      (const struct timespec*)filc_ptr_ptr(timeout_ptr), priv);
     filc_enter(my_thread);
     return result;
 }
@@ -7661,7 +7661,7 @@ int filc_native_zsys_futex_unlock_pi(filc_thread* my_thread, filc_ptr addr_ptr, 
 {
     filc_check_write(addr_ptr, sizeof(int));
     filc_exit(my_thread);
-    int result = futex_unlock_pi((volatile int*)filc_ptr_ptr(addr_ptr), priv);
+    int result = yolo_futex_unlock_pi((volatile int*)filc_ptr_ptr(addr_ptr), priv);
     filc_enter(my_thread);
     return result;
 }
@@ -7673,8 +7673,8 @@ int filc_native_zsys_futex_lock_pi(filc_thread* my_thread, filc_ptr addr_ptr, in
     if (filc_ptr_ptr(timeout_ptr))
         filc_check_read(timeout_ptr, sizeof(struct timespec));
     filc_exit(my_thread);
-    int result = futex_lock_pi((volatile int*)filc_ptr_ptr(addr_ptr), priv,
-                               (const struct timespec*)filc_ptr_ptr(timeout_ptr));
+    int result = yolo_futex_lock_pi((volatile int*)filc_ptr_ptr(addr_ptr), priv,
+                                    (const struct timespec*)filc_ptr_ptr(timeout_ptr));
     filc_enter(my_thread);
     return result;
 }
@@ -7683,8 +7683,8 @@ void filc_native_zsys_futex_requeue(filc_thread* my_thread, filc_ptr addr_ptr, i
                                     int wake_count, int requeue_count, filc_ptr addr2_ptr)
 {
     filc_exit(my_thread);
-    futex_requeue((volatile int*)filc_ptr_ptr(addr_ptr), priv, wake_count, requeue_count,
-                  (volatile int*)filc_ptr_ptr(addr2_ptr));
+    yolo_futex_requeue((volatile int*)filc_ptr_ptr(addr_ptr), priv, wake_count, requeue_count,
+                       (volatile int*)filc_ptr_ptr(addr2_ptr));
     filc_enter(my_thread);
 }
 
