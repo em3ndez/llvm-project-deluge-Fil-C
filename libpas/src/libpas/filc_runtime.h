@@ -566,7 +566,14 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
        This isn't an object array, since this might hold auxes. */
     filc_ptr_array allocation_roots;
 
+    /* Each thread has a mark stack used for GC. It's primarily used by the store barrier. GC soft
+       handshakes (and other events) result in the thread donating all of the contents of its mark
+       stack back to the GC's global mark stack. */
     filc_object_array mark_stack;
+
+    /* Thread locals (as in __thread, not pthread_key) are lowered to a thread local that points to
+       an object that holds the actual value. Threads track all of those thread local objects in this
+       array, so that they can mark them as roots. */
     filc_object_array thread_locals;
 
     pas_system_mutex lock; /* We grab all of these during fork(). */

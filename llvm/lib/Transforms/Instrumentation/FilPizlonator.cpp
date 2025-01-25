@@ -7271,7 +7271,8 @@ public:
       NewF = nullptr;
     }
     for (GlobalAlias* G : Aliases) {
-      assert(!G->isThreadLocal());
+      if (G->isThreadLocal())
+        continue;
       Constant* C = G->getAliasee();
       Function* NewF = GlobalToGetter[G];
       Function* TargetF = GlobalToGetter[cast<GlobalValue>(C)];
