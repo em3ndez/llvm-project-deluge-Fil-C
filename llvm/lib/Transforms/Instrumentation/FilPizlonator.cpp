@@ -380,6 +380,11 @@ public:
 
   bool isAtEnd() const { return Idx >= MA.size(); }
 
+  void error() {
+    errs() << "Error parsing module asm: " << MA;
+    llvm_unreachable("Error parsing module asm");
+  }
+
   MAToken getNext() {
     skipWhitespace();
     if (isAtEnd())
@@ -409,7 +414,7 @@ public:
     MAToken Tok = getNext();
     if (Tok.Kind != Kind) {
       errs() << "Expected " << MATokenKindString(Kind) << " but got: " << Tok.Str << "\n";
-      llvm_unreachable("Error parsing module asm");
+      error();
     }
     return Tok;
   }
@@ -5927,7 +5932,7 @@ class Pizlonator {
         break;
       if (Tok.Kind == MATokenKind::Error) {
         errs() << "Cannot parse module asm: " << Tok.Str << "\n";
-        llvm_unreachable("Error parsing module asm");
+        MAT.error();
       }
       if (Tok.Kind == MATokenKind::EndLine)
         continue;
@@ -5939,7 +5944,7 @@ class Pizlonator {
           GlobalValue* GV = getGlobal(Name);
           if (!GV) {
             errs() << "Cannot do " << Tok.Str << " to " << Name << " because it doesn't exist.\n";
-            llvm_unreachable("Error interpreting module asm");
+            MAT.error();
           }
           if (Tok.Str == ".filc_weak")
             GV->setLinkage(GlobalValue::WeakAnyLinkage);
@@ -5999,9 +6004,9 @@ class Pizlonator {
           MAT.getNextSpecific(MATokenKind::EndLine);
           GlobalValue* GV = getGlobal(OldName);
           if (!GV) {
-            errs() << "Cannot rename " << OldName << " to " << NewName << " because " << OldName
-                   << "doesn't exist.\n";
-            llvm_unreachable("Error parsing module asm");
+            // If the source symbol doesn't exist, then it's likely because it's been killed by some
+            // kind of tree shake. Ignore it!
+            continue;
           }
           GV->setName(NewName);
           if (GV->getName() != NewName) {
@@ -6009,7 +6014,7 @@ class Pizlonator {
             if (getGlobal(NewName))
               errs() << " (because " << NewName << " is taken)";
             errs() << "\n";
-            llvm_unreachable("Error parsing module asm");
+            MAT.error();
           }
           continue;
         }
@@ -6023,10 +6028,10 @@ class Pizlonator {
           continue;
         }
         errs() << "Invalid directive: " << Tok.Str << "\n";
-        llvm_unreachable("Error parsing module asm");
+        MAT.error();
       }
       errs() << "Unexpected token: " << Tok.Str << "\n";
-      llvm_unreachable("Error parsing module asm");
+      MAT.error();
     }
 
     M.setModuleInlineAsm(NewModuleAsm.str());
