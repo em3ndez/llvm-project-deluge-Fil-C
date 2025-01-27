@@ -5919,6 +5919,8 @@ class Pizlonator {
   void compileModuleAsm() {
     MATokenizer MAT(M.getModuleInlineAsm());
 
+    std::ostringstream NewModuleAsm;
+
     for (;;) {
       MAToken Tok = MAT.getNext();
       if (Tok.Kind == MATokenKind::None)
@@ -6011,6 +6013,15 @@ class Pizlonator {
           }
           continue;
         }
+        if (Tok.Str == ".filc_symver") {
+          std::string LocalName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
+          MAT.getNextSpecific(MATokenKind::Comma);
+          std::string VersionedName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
+          MAT.getNextSpecific(MATokenKind::EndLine);
+          NewModuleAsm << ".symver pizlonated_" << LocalName << ", pizlonated_" << VersionedName
+                       << "\n";
+          continue;
+        }
         errs() << "Invalid directive: " << Tok.Str << "\n";
         llvm_unreachable("Error parsing module asm");
       }
@@ -6018,7 +6029,7 @@ class Pizlonator {
       llvm_unreachable("Error parsing module asm");
     }
 
-    M.setModuleInlineAsm("");
+    M.setModuleInlineAsm(NewModuleAsm.str());
   }
 
   void removeIrrelevantIntrinsics() {

@@ -124,6 +124,10 @@ $testDirectory.each_entry {
     unless optFlags
         optFlags = "-O2"
     end
+    handleArray(manifest["mkdirs"]).each {
+        | dirToMake |
+        (outputPath + dirToMake).mkpath
+    }
     runScript = outputPath + "run.sh"
     compileScript = outputPath + "compile.sh"
     justRunScript = outputPath + "justRun.sh"
@@ -199,6 +203,10 @@ $testDirectory.each_entry {
                     libraryFiles[file] = true
                     outp.print " #{Shellwords.shellescape(outputPath + file)}.o"
                 }
+                if data["extraLinkerArgs"]
+                    outp.print " "
+                    outp.print data["extraLinkerArgs"]
+                end
                 outp.puts " >> #{Shellwords.shellescape(compilerOutput)} 2>&1"
                 outp.puts "if [ $? -ne 0 ]"
                 outp.puts "then"
