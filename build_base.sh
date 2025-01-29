@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -27,9 +27,23 @@ set -e
 set -x
 
 ./build_clang.sh
-./build_yolomusl.sh
+
+if test "x$ALTYOLO" != "x"
+then
+    $ALTYOLO
+else
+    ./build_yolomusl.sh
+fi
+
 ./build_runtime.sh
-./build_usermusl.sh
+
+if test "x$ALTUSER" != "x"
+then
+    $ALTUSER
+else
+    ./build_usermusl.sh
+fi
+    
 ./build_cxx.sh
 
 
