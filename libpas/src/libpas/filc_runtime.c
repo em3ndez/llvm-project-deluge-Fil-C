@@ -4192,6 +4192,10 @@ static filc_ptr get_constant_value(filc_constant_kind kind, void* target,
 {
     switch (kind) {
     case filc_global_constant: {
+        if (!target) {
+            /* This happens if target is a weak symbol. */
+            return filc_ptr_forge_null();
+        }
         filc_ptr result = ((pizlonated_linker_stub)target)(context);
         PAS_ASSERT(filc_ptr_object(result));
         PAS_ASSERT(filc_ptr_ptr(result));
