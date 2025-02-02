@@ -83,6 +83,7 @@
 #include <sys/shm.h>
 #include <sys/msg.h>
 #include <grp.h>
+#include <math.h>
 
 #define DEFINE_LOCK(name) \
     pas_system_mutex filc_## name ## _lock; \
@@ -8716,6 +8717,24 @@ size_t filc_get_size_env(const char* name, size_t default_value)
     pas_panic("invalid environment variable %s value: %s (expected decimal byte size)\n",
               name, value);
     return 0;
+}
+
+int filc_native_zmath_finitel(filc_thread* my_thread, long double value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+#if PAS_GLIBC
+    return finitel(value);
+#else
+    PAS_UNUSED_PARAM(value);
+    filc_internal_panic(NULL, "finitel not implemented.");
+    return 0;
+#endif
+}
+
+long double filc_native_zmath_scalbnl(filc_thread* my_thread, long double value, int exp)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return scalbnl(value, exp);
 }
 
 #endif /* PAS_ENABLE_FILC */

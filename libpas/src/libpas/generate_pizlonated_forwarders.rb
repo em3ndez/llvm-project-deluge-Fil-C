@@ -26,7 +26,7 @@
 def checkType(type)
     case type
     when 'filc_ptr', 'int', 'unsigned', 'long', 'unsigned long', 'size_t', 'double', 'bool',
-         'ssize_t', 'unsigned short', 'unsigned long long', 'long long'
+         'ssize_t', 'unsigned short', 'unsigned long long', 'long long', 'long double'
     else
         raise "Bad type #{type}"
     end
@@ -43,7 +43,7 @@ end
 def unsignedType(type)
     case type
     when 'filc_ptr', 'unsigned', 'unsigned long', 'size_t', 'double', 'bool',
-         'unsigned short', 'unsigned long long'
+         'unsigned short', 'unsigned long long', 'long double'
         type
     when 'int'
         'unsigned'
@@ -60,7 +60,7 @@ end
 
 def canonicalArgType(type)
     case type
-    when 'filc_ptr', 'double'
+    when 'filc_ptr', 'double', 'long double'
         type
     when 'int', 'unsigned', 'long', 'unsigned long', 'size_t', 'bool',
          'ssize_t', 'unsigned short', 'unsigned long long', 'long long'
@@ -398,6 +398,9 @@ addSig "bool", "zthread_kill", "filc_ptr", "int"
 addSig "void", "zincrement_signal_deferral_depth"
 addSig "void", "zdecrement_signal_deferral_depth"
 addSig "unsigned long long", "zget_signal_deferral_depth"
+
+addSig "int", "zmath_finitel", "long double"
+addSig "long double", "zmath_scalbnl", "long double", "int"
 
 addOutSig "void_ptr_ptr", "void", "filc_ptr", "filc_ptr"
 addOutSig "int_int_ptr_ptr", "int", "int", "filc_ptr", "filc_ptr"

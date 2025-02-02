@@ -23,8 +23,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef PIZLONATED_COMMON_SYSCALLS_H
-#define PIZLONATED_COMMON_SYSCALLS_H
+#ifndef PIZLONATED_SYSCALLS_H
+#define PIZLONATED_SYSCALLS_H
 
 #include <stdfil.h>
 
@@ -264,4 +264,4 @@ int zsys_posix_fallocate(int fd, long offset, long len);
 }
 #endif
 
-#endif /* PIZLONATED_COMMON_SYSCALLS_H */
+#endif /* PIZLONATED_SYSCALLS_H */

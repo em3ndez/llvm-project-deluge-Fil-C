@@ -2538,6 +2538,23 @@ static inline void filc_cc_sizer_add_float(filc_cc_sizer* sizer)
     filc_cc_sizer_add_arg(sizer, sizeof(double));
 }
 
+static inline long double filc_cc_cursor_get_next_long_double(filc_thread* my_thread,
+                                                              filc_cc_cursor* cursor)
+{
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, long double);
+}
+
+static inline void filc_cc_cursor_set_next_long_double(filc_thread* my_thread, filc_cc_cursor* cursor,
+                                                       long double value)
+{
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, long double) = value;
+}
+
+static inline void filc_cc_sizer_add_long_double(filc_cc_sizer* sizer)
+{
+    filc_cc_sizer_add_arg(sizer, sizeof(long double));
+}
+
 static inline bool filc_cc_cursor_get_next_bool(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
     return (bool)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
