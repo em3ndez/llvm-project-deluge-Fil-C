@@ -3,7 +3,7 @@
 int main(void)
 {
     zprintf("Yesyes\n");
-    asm volatile("" : : : "memory");
+    asm volatile("nop" : : : "memory");
     zprintf("Nono\n");
     return 0;
 }

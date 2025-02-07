@@ -5277,6 +5277,22 @@ class Pizlonator {
       // have the Fil-C CC version wrap the direct version.
       
       if (CI->isInlineAsm()) {
+        // FIXME: Expand the support for fence assembly to include pointer arguments and return
+        // values. The trick to getting that right will be rewriting the asm constraints so that
+        // constraints covering pointers are duplicated (one for the ptr itself and one for the
+        // lower).
+        if (cast<InlineAsm>(CI->getCalledOperand())->getAsmString() == ""
+            && !hasPtrs(CI->getType())) {
+          bool hasPtrArg = false;
+          for (size_t Index = CI->arg_size(); Index--;) {
+            if (hasPtrs(CI->getArgOperand(Index)->getType())) {
+              hasPtrArg = true;
+              break;
+            }
+          }
+          if (!hasPtrArg)
+            return;
+        }
         assert(isa<CallInst>(CI));
         std::string str;
         raw_string_ostream outs(str);
