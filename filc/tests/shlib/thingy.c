@@ -11,6 +11,7 @@ int foo(void)
 }
 
 __asm__(".filc_alias foo, bar");
+__asm__(".filc_alias foo + 666, foo666");
 
 int blah(void)
 {
@@ -44,6 +45,7 @@ __asm__(".filc_weak_alias red, blue");
 extern int green;
 extern int yellow;
 __asm__(".filc_weak_alias green, yellow");
+__asm__(".filc_alias green + 1, green1");
 
 int slim1 (void)
 {

@@ -325,7 +325,9 @@ enum class MATokenKind {
   Error,
   Directive,
   Identifier,
+  Integer,
   Comma,
+  Plus,
   EndLine
 };
 
@@ -339,8 +341,12 @@ inline const char* MATokenKindString(MATokenKind Kind) {
     return "Directive";
   case MATokenKind::Identifier:
     return "Identifier";
+  case MATokenKind::Integer:
+    return "Integer";
   case MATokenKind::Comma:
     return "Comma";
+  case MATokenKind::Plus:
+    return "Plus";
   case MATokenKind::EndLine:
     return "EndLine";
   }
@@ -374,6 +380,11 @@ class MATokenizer {
                                MA[Idx] == '.'))
       Idx++;
   }
+
+  void skipInteger() {
+    while (Idx < MA.size() && isdigit(MA[Idx]))
+      Idx++;
+  }
   
 public:
   MATokenizer(const std::string& MA): MA(MA) {}
@@ -395,7 +406,11 @@ public:
     }
     if (MA[Idx] == ',') {
       Idx++;
-      return MAToken(MATokenKind::Comma, "\n");
+      return MAToken(MATokenKind::Comma, ",");
+    }
+    if (MA[Idx] == '+') {
+      Idx++;
+      return MAToken(MATokenKind::Plus, "+");
     }
     if (MA[Idx] == '.') {
       size_t Start = Idx;
@@ -406,6 +421,11 @@ public:
       size_t Start = Idx;
       skipID();
       return MAToken(MATokenKind::Identifier, MA.substr(Start, Idx - Start));
+    }
+    if (isdigit(MA[Idx])) {
+      size_t Start = Idx;
+      skipInteger();
+      return MAToken(MATokenKind::Integer, MA.substr(Start, Idx - Start));
     }
     return MAToken(MATokenKind::Error, MA.substr(Idx, MA.size() - Idx));
   }
@@ -6141,7 +6161,17 @@ class Pizlonator {
         if (Tok.Str == ".filc_weak_alias" ||
             Tok.Str == ".filc_alias") {
           std::string OldName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
-          MAT.getNextSpecific(MATokenKind::Comma);
+          MAToken PlusTok = MAT.getNext();
+          int64_t Offset = 0;
+          if (PlusTok.Kind == MATokenKind::Plus) {
+            std::string OffsetAsStr = MAT.getNextSpecific(MATokenKind::Integer).Str;
+            int Result = sscanf(OffsetAsStr.c_str(), "%ld", &Offset);
+            assert(Result == 1);
+            MAT.getNextSpecific(MATokenKind::Comma);
+          } else if (PlusTok.Kind != MATokenKind::Comma) {
+            errs() << "Expected plus or comma but got: " << PlusTok.Str << "\n";
+            MAT.error();
+          }
           std::string NewName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
           MAT.getNextSpecific(MATokenKind::EndLine);
           GlobalValue* GV = getGlobal(OldName);
@@ -6169,6 +6199,7 @@ class Pizlonator {
             T = Int8Ty;
             GV = new GlobalVariable(M, Int8Ty, false, GlobalValue::ExternalLinkage, nullptr, OldName);
           }
+          assert(!GV->isThreadLocal());
           GlobalValue::LinkageTypes Linkage;
           if (Tok.Str == ".filc_weak_alias")
             Linkage = GlobalValue::WeakAnyLinkage;
@@ -6176,7 +6207,9 @@ class Pizlonator {
             assert(Tok.Str == ".filc_alias");
             Linkage = GlobalValue::ExternalLinkage;
           }
-          GlobalAlias* NewGA = GlobalAlias::create(T, GV->getAddressSpace(), Linkage, NewName, GV, &M);
+          GlobalAlias* NewGA = GlobalAlias::create(
+            T, GV->getAddressSpace(), Linkage, NewName,
+            ConstantExpr::getGetElementPtr(Int8Ty, GV, ConstantInt::get(IntPtrTy, Offset)), &M);
           if (ExistingGV)
             Dummy->replaceAllUsesWith(NewGA);
           continue;
@@ -7540,16 +7573,29 @@ public:
       if (G->isThreadLocal())
         continue;
       Constant* C = G->getAliasee();
+      GlobalValue* Aliasee;
+      int64_t Offset = 0;
+      if (ConstantExpr* CE = dyn_cast<ConstantExpr>(C)) {
+        assert(CE->getOpcode() == Instruction::GetElementPtr);
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        APInt OffsetAP(64, 0, false);
+        bool Result = GEP->accumulateConstantOffset(DLBefore, OffsetAP);
+        assert(Result);
+        Offset += OffsetAP.getZExtValue();
+        Aliasee = cast<GlobalValue>(GEP->getPointerOperand());
+        GEP->deleteValue();
+      } else
+        Aliasee = cast<GlobalValue>(C);
       Function* NewF = GlobalToGetter[G];
-      Function* TargetF = GlobalToGetter[cast<GlobalValue>(C)];
+      Function* TargetF = GlobalToGetter[Aliasee];
       assert(NewF);
       assert(TargetF);
       BasicBlock* BB = BasicBlock::Create(this->C, "filc_alias_global", NewF);
-      ReturnInst::Create(
-        this->C,
+      ReturnInst* Return = ReturnInst::Create(this->C, UndefValue::get(FlightPtrTy), BB);
+      Return->getOperandUse(0) = flightPtrWithOffset(
         CallInst::Create(GlobalGetterTy, TargetF, { NewF->getArg(0) },
-                         "filc_forward_global", BB),
-        BB);
+                         "filc_forward_global", Return),
+        ConstantInt::get(IntPtrTy, Offset), Return);
     }
 
     Dummy->deleteValue();

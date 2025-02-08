@@ -3,6 +3,7 @@
 int thingy(void);
 int stuff(void);
 int foo(void);
+int foo666(void);
 int bar(void);
 int blah(void);
 int bleh(void);
@@ -21,12 +22,14 @@ int slim5(void);
 int slim6(void);
 extern int green;
 extern int yellow;
+extern char green1;
 
 int main()
 {
     ZASSERT(thingy() == 666);
     ZASSERT(stuff() == 666);
     ZASSERT(foo() == 42);
+    ZASSERT(((int (*)(void))((char*)foo666 - 666))() == 42);
     ZASSERT(bar() == 42);
     ZASSERT(blah() == 1410);
     ZASSERT(bleh() == 1410);
@@ -39,6 +42,7 @@ int main()
     ZASSERT(blue(9, 10) == 19);
     ZASSERT(green == 1000);
     ZASSERT(yellow == 1000);
+    ZASSERT(green1 == 3);
     green = 2000;
     zcompiler_fence();
     ZASSERT(green == 2000);
