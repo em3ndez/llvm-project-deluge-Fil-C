@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -181,23 +181,29 @@ $testDirectory.each_entry {
         if libraries
             libraries.each_pair {
                 | libname, data |
-                if data["isBundle"]
-                    libraryOpt = $bundleOpt
+                isStatic = false
+                if data["isStatic"]
+                    libname += ".a"
+                    outp.print "ar cr #{Shellwords.shellescape(outputPath + libname)}"
                 else
-                    libraryOpt = $dylibOpt
-                    libname += $dylibExt
+                    if data["isBundle"]
+                        libraryOpt = $bundleOpt
+                    else
+                        libraryOpt = $dylibOpt
+                        libname += $dylibExt
+                    end
+                    linkerIsCpp = false
+                    data["files"].each {
+                        | entry |
+                        linkerIsCpp = true if Pathname.new(entry).extname == ".cpp"
+                    }
+                    if linkerIsCpp
+                        clangLinker = "clang++"
+                    else
+                        clangLinker = "clang"
+                    end
+                    outp.print "#{$compilerPrefix}#{$pizfix}/../build/bin/#{clangLinker} #{libraryOpt} -o #{Shellwords.shellescape(outputPath + libname)}"
                 end
-                linkerIsCpp = false
-                data["files"].each {
-                    | entry |
-                    linkerIsCpp = true if Pathname.new(entry).extname == ".cpp"
-                }
-                if linkerIsCpp
-                    clangLinker = "clang++"
-                else
-                    clangLinker = "clang"
-                end
-                outp.print "#{$compilerPrefix}#{$pizfix}/../build/bin/#{clangLinker} #{libraryOpt} -o #{Shellwords.shellescape(outputPath + libname)}"
                 data["files"].each {
                     | file |
                     libraryFiles[file] = true

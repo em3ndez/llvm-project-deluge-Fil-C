@@ -6146,15 +6146,17 @@ class Pizlonator {
           std::string Name = MAT.getNextSpecific(MATokenKind::Identifier).Str;
           MAT.getNextSpecific(MATokenKind::EndLine);
           GlobalValue* GV = getGlobal(Name);
-          if (!GV) {
-            errs() << "Cannot do " << Tok.Str << " to " << Name << " because it doesn't exist.\n";
-            MAT.error();
-          }
-          if (Tok.Str == ".filc_weak")
+          if (Tok.Str == ".filc_weak") {
+            if (!GV) {
+              errs() << "Cannot do .filc_weak to " << Name << " because it doesn't exist.\n";
+              MAT.error();
+            }
             GV->setLinkage(GlobalValue::WeakAnyLinkage);
-          else {
+          } else {
             assert(Tok.Str == ".filc_globl");
-            GV->setLinkage(GlobalValue::ExternalLinkage);
+            if (GV)
+              GV->setLinkage(GlobalValue::ExternalLinkage);
+            NewModuleAsm << ".globl pizlonated_" << Name << "\n";
           }
           continue;
         }
