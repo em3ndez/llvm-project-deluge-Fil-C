@@ -4875,12 +4875,6 @@ static void forced_unwind(filc_thread* my_thread, filc_ptr context_ptr, filc_ptr
                 "unwinding.", personality_result, function_origin->base.filename,
                 function_origin->base.function);
         }
-        
-        FILC_CHECK(
-            function_origin->can_throw,
-            NULL,
-            "encountered function %s: %s that cannot throw during forced unwind.",
-            function_origin->base.filename, function_origin->base.function);
     }
 }
 
@@ -4996,9 +4990,10 @@ bool filc_landing_pad(filc_thread* my_thread)
             filc_origin_get_function_origin(current_frame->origin);
         PAS_ASSERT(function_origin->can_catch);
         FILC_CHECK(
-            function_origin->can_throw,
+            function_origin->can_throw || my_thread->is_force_unwinding,
             NULL,
-            "cannot unwind from landing pad, function claims not to throw.");
+            "cannot unwind from landing pad, function claims not to throw and we aren't force "
+            "unwinding.");
         FILC_CHECK(
             current_frame->parent,
             NULL,
@@ -5032,9 +5027,10 @@ void filc_resume_unwind(filc_thread* my_thread, const filc_origin *passed_origin
        resume instruction. The resume instruction doesn't "catch". */
 
     FILC_CHECK(
-        filc_origin_get_function_origin(current_frame->origin)->can_throw,
+        filc_origin_get_function_origin(current_frame->origin)->can_throw
+        || my_thread->is_force_unwinding,
         NULL,
-        "cannot resume unwinding, current frame claims not to throw.");
+        "cannot resume unwinding, current frame claims not to throw and we aren't force unwinding.");
     FILC_CHECK(
         current_frame->parent,
         NULL,

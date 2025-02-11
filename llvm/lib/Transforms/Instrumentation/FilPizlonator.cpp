@@ -1215,7 +1215,7 @@ class Pizlonator {
       Personality = GlobalToGetter[cast<Function>(OldF->getPersonalityFn())];
     }
     
-    bool CanThrow = true;
+    bool CanThrow = !OldF->doesNotThrow();
     unsigned NumSetjmps = Setjmps.size();
 
     assert(FrameSize < UINT_MAX);

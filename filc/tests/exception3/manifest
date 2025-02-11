@@ -1,5 +1,7 @@
 return:
-  success
+  failure
 output-includes:
-  - "caught exception, what = oops"
+  - "filc panic"
+  - "libc++abi: terminating due to uncaught exception of type Exception: oops"
+
 
