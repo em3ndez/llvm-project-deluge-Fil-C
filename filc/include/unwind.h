@@ -72,6 +72,9 @@ void _Unwind_SetGR(struct _Unwind_Context *context, int index,
 unsigned long _Unwind_GetIP(struct _Unwind_Context *context); /* Not needed. */
 void _Unwind_SetIP(struct _Unwind_Context *, unsigned long new_value); /* Not needed. */
 
+// Returns the __builtin_frame_address(0) for the frame we're on right now.
+unsigned long _Unwind_GetCFA(struct _Unwind_Context *context);
+
 typedef _Unwind_Reason_Code (*_Unwind_Stop_Fn)
     (int version,
      _Unwind_Action actions,

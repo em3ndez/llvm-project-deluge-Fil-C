@@ -30,6 +30,7 @@
 
 struct _Unwind_Context {
     const void* language_specific_data;
+    unsigned long frame_address;
     void* registers[NUM_REGISTERS];
 };
 
@@ -69,6 +70,11 @@ void _Unwind_SetIP(struct _Unwind_Context *context, unsigned long new_value)
     (void)context;
     (void)new_value;
     zerror("Not implemented.");
+}
+
+unsigned long _Unwind_GetCFA(struct _Unwind_Context *context)
+{
+    return context->frame_address;
 }
 
 unsigned long _Unwind_GetRegionStart(struct _Unwind_Context *context)

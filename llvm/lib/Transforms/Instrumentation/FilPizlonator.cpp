@@ -4848,7 +4848,19 @@ class Pizlonator {
         outs << " with nonzero argument.";
         CallInst::Create(Error, { getString(str), getOrigin(I->getDebugLoc()) }, "", NotZeroTerm)
           ->setDebugLoc(I->getDebugLoc());
-        hackRAUW(I, [&] () { return badFlightPtr(I, I->getNextNode()); });
+        switch (II->getIntrinsicID()) {
+        case Intrinsic::returnaddress:
+          hackRAUW(I, [&] () { return badFlightPtr(I, I->getNextNode()); });
+          break;
+        case Intrinsic::frameaddress:
+          assert(Frame);
+          I->replaceAllUsesWith(badFlightPtr(Frame, I));
+          I->eraseFromParent();
+          break;
+        default:
+          llvm_unreachable("Unexpected intrinsic");
+          break;
+        }
         return true;
       }
 

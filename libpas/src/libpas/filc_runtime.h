@@ -902,8 +902,8 @@ struct filc_jmp_buf {
     bool did_save_sigmask;
     sigset_t sigmask;
     filc_jmp_buf_kind kind;
-    filc_frame* saved_top_frame; /* This is only here for assertions since longjmp does a search to
-                                    find the frame, and the frame knows about the jmp_buf. */
+    filc_frame* saved_top_frame; /* This is here to support zget_jmp_buf_impl_frame. And also for
+                                    assertions. */
     filc_native_frame* saved_top_native_frame;
     size_t saved_allocation_roots_size;
     unsigned saved_special_signal_deferral_depth;

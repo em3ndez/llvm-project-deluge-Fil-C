@@ -4687,6 +4687,7 @@ typedef enum unwind_action unwind_action;
 
 struct unwind_context {
     const void* language_specific_data;
+    unsigned long frame_address;
     void* registers[FILC_NUM_UNWIND_REGISTERS];
 };
 
@@ -4728,6 +4729,7 @@ static unwind_reason_code call_personality(
     else
         eh_data = filc_ptr_forge_null();
     filc_store_ptr_at(my_thread, context_ptr, &context->language_specific_data, eh_data);
+    context->frame_address = (unsigned long)current_frame;
     
     check_unwind_exception(exception_object_ptr, filc_read_access);
     unwind_exception* exception_object = (unwind_exception*)filc_ptr_ptr(exception_object_ptr);
@@ -4831,6 +4833,7 @@ static void forced_unwind(filc_thread* my_thread, filc_ptr context_ptr, filc_ptr
                 eh_data = eh_data_getter(NULL);
         }
         filc_store_ptr_at(my_thread, context_ptr, &context->language_specific_data, eh_data);
+        context->frame_address = (unsigned long)current_frame;
         
         check_unwind_exception(exception_object_ptr, filc_read_access);
         unwind_exception* exception_object = (unwind_exception*)filc_ptr_ptr(exception_object_ptr);
@@ -5201,6 +5204,14 @@ void filc_native_zlongjmp(filc_thread* my_thread, filc_ptr jmp_buf_ptr, int valu
     
     _longjmp(jmp_buf->system_buf, value);
     PAS_ASSERT(!"Should not be reached");
+}
+
+filc_ptr filc_native_zget_jmp_buf_impl_frame(filc_thread* my_thread, filc_ptr jmp_buf_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    filc_check_access_special(jmp_buf_ptr, FILC_SPECIAL_TYPE_JMP_BUF);
+    filc_jmp_buf* jmp_buf = (filc_jmp_buf*)filc_ptr_ptr(jmp_buf_ptr);
+    return filc_ptr_forge_invalid(jmp_buf->saved_top_frame);
 }
 
 void filc_native_zmake_setjmp_save_sigmask(filc_thread* my_thread, bool save_sigmask)

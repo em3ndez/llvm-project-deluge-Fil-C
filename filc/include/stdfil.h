@@ -491,6 +491,25 @@ static inline filc_bool zcan_va_arg(__builtin_va_list list)
     return zvalinbounds(*(void**)list, 8);
 }
 
+/* This is also defined in pizlonated_runtime. */
+struct zjmp_buf;
+typedef struct zjmp_buf zjmp_buf;
+
+/* Given the internal jmp_buf object, return the frame that it jumps to. This is the
+   __builtin_frame_address() or _Unwind_GetCFA() value for that frame. Note that this is a pointer
+   that has no capability (it might as well be an integer). */
+void* zget_jmp_buf_impl_frame(zjmp_buf* jmp_buf_impl);
+
+/* Given a jmp_buf, return the frame that it jumps to. This is the __builtin_frame_address() or
+   _Unwind_GetCFA() value for that frame. Note that this is a pointer that has no capability (it might
+   as well be an integer).
+
+   Unlike zget_jmp_buf_impl_frame, this just takes the jmp_buf. */
+static inline void* zget_jmp_buf_frame(void* jmp_buf)
+{
+    return zget_jmp_buf_impl_frame(*(zjmp_buf**)jmp_buf);
+}
+
 /* Returns true if running in the build of the runtime that has extra (super expensive) testing
    checks.
 
