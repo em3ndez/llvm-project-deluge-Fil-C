@@ -73,9 +73,9 @@ do
         then
             echo "patchelf --set-rpath \$PWD/pizfix/yolo/lib:\$PWD/pizfix/lib64:\$PWD/pizfix/lib $binary" >> setup.sh
         fi
-        if patchelf --set-interpreter pizfix/yolo/lib/ld-musl-x86_64.so.1 $binary
+        if patchelf --set-interpreter pizfix/yolo/lib/ld-yolo-x86_64.so $binary
         then
-            echo "patchelf --set-interpreter \$PWD/pizfix/yolo/lib/ld-musl-x86_64.so.1 $binary" >> setup.sh
+            echo "patchelf --set-interpreter \$PWD/pizfix/yolo/lib/ld-yolo-x86_64.so $binary" >> setup.sh
         fi
     fi
 done
