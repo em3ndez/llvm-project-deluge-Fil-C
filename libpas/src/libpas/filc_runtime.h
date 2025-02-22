@@ -66,7 +66,7 @@ struct filc_exception_and_ptr;
 struct filc_exception_and_void;
 struct filc_frame;
 struct filc_function_origin;
-struct filc_global_initialization_context;
+struct filc_global_initialization_work_item;
 struct filc_inline_frame;
 struct filc_jmp_buf;
 struct filc_lower_or_box;
@@ -107,7 +107,7 @@ typedef struct filc_exception_and_ptr filc_exception_and_ptr;
 typedef struct filc_exception_and_void filc_exception_and_void;
 typedef struct filc_frame filc_frame;
 typedef struct filc_function_origin filc_function_origin;
-typedef struct filc_global_initialization_context filc_global_initialization_context;
+typedef struct filc_global_initialization_work_item filc_global_initialization_work_item;
 typedef struct filc_inline_frame filc_inline_frame;
 typedef struct filc_jmp_buf filc_jmp_buf;
 typedef struct filc_lower_or_box filc_lower_or_box;
@@ -286,7 +286,7 @@ struct filc_ptr_pair {
 };
 
 typedef pizlonated_return_value (*pizlonated_function)(filc_thread* my_thread, size_t argument_size);
-typedef filc_ptr (*pizlonated_linker_stub)(filc_global_initialization_context* context);
+typedef filc_ptr (*pizlonated_getter)(filc_thread* my_thread, const filc_origin* passed_origin);
 
 /* Creates a boxed int ptr, which cannot be accessed at all. */
 static inline filc_ptr filc_ptr_forge_invalid(void* ptr)
@@ -405,7 +405,7 @@ struct filc_function_origin {
     
        If this is not NULL, then the function can handle exceptions, which means that post-call
        pollchecks will check if the pollcheck returned FILC_POLLCHECK_EXCEPTION. */
-    pizlonated_linker_stub personality_getter;
+    pizlonated_getter personality_getter;
 
     /* Tells whether a function can throw exceptions.
        
@@ -485,7 +485,7 @@ struct filc_inline_frame {
 struct filc_origin_with_eh {
     filc_origin base;
 
-    pizlonated_linker_stub eh_data_getter;
+    pizlonated_getter eh_data_getter;
 };
 
 #define FILC_FRAME_BODY \
@@ -653,15 +653,13 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
     char* guard_page;
 };
 
-struct filc_global_initialization_context {
-    size_t ref_count;
+struct filc_global_initialization_work_item {
+    filc_ptr* pizlonated_gptr;
     
-    /* Maps the location in memory that stores the persistent authoritative filc_ptr to the global
-       to the filc_object* that we are in the process of initializing.
-       
-       Key: filc_ptr* pizlonated_gptr
-       Value: filc_object* object */
-    pas_ptr_hash_map map;
+    /* The generation gets incremented whenever global initializatioon has to call to user code. */
+    unsigned generation;
+
+    filc_object* object;
 };
 
 enum filc_constant_kind {
@@ -944,6 +942,81 @@ FILC_FOR_EACH_LOCK(FILC_DECLARE_LOCK);
 /* These locks don't need to be held across fork, so no big deal. */
 PAS_DECLARE_LOCK(filc_soft_handshake);
 PAS_DECLARE_LOCK(filc_global_initialization);
+PAS_DECLARE_LOCK(filc_global_variable_roots);
+
+/* This gives us a smart recursive lock for global initialization. Note we do logic based on both
+   depth and thread, hence why manually implementing this recursive lock makes sense. */
+PAS_API extern filc_thread* filc_global_initialization_thread;
+PAS_API extern unsigned filc_global_initialization_depth;
+
+/* Each generation has a stack of globals it's initializing. When we recurse into a new generation,
+   we add a stack to the stacks.
+
+   The size of the stack of stacks is the "generation". */
+PAS_API extern filc_ptr_array filc_global_initialization_stack_of_stacks;
+
+typedef filc_ptr* filc_global_initialization_key;
+
+static inline filc_global_initialization_work_item
+filc_global_initialization_work_item_create_empty(void)
+{
+    filc_global_initialization_work_item result;
+    result.pizlonated_gptr = NULL;
+    result.generation = 0;
+    result.object = NULL;
+    return result;
+}
+
+static inline filc_global_initialization_work_item
+filc_global_initialization_work_item_create_deleted(void)
+{
+    filc_global_initialization_work_item result;
+    result.pizlonated_gptr = NULL;
+    result.generation = 1;
+    result.object = NULL;
+    return result;
+}
+
+static inline bool filc_global_initialization_work_item_is_empty_or_deleted(
+    filc_global_initialization_work_item work_item)
+{
+    return !work_item.pizlonated_gptr;
+}
+
+static inline bool filc_global_initialization_work_item_is_empty(
+    filc_global_initialization_work_item work_item)
+{
+    return !work_item.pizlonated_gptr && !work_item.generation;
+}
+
+static inline bool filc_global_initialization_work_item_is_deleted(
+    filc_global_initialization_work_item work_item)
+{
+    return !work_item.pizlonated_gptr && work_item.generation;
+}
+
+static inline filc_global_initialization_key filc_global_initialization_work_item_get_key(
+    filc_global_initialization_work_item work_item)
+{
+    return work_item.pizlonated_gptr;
+}
+
+static inline unsigned filc_global_initialization_key_get_hash(filc_global_initialization_key key)
+{
+    return pas_hash_ptr(key);
+}
+
+static inline bool filc_global_initialization_key_is_equal(
+    filc_global_initialization_key a, filc_global_initialization_key b)
+{
+    return a == b;
+}
+
+PAS_CREATE_HASHTABLE(filc_global_initialization_work_item_hash_map,
+                     filc_global_initialization_work_item,
+                     filc_global_initialization_key);
+
+PAS_API extern filc_global_initialization_work_item_hash_map filc_global_initialization_map;
 
 PAS_API extern unsigned filc_stop_the_world_count;
 PAS_API extern pas_system_condition filc_stop_the_world_cond;
@@ -956,6 +1029,7 @@ PAS_API extern bool filc_is_marking;
 PAS_API extern const filc_object filc_free_singleton;
 
 PAS_API extern filc_object_array filc_global_variable_roots;
+PAS_API extern filc_object_array filc_global_variable_root_ptrs;
 
 /* Anything that takes origin for checking has the following meaning:
    
@@ -1117,13 +1191,25 @@ static inline void filc_ptr_array_construct(filc_ptr_array* array)
     *array = FILC_PTR_ARRAY_INITIALIZER;
 }
 
+PAS_API filc_ptr_array* filc_ptr_array_create(void);
+
 static inline void filc_ptr_array_destruct(filc_ptr_array* array)
 {
     if (array->array)
         bmalloc_deallocate(array->array);
 }
 
+PAS_API void filc_ptr_array_destroy(filc_ptr_array* array);
+
 void filc_ptr_array_add(filc_ptr_array* array, void* ptr);
+
+static inline void* filc_ptr_array_top(filc_ptr_array* array)
+{
+    if (!array->size)
+        return NULL;
+    return array->array[array->size - 1];
+}
+
 static inline void* filc_ptr_array_pop(filc_ptr_array* array)
 {
     if (!array->size)
@@ -3052,25 +3138,34 @@ static inline filc_exception_and_void filc_exception_and_void_with_exception(voi
     return result;
 }
 
-/* If parent is not NULL, increases its ref count and returns it. Otherwise, creates a new context. */
-filc_global_initialization_context* filc_global_initialization_context_create(
-    filc_global_initialization_context* parent);
-/* Attempts to add the given global to be initialized.
+/* Attempt to start initializing the given global variable. This returns true if the variable should
+   go ahead and be initialized. It'll return false if:
    
-   If it's already in the set then this returns false.
+   - The variable is already initialized and there's nothing to do, or
    
-   If it's not in the set, then it's added to the set and true is returned. */
-bool filc_global_initialization_context_add(
-    filc_global_initialization_context* context, filc_ptr* pizlonated_gptr, filc_object* object);
-/* Derefs the context. If the refcount reaches zero, it gets destroyed.
- 
-   Destroying the set means storing all known ptr_capabilities into their corresponding pizlonated_gptrs
-   atomically. */
-void filc_global_initialization_context_destroy(filc_global_initialization_context* context);
+   - The variable is being initialized right now somewhere deeper in the initialization stack.
+   
+   Finally, this will panic if the variable is being initialized but in an older generation of
+   initialization (for cases where a global variable relocation triggers and ifunc and the ifunc wants
+   to access that global variable).
+
+   If this returns true, then you must call filc_global_initialization_end(). If this returns false,
+   then you must not call filc_global_initialization_end(). */
+bool filc_global_initialization_start(filc_thread* my_thread, const filc_origin* passed_origin,
+                                      filc_ptr* pizlonated_gptr, filc_object* object);
+
+/* Indicates that global initialization is finished for a particular global. */
+void filc_global_initialization_end(filc_thread* my_thread);
+
+filc_ptr filc_call_ifunc(filc_thread* my_thread, const filc_origin* passed_origin,
+                         filc_ptr* pizlonated_gptr, pizlonated_function ifunc);
+
+void filc_call_ifunc_from_yolo_ifunc(pizlonated_getter ifunc_getter);
+void filc_run_deferred_ifuncs(filc_thread* my_thread);
 
 void filc_execute_constant_relocations(
-    filc_object* constant, filc_constant_relocation* relocations, size_t num_relocations,
-    filc_global_initialization_context* context);
+    filc_thread* my_thread, filc_object* constant, filc_constant_relocation* relocations,
+    size_t num_relocations);
 
 PAS_API void filc_set_user_environment(filc_thread* my_thread,
                                        int argc, filc_ptr argv, filc_ptr environ, filc_ptr auxv);
@@ -3173,6 +3268,9 @@ void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_object_array* s
    Calling this function in B prevents the above race because this function exits around the lock
    acquisition if the lock acquisition would block. So, C will get to stop B inside this function. */
 PAS_API void filc_system_mutex_lock(filc_thread* my_thread, pas_system_mutex* lock);
+
+/* Same as filc_system_mutex_lock() but for pas_locks. */
+PAS_API void filc_lock_lock(filc_thread* my_thread, pas_lock* lock);
 
 PAS_API void filc_set_user_errno(int libc_errno_value);
 PAS_API int filc_to_user_errno(int errno_value);
@@ -3283,8 +3381,8 @@ PAS_API unsigned filc_get_unsigned_env(const char* name, unsigned default_value)
 PAS_API size_t filc_get_size_env(const char* name, size_t default_value);
 
 void filc_start_program(int argc, char** argv,
-                        pizlonated_linker_stub pizlonated___libc_start_main,
-                        pizlonated_linker_stub pizlonated_main);
+                        pizlonated_getter pizlonated___libc_start_main,
+                        pizlonated_getter pizlonated_main);
 
 PAS_END_EXTERN_C;
 

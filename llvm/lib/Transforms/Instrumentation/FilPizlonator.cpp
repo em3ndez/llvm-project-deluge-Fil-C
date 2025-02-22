@@ -1053,7 +1053,7 @@ class Pizlonator {
   StructType* PizlonatedReturnValueTy;
   StructType* PtrPairTy;
   FunctionType* PizlonatedFuncTy;
-  FunctionType* GlobalGetterTy;
+  FunctionType* PizlonatedGetterTy;
   FunctionType* ThreadLocalEnsureTy;
   FunctionType* ThreadLocalGetterTy;
   FunctionType* CtorDtorTy;
@@ -1079,9 +1079,10 @@ class Pizlonator {
   FunctionCallee CheckFunctionCallFail;
   FunctionCallee Memset;
   FunctionCallee Memmove;
-  FunctionCallee GlobalInitializationContextCreate;
-  FunctionCallee GlobalInitializationContextAdd;
-  FunctionCallee GlobalInitializationContextDestroy;
+  FunctionCallee GlobalInitializationStart;
+  FunctionCallee GlobalInitializationEnd;
+  FunctionCallee CallIfunc;
+  FunctionCallee CallIfuncFromYoloIfunc;
   FunctionCallee ExecuteConstantRelocations;
   FunctionCallee DeferOrRunGlobalCtor;
   FunctionCallee RunGlobalDtor;
@@ -1130,6 +1131,7 @@ class Pizlonator {
   std::vector<GlobalVariable*> Globals;
   std::vector<Function*> Functions;
   std::vector<GlobalAlias*> Aliases;
+  std::vector<GlobalIFunc*> IFuncs;
 
   std::unordered_map<Type*, Type*> FlightedTypes;
 
@@ -1143,8 +1145,8 @@ class Pizlonator {
   std::unordered_map<GlobalValue*, GlobalValue*> ThreadLocalToGetter;
 
   std::string FunctionName;
-  Function* OldF;
-  Function* NewF;
+  Function* OldF { nullptr };
+  Function* NewF { nullptr };
 
   std::unordered_map<Instruction*, Type*> InstTypes;
   std::unordered_map<Instruction*, std::vector<Type*>> InstTypeVectors;
@@ -1283,7 +1285,16 @@ class Pizlonator {
 
   // See the definition of CanCatch, above.
   Constant* getOrigin(DebugLoc Loc, bool CanCatch = false, LandingPadInst* LPI = nullptr) {
-    assert(OldF);
+    if (!OldF) {
+      // This happens if we try to get an origin while compiling something other than a user function.
+      // In that case, we vend the NULL origin, which is OK for the one use case where this happens
+      // (calling a getter recursively from a getter; the first thing any getter does is starts global
+      // initialization, which sets the origin in the top frame, so it's fine to pass NULL after
+      // that).
+      assert(!CanCatch);
+      assert(!LPI);
+      return RawNull;
+    }
     if (LPI)
       assert(CanCatch);
     
@@ -2551,7 +2562,7 @@ class Pizlonator {
 
     for (size_t Index = 0; Index < Checks.size();) {
       Value* CanonicalPtr = Checks[Index].CanonicalPtr;
-      Value* FlightPtr = lowerConstantValue(CanonicalPtr, Inst, RawNull);
+      Value* FlightPtr = lowerConstantValue(CanonicalPtr, Inst);
 
       auto ptrWithOffset = [&] (int64_t Offset, Instruction* InsertBefore) {
         assert((int32_t)Offset == Offset);
@@ -4547,9 +4558,9 @@ class Pizlonator {
     return false;
   }
 
-  Value* constantToFlightValue(Constant* C, Instruction* InsertBefore, Value* InitializationContext) {
+  Value* constantToFlightValue(Constant* C, Instruction* InsertBefore) {
     if (ultraVerbose)
-      errs() << "constantToFlightValue(" << *C << ", ..., " << *InitializationContext << ")\n";
+      errs() << "constantToFlightValue(" << *C << ")\n";
     assert(C->getType() != FlightPtrTy);
 
     if (Constant* LowC = tryConstantToFlightConstant(C))
@@ -4562,6 +4573,7 @@ class Pizlonator {
       assert(!Getters.count(nullptr));
       assert(!Getters.count(G));
       assert(GlobalToGetter.count(G));
+      assert(MyThread);
       Function* Getter = GlobalToGetter[G];
       assert(Getter);
       if (Getter->isDeclaration() &&
@@ -4571,7 +4583,8 @@ class Pizlonator {
         IsNull->setDebugLoc(InsertBefore->getDebugLoc());
         Instruction* NotNullTerm = SplitBlockAndInsertIfElse(IsNull, InsertBefore, false);
         Instruction* NotNullResult = CallInst::Create(
-          GlobalGetterTy, Getter, { InitializationContext }, "filc_call_weak_getter", NotNullTerm);
+          PizlonatedGetterTy, Getter, { MyThread, getOrigin(InsertBefore->getDebugLoc()) },
+          "filc_call_weak_getter", NotNullTerm);
         NotNullResult->setDebugLoc(InsertBefore->getDebugLoc());
         PHINode* Result = PHINode::Create(FlightPtrTy, 2, "filc_weak_getter_result", InsertBefore);
         Result->setDebugLoc(InsertBefore->getDebugLoc());
@@ -4580,7 +4593,8 @@ class Pizlonator {
         return Result;
       }
       Instruction* Result = CallInst::Create(
-        GlobalGetterTy, Getter, { InitializationContext }, "filc_call_getter", InsertBefore);
+        PizlonatedGetterTy, Getter, { MyThread, getOrigin(InsertBefore->getDebugLoc()) },
+        "filc_call_getter", InsertBefore);
       Result->setDebugLoc(InsertBefore->getDebugLoc());
       return Result;
     }
@@ -4592,7 +4606,7 @@ class Pizlonator {
       Value* Result = UndefValue::get(toFlightType(CA->getType()));
       for (size_t Index = 0; Index < CA->getNumOperands(); ++Index) {
         Instruction* Insert = InsertValueInst::Create(
-          Result, constantToFlightValue(CA->getOperand(Index), InsertBefore, InitializationContext),
+          Result, constantToFlightValue(CA->getOperand(Index), InsertBefore),
           static_cast<unsigned>(Index), "filc_insert_array", InsertBefore);
         Insert->setDebugLoc(InsertBefore->getDebugLoc());
         Result = Insert;
@@ -4604,8 +4618,7 @@ class Pizlonator {
         errs() << "Dealing with CS = " << *CS << "\n";
       Value* Result = UndefValue::get(toFlightType(CS->getType()));
       for (size_t Index = 0; Index < CS->getNumOperands(); ++Index) {
-        Value* LowC = constantToFlightValue(
-          CS->getOperand(Index), InsertBefore, InitializationContext);
+        Value* LowC = constantToFlightValue(CS->getOperand(Index), InsertBefore);
         if (verbose)
           errs() << "Index = " << Index << ", LowC = " << *LowC << "\n";
         Instruction* Insert = InsertValueInst::Create(
@@ -4619,7 +4632,7 @@ class Pizlonator {
       Value* Result = UndefValue::get(toFlightType(CV->getType()));
       for (size_t Index = 0; Index < CV->getNumOperands(); ++Index) {
         Instruction* Insert = InsertElementInst::Create(
-          Result, constantToFlightValue(CV->getOperand(Index), InsertBefore, InitializationContext),
+          Result, constantToFlightValue(CV->getOperand(Index), InsertBefore),
           ConstantInt::get(IntPtrTy, Index), "filc_insert_vector", InsertBefore);
         Insert->setDebugLoc(InsertBefore->getDebugLoc());
         Result = Insert;
@@ -4639,7 +4652,7 @@ class Pizlonator {
     // I am the worst compiler programmer.
     StoreInst* DummyUser = new StoreInst(
       CEInst, RawNull, false, Align(), AtomicOrdering::NotAtomic, SyncScope::System);
-    lowerInstruction(CEInst, InitializationContext);
+    lowerInstruction(CEInst);
     Value* Result = DummyUser->getOperand(0);
     DummyUser->deleteValue();
     return Result;
@@ -4692,12 +4705,12 @@ class Pizlonator {
     }
   }
 
-  Value* lowerConstantValue(Value* V, Instruction* I, Value* InitializationContext) {
+  Value* lowerConstantValue(Value* V, Instruction* I) {
     assert(!isa<PHINode>(I));
     if (Constant* C = dyn_cast<Constant>(V)) {
       if (ultraVerbose)
         errs() << "Got V = " << *V << ", C = " << *C << "\n";
-      Value* NewC = constantToFlightValue(C, I, InitializationContext);
+      Value* NewC = constantToFlightValue(C, I);
       if (ultraVerbose)
         errs() << "Got NewC = " << *NewC <<"\n";
       return NewC;
@@ -4713,17 +4726,17 @@ class Pizlonator {
     return V;
   }
 
-  void lowerConstantOperand(Use& U, Instruction* I, Value* InitializationContext) {
-    U = lowerConstantValue(U, I, InitializationContext);
+  void lowerConstantOperand(Use& U, Instruction* I) {
+    U = lowerConstantValue(U, I);
   }
 
-  void lowerConstantOperands(Instruction* I, Value* InitializationContext) {
+  void lowerConstantOperands(Instruction* I) {
     if (verbose)
       errs() << "Before arg lowering: " << *I << "\n";
 
     for (unsigned Index = I->getNumOperands(); Index--;) {
       Use& U = I->getOperandUse(Index);
-      lowerConstantOperand(U, I, InitializationContext);
+      lowerConstantOperand(U, I);
       if (ultraVerbose)
         errs() << "After Index = " << Index << ", I = " << *I << "\n";
     }
@@ -4742,9 +4755,9 @@ class Pizlonator {
       switch (II->getIntrinsicID()) {
       case Intrinsic::memset:
       case Intrinsic::memset_inline: {
-        lowerConstantOperand(II->getArgOperandUse(0), I, RawNull);
-        lowerConstantOperand(II->getArgOperandUse(1), I, RawNull);
-        lowerConstantOperand(II->getArgOperandUse(2), I, RawNull);
+        lowerConstantOperand(II->getArgOperandUse(0), I);
+        lowerConstantOperand(II->getArgOperandUse(1), I);
+        lowerConstantOperand(II->getArgOperandUse(2), I);
         Instruction* CI = CallInst::Create(
           Memset,
           { MyThread, II->getArgOperand(0), castInt(II->getArgOperand(1), Int32Ty, II),
@@ -4755,9 +4768,9 @@ class Pizlonator {
       case Intrinsic::memcpy:
       case Intrinsic::memcpy_inline:
       case Intrinsic::memmove: {
-        lowerConstantOperand(II->getArgOperandUse(0), I, RawNull);
-        lowerConstantOperand(II->getArgOperandUse(1), I, RawNull);
-        lowerConstantOperand(II->getArgOperandUse(2), I, RawNull);
+        lowerConstantOperand(II->getArgOperandUse(0), I);
+        lowerConstantOperand(II->getArgOperandUse(1), I);
+        lowerConstantOperand(II->getArgOperandUse(2), I);
         Instruction* CI = CallInst::Create(
           Memmove,
           { MyThread, II->getArgOperand(0), II->getArgOperand(1),
@@ -4786,15 +4799,15 @@ class Pizlonator {
 
       case Intrinsic::vastart:
         assert(UsesVastartOrZargs);
-        lowerConstantOperand(II->getArgOperandUse(0), I, RawNull);
+        lowerConstantOperand(II->getArgOperandUse(0), I);
         storePtr(SnapshottedArgsPtrForVastart, flightPtrPtr(II->getArgOperand(0), II),
                  auxPtrForOperand(II->getArgOperand(0), II, 0, II).P, II);
         II->eraseFromParent();
         return true;
         
       case Intrinsic::vacopy: {
-        lowerConstantOperand(II->getArgOperandUse(0), I, RawNull);
-        lowerConstantOperand(II->getArgOperandUse(1), I, RawNull);
+        lowerConstantOperand(II->getArgOperandUse(0), I);
+        lowerConstantOperand(II->getArgOperandUse(1), I);
         Value* Load = loadPtr(flightPtrPtr(II->getArgOperand(1), II),
                               auxPtrForOperand(II->getArgOperand(1), II, 1, II), II);
         storePtr(Load, flightPtrPtr(II->getArgOperand(0), II),
@@ -4827,7 +4840,7 @@ class Pizlonator {
 
       case Intrinsic::returnaddress:
       case Intrinsic::frameaddress: {
-        lowerConstantOperand(II->getArgOperandUse(0), I, RawNull);
+        lowerConstantOperand(II->getArgOperandUse(0), I);
         Instruction* IsZero = new ICmpInst(
           I, ICmpInst::ICMP_EQ, II->getArgOperand(0), ConstantInt::get(Int32Ty, 0),
           "filc_frameaddress_arg_is_zero");
@@ -4922,7 +4935,7 @@ class Pizlonator {
             ->setDebugLoc(II->getDebugLoc());
         }
         for (Use& U : II->data_ops()) {
-          lowerConstantOperand(U, I, RawNull);
+          lowerConstantOperand(U, I);
           if (hasPtrs(U->getType()))
             U = flightPtrPtr(U, II);
         }
@@ -4959,7 +4972,7 @@ class Pizlonator {
           if (verbose)
             errs() << "Lowering some kind of setjmp\n";
           for (Use& Arg : CI->args())
-            lowerConstantOperand(Arg, CI, RawNull);
+            lowerConstantOperand(Arg, CI);
           assert(FT == F->getFunctionType());
           assert(CI->hasFnAttr(Attribute::ReturnsTwice));
           assert(Setjmps.count(CI));
@@ -5020,7 +5033,7 @@ class Pizlonator {
             !FT->isVarArg() &&
             FT->getParamType(0) == RawPtrTy &&
             FT->getReturnType() == RawPtrTy) {
-          lowerConstantOperand(CI->getArgOperandUse(0), CI, RawNull);
+          lowerConstantOperand(CI->getArgOperandUse(0), CI);
           Value* Lower = flightPtrLower(CI->getArgOperand(0), CI);
           ICmpInst* NullLower = new ICmpInst(
             CI, ICmpInst::ICMP_EQ, Lower, RawNull, "filc_is_null_lower");
@@ -5076,7 +5089,7 @@ class Pizlonator {
 
         if (shouldPassThrough(F)) {
           for (Use& Arg : CI->args())
-            lowerConstantOperand(Arg, CI, RawNull);
+            lowerConstantOperand(Arg, CI);
           return true;
         }
       }
@@ -5121,21 +5134,20 @@ class Pizlonator {
   }
   
   // This lowers the instruction "in place", so all references to it are fixed up after this runs.
-  void lowerInstruction(Instruction *I, Value* InitializationContext) {
+  void lowerInstruction(Instruction *I) {
     if (verbose)
       errs() << "Lowering: " << *I << "\n";
 
     if (PHINode* P = dyn_cast<PHINode>(I)) {
-      assert(InitializationContext == RawNull);
       for (unsigned Index = P->getNumIncomingValues(); Index--;) {
         lowerConstantOperand(
-          P->getOperandUse(Index), P->getIncomingBlock(Index)->getTerminator(), RawNull);
+          P->getOperandUse(Index), P->getIncomingBlock(Index)->getTerminator());
       }
       P->mutateType(toFlightType(P->getType()));
       return;
     }
 
-    lowerConstantOperands(I, InitializationContext);
+    lowerConstantOperands(I);
     
     if (AllocaInst* AI = dyn_cast<AllocaInst>(I)) {
       if (!AI->hasNUsesOrMore(1)) {
@@ -6674,7 +6686,7 @@ class Pizlonator {
         if (!Getters.count(Getter))
           continue;
 
-        assert(CI->getFunctionType() == GlobalGetterTy);
+        assert(CI->getFunctionType() == PizlonatedGetterTy);
 
         GetterCallsForGetter[Getter].push_back(CI);
       }
@@ -6808,7 +6820,7 @@ public:
     PtrPairTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_ptr_pair");
     PizlonatedFuncTy = FunctionType::get(
       PizlonatedReturnValueTy, { RawPtrTy, IntPtrTy }, false);
-    GlobalGetterTy = FunctionType::get(FlightPtrTy, { RawPtrTy }, false);
+    PizlonatedGetterTy = FunctionType::get(FlightPtrTy, { RawPtrTy, RawPtrTy }, false);
     ThreadLocalEnsureTy = FunctionType::get(RawPtrTy, { RawPtrTy }, false);
     ThreadLocalGetterTy = FunctionType::get(RawPtrTy, { RawPtrTy }, false);
 
@@ -6854,8 +6866,8 @@ public:
     }
     for (GlobalAlias &G : M.aliases())
       Aliases.push_back(&G);
-    if (!M.ifunc_empty())
-      llvm_unreachable("Don't handle ifuncs yet.");
+    for (GlobalIFunc &G : M.ifuncs())
+      IFuncs.push_back(&G);
 
     FlightNull = ConstantAggregateZero::get(FlightPtrTy);
     if (verbose)
@@ -6894,14 +6906,16 @@ public:
       "filc_memset", VoidTy, RawPtrTy, FlightPtrTy, Int32Ty, IntPtrTy, RawPtrTy);
     Memmove = M.getOrInsertFunction(
       "filc_memmove", VoidTy, RawPtrTy, FlightPtrTy, FlightPtrTy, IntPtrTy, RawPtrTy);
-    GlobalInitializationContextCreate = M.getOrInsertFunction(
-      "filc_global_initialization_context_create", RawPtrTy, RawPtrTy);
-    GlobalInitializationContextAdd = M.getOrInsertFunction(
-      "filc_global_initialization_context_add", Int1Ty, RawPtrTy, RawPtrTy, RawPtrTy);
-    GlobalInitializationContextDestroy = M.getOrInsertFunction(
-      "filc_global_initialization_context_destroy", VoidTy, RawPtrTy);
+    GlobalInitializationStart = M.getOrInsertFunction(
+      "filc_global_initialization_start", Int1Ty, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy);
+    GlobalInitializationEnd = M.getOrInsertFunction(
+      "filc_global_initialization_end", VoidTy, RawPtrTy);
+    CallIfunc = M.getOrInsertFunction(
+      "filc_call_ifunc", FlightPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy);
+    CallIfuncFromYoloIfunc = M.getOrInsertFunction(
+      "filc_call_ifunc_from_yolo_ifunc", VoidTy, RawPtrTy);
     ExecuteConstantRelocations = M.getOrInsertFunction(
-      "filc_execute_constant_relocations", VoidTy, RawPtrTy, RawPtrTy, IntPtrTy, RawPtrTy);
+      "filc_execute_constant_relocations", VoidTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
     DeferOrRunGlobalCtor = M.getOrInsertFunction(
       "filc_defer_or_run_global_ctor", VoidTy, RawPtrTy);
     RunGlobalDtor = M.getOrInsertFunction(
@@ -6952,7 +6966,7 @@ public:
     auto HandleGlobal = [&] (GlobalValue* G) {
       if (verbose)
         errs() << "Handling global: " << G->getName() << "\n";
-      Function* NewF = Function::Create(GlobalGetterTy, G->getLinkage(), G->getAddressSpace(),
+      Function* NewF = Function::Create(PizlonatedGetterTy, G->getLinkage(), G->getAddressSpace(),
                                         "pizlonated_" + G->getName(), &M);
       NewF->setVisibility(G->getVisibility());
       GlobalToGetter[G] = NewF;
@@ -7016,6 +7030,10 @@ public:
         ToDelete.push_back(G);
         continue;
       }
+      HandleGlobal(G);
+    }
+    for (GlobalIFunc* G : IFuncs) {
+      assert(!G->isThreadLocal());
       HandleGlobal(G);
     }
     for (Function* F : Functions) {
@@ -7136,7 +7154,7 @@ public:
         else
           AuxP = RawNull;
         Return->getOperandUse(0) = Lower;
-        Value* Const = constantToFlightValue(G->getInitializer(), Return, RawNull);
+        Value* Const = constantToFlightValue(G->getInitializer(), Return);
         storeValueRecurseAfterCheck(
           G->getValueType(), Const, Lower, AuxP, false, Align(Alignment), AtomicOrdering::NotAtomic,
           SyncScope::System, MemoryKind::ThreadLocalInit, Return);
@@ -7173,7 +7191,7 @@ public:
 
       assert(Alignment);
       
-      Function* SlowF = Function::Create(GlobalGetterTy, GlobalValue::PrivateLinkage,
+      Function* SlowF = Function::Create(PizlonatedGetterTy, GlobalValue::PrivateLinkage,
                                          G->getAddressSpace(), "filc_getter_slow", &M);
       SlowF->addFnAttr(Attribute::NoInline);
 
@@ -7277,30 +7295,28 @@ public:
 
       ReturnInst::Create(
         C,
-        CallInst::Create(GlobalGetterTy, SlowF, { NewF->getArg(0) }, "filc_call_getter_slow", SlowBB),
+        CallInst::Create(PizlonatedGetterTy, SlowF, { NewF->getArg(0), NewF->getArg(1) },
+                         "filc_call_getter_slow", SlowBB),
         SlowBB);
 
       Branch = BranchInst::Create(BuildBB, RecurseBB, UndefValue::get(Int1Ty), SlowRootBB);
-      Instruction* MyInitializationContext = CallInst::Create(
-        GlobalInitializationContextCreate, { SlowF->getArg(0) }, "filc_context_create",
-        Branch);
       Value* Ptr = flightPtrForPayload(NewDataPayloadC, Branch);
       // NOTE: This function call is necessary even for the cases of globals with no meaningful
       // initializer or an initializer we could just optimize to pure data, since we have to tell the
       // runtime about this global so that the GC can find it.
-      Instruction* Add = CallInst::Create(
-        GlobalInitializationContextAdd,
-        { MyInitializationContext, NewPtrG, NewDataObjectC },
-        "filc_context_add", Branch);
-      Branch->getOperandUse(0) = Add;
+      assert(!MyThread);
+      MyThread = SlowF->getArg(0);
+      Instruction* Start = CallInst::Create(
+        GlobalInitializationStart,
+        { MyThread, SlowF->getArg(1), NewPtrG, NewDataObjectC },
+        "filc_context_start", Branch);
+      Branch->getOperandUse(0) = Start;
 
-      CallInst::Create(
-        GlobalInitializationContextDestroy, { MyInitializationContext }, "", RecurseBB);
       ReturnInst::Create(C, Ptr, RecurseBB);
 
       Instruction* Return = ReturnInst::Create(C, Ptr, BuildBB);
       if (verbose)
-        errs() << "Lowering constant " << *G->getInitializer() << " with initialization context = " << *MyInitializationContext << "\n";
+        errs() << "Lowering constant " << *G->getInitializer() << "\n";
       if (RelocationsSucceeded) {
         if (Relocations.size()) {
           std::vector<Constant*> Constants;
@@ -7318,18 +7334,18 @@ public:
             M, AT, true, GlobalVariable::PrivateLinkage, CA, "filc_constant_relocations");
           CallInst::Create(
             ExecuteConstantRelocations,
-            { NewDataObjectC, RelocG, ConstantInt::get(IntPtrTy, Constants.size()),
-              MyInitializationContext },
+            { MyThread, NewDataObjectC, RelocG, ConstantInt::get(IntPtrTy, Constants.size()) },
             "", Return);
         }
       } else {
-        Value* C = constantToFlightValue(G->getInitializer(), Return, MyInitializationContext);
+        Value* C = constantToFlightValue(G->getInitializer(), Return);
         storeValueRecurseAfterCheck(
           G->getInitializer()->getType(), C, NewDataPayloadC, AuxPtr, false, Align(Alignment),
           AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::GlobalInit, Return);
       }
       
-      CallInst::Create(GlobalInitializationContextDestroy, { MyInitializationContext }, "", Return);
+      CallInst::Create(GlobalInitializationEnd, { MyThread }, "", Return);
+      MyThread = nullptr;
     }
     for (Function* F : Functions) {
       if (F->isIntrinsic())
@@ -7556,7 +7572,7 @@ public:
           emitChecksForInst(I);
         erase_if(Instructions, [&] (Instruction* I) { return earlyLowerInstruction(I); });
         for (Instruction* I : Instructions)
-          lowerInstruction(I, RawNull);
+          lowerInstruction(I);
         MyThread = nullptr;
 
         GlobalVariable* NewObjectG = new GlobalVariable(
@@ -7623,9 +7639,70 @@ public:
       BasicBlock* BB = BasicBlock::Create(this->C, "filc_alias_global", NewF);
       ReturnInst* Return = ReturnInst::Create(this->C, UndefValue::get(FlightPtrTy), BB);
       Return->getOperandUse(0) = flightPtrWithOffset(
-        CallInst::Create(GlobalGetterTy, TargetF, { NewF->getArg(0) },
+        CallInst::Create(PizlonatedGetterTy, TargetF, { NewF->getArg(0), NewF->getArg(1) },
                          "filc_forward_global", Return),
         ConstantInt::get(IntPtrTy, Offset), Return);
+    }
+    for (GlobalIFunc* G : IFuncs) {
+      assert(!G->isThreadLocal());
+      Function* ResolveF = cast<Function>(G->getResolver());
+      assert(ResolveF);
+      Function* NewF = GlobalToGetter[G];
+      assert(NewF);
+
+      Function* LowResolveF = FunctionToHiddenFunction[ResolveF];
+      assert(LowResolveF);
+
+      GlobalVariable* NewPtrG = new GlobalVariable(
+        M, FlightPtrTy, false, GlobalValue::PrivateLinkage, FlightNull,
+        "filc_gptr_" + G->getName());
+      NewPtrG->setAlignment(Align(FlightPtrAlign));
+      
+      BasicBlock* RootBB = BasicBlock::Create(C, "filc_global_ifunc_getter_root", NewF);
+      BasicBlock* OtherCheckBB = BasicBlock::Create(C, "filc_global_ifunc_getter_other_check", NewF);
+      BasicBlock* FastBB = BasicBlock::Create(C, "filc_global_ifunc_getter_fast", NewF);
+      BasicBlock* SlowBB = BasicBlock::Create(C, "filc_global_ifunc_getter_slow", NewF);
+
+      // We can load the NewPtrG in two 64-bit chunks and then check if either the lower or the
+      // raw ptr as NULL. If either are NULL, then it's either not initialized yet, or we experienced
+      // ptr tearing. This allows us to avoid an expensive 128-bit atomic.
+      
+      Instruction* Branch = BranchInst::Create(SlowBB, OtherCheckBB, UndefValue::get(Int1Ty), RootBB);
+      Value* LoadPtr = loadFlightPtr(NewPtrG, Branch);
+      Branch->getOperandUse(0) = new ICmpInst(
+        Branch, ICmpInst::ICMP_EQ, flightPtrPtr(LoadPtr, Branch), RawNull, "filc_check_global");
+
+      Instruction* OtherBranch = BranchInst::Create(
+        SlowBB, FastBB, UndefValue::get(Int1Ty), OtherCheckBB);
+      OtherBranch->getOperandUse(0) = new ICmpInst(
+        OtherBranch, ICmpInst::ICMP_EQ, flightPtrLower(LoadPtr, OtherBranch), RawNull,
+        "filc_check_global_func");
+      
+      ReturnInst::Create(C, LoadPtr, FastBB);
+
+      ReturnInst::Create(
+        C,
+        CallInst::Create(CallIfunc, { NewF->getArg(0), NewF->getArg(1), NewPtrG, LowResolveF },
+                         "filc_call_ifunc_slow", SlowBB),
+        SlowBB);
+
+      assert(G->getLinkage() == GlobalValue::ExternalLinkage);
+
+      Function* DummyTarget = Function::Create(
+        FunctionType::get(VoidTy, false), GlobalValue::PrivateLinkage, 0,
+        "filc_dummy_target_" + G->getName(), &M);
+      RootBB = BasicBlock::Create(C, "filc_dummy_target_root", DummyTarget);
+      ReturnInst::Create(C, RootBB);
+      
+      Function* YoloResolver = Function::Create(
+        FunctionType::get(RawPtrTy, false), GlobalValue::PrivateLinkage, 0,
+        "filc_yolo_resolver_" + G->getName(), &M);
+      RootBB = BasicBlock::Create(C, "filc_yolo_resolver_root", YoloResolver);
+      CallInst::Create(CallIfuncFromYoloIfunc, { NewF }, "", RootBB);
+      ReturnInst::Create(C, DummyTarget, RootBB);
+      
+      GlobalIFunc::create(FunctionType::get(VoidTy, false), 0, GlobalValue::ExternalLinkage,
+                          "pizlonatedIF_" + G->getName(), YoloResolver, &M);
     }
 
     Dummy->deleteValue();

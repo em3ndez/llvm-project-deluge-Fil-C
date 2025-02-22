@@ -108,6 +108,15 @@ FILC_FOR_EACH_LOCK(DEFINE_LOCK);
 
 PAS_DEFINE_LOCK(filc_soft_handshake);
 PAS_DEFINE_LOCK(filc_global_initialization);
+PAS_DEFINE_LOCK(filc_global_variable_roots);
+
+filc_thread* filc_global_initialization_thread;
+unsigned  filc_global_initialization_depth;
+
+filc_ptr_array filc_global_initialization_stack_of_stacks = FILC_PTR_ARRAY_INITIALIZER;
+
+filc_global_initialization_work_item_hash_map filc_global_initialization_map =
+    PAS_HASHTABLE_INITIALIZER;
 
 unsigned filc_stop_the_world_count;
 pas_system_condition filc_stop_the_world_cond;
@@ -125,6 +134,7 @@ const filc_object filc_free_singleton = {
 };
 
 filc_object_array filc_global_variable_roots;
+filc_object_array filc_global_variable_root_ptrs;
 
 void filc_check_user_sigset(filc_ptr ptr, filc_access_kind access_kind)
 {
@@ -407,6 +417,7 @@ void filc_initialize(void)
     fugc_initialize_heaps();
 
     filc_object_array_construct(&filc_global_variable_roots);
+    filc_object_array_construct(&filc_global_variable_root_ptrs);
 
     filc_thread* thread = filc_thread_create_with_manual_tracking();
     thread->has_started = true;
@@ -1013,6 +1024,20 @@ void filc_exit_with_allocation_root(filc_thread* my_thread, void* allocation_roo
     filc_exit(my_thread);
 }
 
+filc_ptr_array* filc_ptr_array_create(void)
+{
+    filc_ptr_array* result = bmalloc_allocate(sizeof(filc_ptr_array));
+    filc_ptr_array_construct(result);
+    return result;
+}
+
+void filc_ptr_array_destroy(filc_ptr_array* array)
+{
+    PAS_ASSERT(array);
+    filc_ptr_array_destruct(array);
+    bmalloc_deallocate(array);
+}
+
 void filc_ptr_array_add(filc_ptr_array* array, void* ptr)
 {
     if (array->size >= array->capacity) {
@@ -1302,12 +1327,14 @@ void filc_mark_global_roots(filc_object_array* mark_stack)
     for (index = FILC_MAX_USER_SIGNUM + 1; index--;)
         fugc_mark(mark_stack, filc_object_for_special_payload(signal_table[index]));
 
-    filc_global_initialization_lock_lock();
+    filc_global_variable_roots_lock_lock();
     /* Global roots point to filc_objects that are global, i.e. they are not GC-allocated, but they do
        have outgoing pointers. So, rather than fugc_marking them, we just shove them into the mark
        stack. */
     filc_object_array_push_all(mark_stack, &filc_global_variable_roots);
-    filc_global_initialization_lock_unlock();
+    for (index = filc_global_variable_root_ptrs.num_objects; index--;)
+        fugc_mark(mark_stack, filc_global_variable_roots.objects[index]);
+    filc_global_variable_roots_lock_unlock();
 
     filc_thread** threads;
     size_t num_threads;
@@ -4059,54 +4086,78 @@ filc_ptr filc_strdup(filc_thread* my_thread, const char* str)
     return result;
 }
 
-filc_global_initialization_context* filc_global_initialization_context_create(
-    filc_global_initialization_context* parent)
+static void push_initialization_stack(void)
 {
-    static const bool verbose = false;
-    
-    filc_global_initialization_context* result;
-
-    if ((char*)&result < (char*)filc_get_my_thread()->stack_limit)
-        filc_stack_overflow_failure_impl();
-
-    if (verbose)
-        pas_log("creating context with parent = %p\n", parent);
-    
-    if (parent) {
-        parent->ref_count++;
-        return parent;
-    }
-
-    /* Can't exit to grab this lock, because the GC might grab it, and we support running the GC in
-       STW mode.
-       
-       Also, not need to exit to grab this lock, since we don't exit while the lock is held anyway. */
-    filc_global_initialization_lock_lock();
-    result = (filc_global_initialization_context*)
-        bmalloc_allocate(sizeof(filc_global_initialization_context));
-    if (verbose)
-        pas_log("new context at %p\n", result);
-    result->ref_count = 1;
-    pas_ptr_hash_map_construct(&result->map);
-
-    return result;
+    PAS_TESTING_ASSERT(filc_thread_is_entered(filc_get_my_thread()));
+    filc_ptr_array_add(&filc_global_initialization_stack_of_stacks, filc_ptr_array_create());
 }
 
-bool filc_global_initialization_context_add(
-    filc_global_initialization_context* context, filc_ptr* pizlonated_gptr, filc_object* object)
+static void pop_initialization_stack(void)
+{
+    PAS_TESTING_ASSERT(filc_thread_is_entered(filc_get_my_thread()));
+    filc_ptr_array* stack = (filc_ptr_array*)filc_ptr_array_pop(
+        &filc_global_initialization_stack_of_stacks);
+    PAS_ASSERT(stack);
+    PAS_ASSERT(!stack->size);
+    filc_ptr_array_destroy(stack);
+}
+
+static void lock_global_initialization(filc_thread* my_thread)
+{
+    if (my_thread == filc_global_initialization_thread) {
+        PAS_ASSERT(filc_global_initialization_depth);
+        filc_global_initialization_depth++;
+        PAS_ASSERT(filc_global_initialization_depth);
+        PAS_ASSERT(filc_global_initialization_stack_of_stacks.size >= 1);
+        return;
+    }
+    
+    filc_lock_lock(my_thread, &filc_global_initialization_lock);
+    PAS_ASSERT(!filc_global_initialization_thread);
+    PAS_ASSERT(!filc_global_initialization_depth);
+    PAS_ASSERT(!filc_global_initialization_stack_of_stacks.size);
+    filc_global_initialization_thread = my_thread;
+    filc_global_initialization_depth = 1;
+    push_initialization_stack();
+}
+
+static void unlock_global_initialization(filc_thread* my_thread)
+{
+    PAS_ASSERT(filc_global_initialization_thread == my_thread);
+    PAS_ASSERT(filc_global_initialization_depth);
+
+    if (--filc_global_initialization_depth)
+        return;
+
+    PAS_ASSERT(filc_global_initialization_stack_of_stacks.size == 1);
+    PAS_ASSERT(!filc_global_initialization_map.key_count);
+    pop_initialization_stack();
+    filc_global_initialization_thread = NULL;
+    filc_global_initialization_depth = 0;
+    filc_global_initialization_lock_unlock();
+}
+
+bool filc_global_initialization_start(filc_thread* my_thread, const filc_origin* passed_origin,
+                                      filc_ptr* pizlonated_gptr, filc_object* object)
 {
     static const bool verbose = false;
-    
-    pas_allocation_config allocation_config;
 
-    filc_global_initialization_lock_assert_held();
+    if (verbose)
+        pas_log("initializing global (gptr = %p, object = %p)\n", pizlonated_gptr, object);
+    
+    PAS_ASSERT(filc_thread_is_entered(my_thread));
+    
+    if (passed_origin)
+        my_thread->top_frame->origin = passed_origin;
+
+    char stack_slot;
+    if ((char*)&stack_slot < (char*)my_thread->stack_limit)
+        filc_stack_overflow_failure_impl();
+
+    lock_global_initialization(my_thread);
+
     filc_testing_validate_object(object, NULL);
     PAS_ASSERT(filc_object_get_flags(object) & FILC_OBJECT_FLAG_GLOBAL);
-
-    if (verbose) {
-        pas_log("dealing with context = %p, pizlonated_gptr = %p, object = %p\n",
-                context, pizlonated_gptr, object);
-    }
 
     filc_ptr gptr_value = filc_flight_ptr_load_atomic_unfenced_with_manual_tracking(pizlonated_gptr);
     if (filc_ptr_ptr(gptr_value)) {
@@ -4123,74 +4174,228 @@ bool filc_global_initialization_context_add(
                       already initialized. */
         if (verbose)
             pas_log("was already initialized\n");
-        return false;
+        /* We might not be getting a load-load dependency to fence accesses to the global, so do a
+           fence. */
+        pas_fence();
+        goto return_false;
     }
-
+    
     PAS_ASSERT(!filc_ptr_object(gptr_value));
-
-    bmalloc_initialize_allocation_config(&allocation_config);
 
     if (verbose)
         pas_log("object = %s\n", filc_object_to_new_string(object));
+    
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
 
-    pas_ptr_hash_map_add_result add_result = pas_ptr_hash_map_add(
-        &context->map, pizlonated_gptr, NULL, &allocation_config);
+    filc_global_initialization_work_item_hash_map_add_result add_result =
+        filc_global_initialization_work_item_hash_map_add(
+            &filc_global_initialization_map, pizlonated_gptr, NULL, &allocation_config);
     if (!add_result.is_new_entry) {
         if (verbose)
             pas_log("was already seen\n");
-        filc_object* existing_object = add_result.entry->value;
+        PAS_ASSERT(add_result.entry->generation <= filc_global_initialization_stack_of_stacks.size);
+        FILC_CHECK(
+            add_result.entry->generation == filc_global_initialization_stack_of_stacks.size,
+            NULL,
+            "attempted to use global variable that is currently being initialized.");
+        filc_object* existing_object = add_result.entry->object;
         PAS_ASSERT(existing_object == object);
-        return false;
+        goto return_false;
     }
 
     if (verbose)
         pas_log("going to initialize object = %s\n", filc_object_to_new_string(object));
 
+    filc_global_variable_roots_lock_lock();
     filc_object_array_push(&filc_global_variable_roots, object);
+    filc_global_variable_roots_lock_unlock();
 
-    add_result.entry->key = pizlonated_gptr;
-    add_result.entry->value = object;
+    add_result.entry->pizlonated_gptr = pizlonated_gptr;
+    add_result.entry->generation = filc_global_initialization_stack_of_stacks.size;
+    add_result.entry->object = object;
+    filc_ptr_array_add((filc_ptr_array*)filc_ptr_array_top(
+                           &filc_global_initialization_stack_of_stacks),
+                       pizlonated_gptr);
 
     return true;
+
+return_false:
+    unlock_global_initialization(my_thread);
+    return false;
 }
 
-void filc_global_initialization_context_destroy(filc_global_initialization_context* context)
+static void finish_initialization_generation(filc_thread* my_thread)
 {
     static const bool verbose = false;
-    
-    size_t index;
-    pas_allocation_config allocation_config;
-
-    PAS_ASSERT(context->ref_count);
-    if (--context->ref_count)
-        return;
 
     if (verbose)
-        pas_log("destroying/comitting context at %p\n", context);
+        pas_log("finishing initialization generation.\n");
+
+    filc_global_initialization_lock_assert_held();
+    PAS_ASSERT(filc_global_initialization_thread == my_thread);
+    PAS_ASSERT(filc_global_initialization_depth);
+    PAS_ASSERT(filc_global_initialization_stack_of_stacks.size);
     
     pas_store_store_fence();
 
-    for (index = context->map.table_size; index--;) {
-        pas_ptr_hash_map_entry entry = context->map.table[index];
-        if (pas_ptr_hash_map_entry_is_empty_or_deleted(entry))
-            continue;
-        filc_ptr* pizlonated_gptr = (filc_ptr*)entry.key;
-        filc_object* object = (filc_object*)entry.value;
-        PAS_TESTING_ASSERT(filc_ptr_is_totally_null(*pizlonated_gptr));
-        filc_testing_validate_object(object, NULL);
-        filc_flight_ptr_store_atomic_unfenced_without_barrier(
-            pizlonated_gptr, filc_ptr_create_with_object_and_manual_tracking(object));
-    }
+    filc_ptr_array* stack = (filc_ptr_array*)filc_ptr_array_top(
+        &filc_global_initialization_stack_of_stacks);
+    PAS_ASSERT(stack);
 
+    pas_allocation_config allocation_config;
     bmalloc_initialize_allocation_config(&allocation_config);
 
-    pas_ptr_hash_map_destruct(&context->map, &allocation_config);
-    bmalloc_deallocate(context);
-    filc_global_initialization_lock_unlock();
+    size_t index;
+    for (index = stack->size; index--;) {
+        filc_global_initialization_work_item work_item =
+            filc_global_initialization_work_item_hash_map_take(
+                &filc_global_initialization_map, (filc_ptr*)stack->array[index], NULL,
+                &allocation_config);
+        PAS_ASSERT(!filc_global_initialization_work_item_is_empty_or_deleted(work_item));
+        PAS_ASSERT(work_item.generation == filc_global_initialization_stack_of_stacks.size);
+        if (!work_item.object) {
+            /* This is an ifunc, and those are initialized separately from here. The important thing
+               is just to remove them from the map (which we have done). */
+            continue;
+        }
+        PAS_TESTING_ASSERT(filc_ptr_is_totally_null(*work_item.pizlonated_gptr));
+        filc_testing_validate_object(work_item.object, NULL);
+        filc_flight_ptr_store_atomic_unfenced_without_barrier(
+            work_item.pizlonated_gptr,
+            filc_ptr_create_with_object_and_manual_tracking(work_item.object));
+    }
+
+    stack->size = 0;
 }
 
-static filc_ptr get_constant_value(filc_constant_kind kind, void* target,
-                                   filc_global_initialization_context* context)
+void filc_global_initialization_end(filc_thread* my_thread)
+{
+    PAS_ASSERT(filc_global_initialization_depth >= 1);
+
+    if (filc_global_initialization_depth == 1)
+        finish_initialization_generation(my_thread);
+
+    unlock_global_initialization(my_thread);
+}
+
+filc_ptr filc_call_ifunc(filc_thread* my_thread, const filc_origin* passed_origin,
+                         filc_ptr* pizlonated_gptr, pizlonated_function ifunc)
+{
+    static const bool verbose = false;
+    
+    PAS_ASSERT(filc_thread_is_entered(my_thread));
+    
+    if (passed_origin)
+        my_thread->top_frame->origin = passed_origin;
+
+    lock_global_initialization(my_thread);
+
+    filc_ptr gptr_value = filc_flight_ptr_load_atomic_unfenced_with_manual_tracking(pizlonated_gptr);
+    if (filc_ptr_ptr(gptr_value)) {
+        PAS_ASSERT(filc_ptr_object(gptr_value));
+        PAS_ASSERT(filc_ptr_lower(gptr_value) == filc_ptr_ptr(gptr_value));
+        /* This case happens if there is a race like this:
+           
+           Thread #1: runs global fast path for g_foo, but it's NULL, so it starts to create its
+                      context, but doesn't get as far as locking the lock.
+           Thread #2: runs global fast path for g_foo, it's NULL, so it runs the initializer, including
+                      locking/unlocking the initialization lock and all that.
+           Thread #1: finally gets the lock and calls this function, and we find that the global is
+                      already initialized. */
+        if (verbose)
+            pas_log("was already initialized\n");
+        unlock_global_initialization(my_thread);
+        /* We might not be getting a load-load dependency to fence accesses to the global, so do a
+           fence. */
+        pas_fence();
+        return gptr_value;
+    }
+
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
+    
+    filc_global_initialization_work_item_hash_map_add_result add_result =
+        filc_global_initialization_work_item_hash_map_add(
+            &filc_global_initialization_map, pizlonated_gptr, NULL, &allocation_config);
+    if (!add_result.is_new_entry) {
+        if (verbose)
+            pas_log("was already seen\n");
+        PAS_ASSERT(add_result.entry->generation < filc_global_initialization_stack_of_stacks.size);
+        PAS_ASSERT(!add_result.entry->object);
+        filc_safety_panic(NULL, "attempted to use ifunc-resolved global recursively.");
+    }
+
+    add_result.entry->pizlonated_gptr = pizlonated_gptr;
+    add_result.entry->generation = filc_global_initialization_stack_of_stacks.size;
+    add_result.entry->object = NULL;
+    filc_ptr_array_add((filc_ptr_array*)filc_ptr_array_top(
+                           &filc_global_initialization_stack_of_stacks),
+                       pizlonated_gptr);
+
+    push_initialization_stack();
+
+    /* It's likely that we have a top native frame and it's not locked. Lock it to prevent assertions
+       in that case. */
+    bool was_top_native_frame_unlocked =
+        my_thread->top_native_frame && !my_thread->top_native_frame->locked;
+    if (was_top_native_frame_unlocked)
+        filc_lock_top_native_frame(my_thread);
+
+    FILC_DEFINE_FRAME("call_ifunc");
+    filc_push_frame(my_thread, frame);
+
+    filc_native_frame native_frame;
+    filc_push_native_frame(my_thread, &native_frame);
+
+    filc_ptr result = filc_call_user_ptr_void(my_thread, ifunc);
+    filc_global_variable_roots_lock_lock();
+    filc_object_array_push(&filc_global_variable_root_ptrs, filc_ptr_object(result));
+    filc_global_variable_roots_lock_unlock();
+
+    filc_pop_native_frame(my_thread, &native_frame);
+    filc_pop_frame(my_thread, frame);
+
+    if (was_top_native_frame_unlocked)
+        filc_unlock_top_native_frame(my_thread);
+
+    finish_initialization_generation(my_thread);
+
+    /* Now we make the ifunc properly initialized, because we know that anything it could have
+       referenced is properly initialized. */
+    pas_store_store_fence();
+    filc_flight_ptr_store_atomic_unfenced(my_thread, pizlonated_gptr, result);
+    
+    pop_initialization_stack();
+
+    filc_global_initialization_end(my_thread);
+
+    return result;
+}
+
+static filc_ptr_array deferred_ifuncs = FILC_PTR_ARRAY_INITIALIZER;
+static bool did_run_deferred_ifuncs = false;
+
+void filc_call_ifunc_from_yolo_ifunc(pizlonated_getter ifunc_getter)
+{
+    /* We only expect ifuncs to be called yolo-style if we haven't been initialized yet. */
+    PAS_ASSERT(!did_run_deferred_ifuncs);
+    PAS_ASSERT(!is_initialized);
+
+    filc_ptr_array_add(&deferred_ifuncs, ifunc_getter);
+}
+
+void filc_run_deferred_ifuncs(filc_thread* my_thread)
+{
+    did_run_deferred_ifuncs = true;
+    PAS_ASSERT(filc_thread_is_entered(my_thread));
+    size_t index;
+    for (index = 0; index < deferred_ifuncs.size; ++index)
+        ((pizlonated_getter)deferred_ifuncs.array[index])(my_thread, NULL);
+    filc_ptr_array_destruct(&deferred_ifuncs);
+}
+
+static filc_ptr get_constant_value(filc_thread* my_thread, filc_constant_kind kind, void* target)
 {
     switch (kind) {
     case filc_global_constant: {
@@ -4198,7 +4403,7 @@ static filc_ptr get_constant_value(filc_constant_kind kind, void* target,
             /* This happens if target is a weak symbol. */
             return filc_ptr_forge_null();
         }
-        filc_ptr result = ((pizlonated_linker_stub)target)(context);
+        filc_ptr result = ((pizlonated_getter)target)(my_thread, NULL);
         PAS_ASSERT(filc_ptr_object(result));
         PAS_ASSERT(filc_ptr_ptr(result));
         return result;
@@ -4208,7 +4413,7 @@ static filc_ptr get_constant_value(filc_constant_kind kind, void* target,
         switch (node->opcode) {
         case filc_constexpr_add_ptr_immediate:
             return filc_ptr_with_offset(
-                get_constant_value(node->left_kind, node->left_target, context),
+                get_constant_value(my_thread, node->left_kind, node->left_target),
                 node->right_value);
         }
         PAS_ASSERT(!"Bad constexpr opcode");
@@ -4218,17 +4423,18 @@ static filc_ptr get_constant_value(filc_constant_kind kind, void* target,
 }
 
 void filc_execute_constant_relocations(
-    filc_object* constant, filc_constant_relocation* relocations, size_t num_relocations,
-    filc_global_initialization_context* context)
+    filc_thread* my_thread, filc_object* constant, filc_constant_relocation* relocations,
+    size_t num_relocations)
 {
     static const bool verbose = false;
     size_t index;
     PAS_ASSERT(constant);
-    PAS_ASSERT(context);
+    PAS_ASSERT(my_thread);
+    PAS_ASSERT(filc_thread_is_entered(my_thread));
     if (verbose)
         pas_log("Executing constant relocations!\n");
     /* Nothing here needs to be atomic, since the constant doesn't become visible to the universe
-       until the initialization context is destroyed. */
+       until initialization ends. */
     char* payload_ptr = (char*)filc_object_lower(constant);
     char* aux_ptr = filc_object_aux_ptr(constant);
     PAS_ASSERT(payload_ptr);
@@ -4237,7 +4443,7 @@ void filc_execute_constant_relocations(
         filc_constant_relocation* relocation;
         relocation = relocations + index;
         PAS_ASSERT(pas_is_aligned(relocation->offset, FILC_WORD_SIZE));
-        filc_ptr value = get_constant_value(relocation->kind, relocation->target, context);
+        filc_ptr value = get_constant_value(my_thread, relocation->kind, relocation->target);
         void** raw_ptr_ptr = (void**)(payload_ptr + relocation->offset);
         filc_lower_or_box* lower_or_box_ptr = (filc_lower_or_box*)(aux_ptr + relocation->offset);
         PAS_ASSERT(!*raw_ptr_ptr);
@@ -4436,6 +4642,16 @@ void filc_system_mutex_lock(filc_thread* my_thread, pas_system_mutex* lock)
     filc_enter(my_thread);
 }
 
+void filc_lock_lock(filc_thread* my_thread, pas_lock* lock)
+{
+    if (pas_lock_try_lock(lock))
+        return;
+
+    filc_exit(my_thread);
+    pas_lock_lock(lock);
+    filc_enter(my_thread);
+}
+
 static void print_str(const char* str)
 {
     size_t length;
@@ -4624,7 +4840,7 @@ void filc_native_zstack_scan(filc_thread* my_thread, filc_ptr callback_ptr, filc
                 bool has_personality;
                 if (function_origin->personality_getter) {
                     has_personality = true;
-                    personality_function = function_origin->personality_getter(NULL);
+                    personality_function = function_origin->personality_getter(my_thread, NULL);
                 } else {
                     has_personality = false;
                     personality_function = filc_ptr_forge_null();
@@ -4634,7 +4850,7 @@ void filc_native_zstack_scan(filc_thread* my_thread, filc_ptr callback_ptr, filc
                 filc_ptr eh_data;
                 filc_origin_with_eh* origin_with_eh = (filc_origin_with_eh*)outer_origin;
                 if (has_personality && origin_with_eh->eh_data_getter)
-                    eh_data = origin_with_eh->eh_data_getter(NULL);
+                    eh_data = origin_with_eh->eh_data_getter(my_thread, NULL);
                 else
                     eh_data = filc_ptr_forge_null();
                 filc_store_ptr_at(my_thread, description_ptr, &description->eh_data, eh_data);
@@ -4708,10 +4924,10 @@ static unwind_reason_code call_personality(
     unwind_context* context = (unwind_context*)filc_ptr_ptr(context_ptr);
 
     filc_origin_with_eh* origin_with_eh = (filc_origin_with_eh*)current_frame->origin;
-    pizlonated_linker_stub eh_data_getter = origin_with_eh->eh_data_getter;
+    pizlonated_getter eh_data_getter = origin_with_eh->eh_data_getter;
     filc_ptr eh_data;
     if (eh_data_getter)
-        eh_data = eh_data_getter(NULL);
+        eh_data = eh_data_getter(my_thread, NULL);
     else
         eh_data = filc_ptr_forge_null();
     filc_store_ptr_at(my_thread, context_ptr, &context->language_specific_data, eh_data);
@@ -4722,7 +4938,7 @@ static unwind_reason_code call_personality(
     unwind_exception_class exception_class = exception_object->exception_class;
 
     filc_ptr personality_ptr =
-        filc_origin_get_function_origin(current_frame->origin)->personality_getter(NULL);
+        filc_origin_get_function_origin(current_frame->origin)->personality_getter(my_thread, NULL);
     filc_thread_track_object(my_thread, filc_ptr_object(personality_ptr));
     filc_check_function_call(personality_ptr);
 
@@ -4814,9 +5030,9 @@ static void forced_unwind(filc_thread* my_thread, filc_ptr context_ptr, filc_ptr
         filc_ptr eh_data = filc_ptr_forge_null();
         if (current_frame && function_origin->personality_getter) {
             filc_origin_with_eh* origin_with_eh = (filc_origin_with_eh*)current_frame->origin;
-            pizlonated_linker_stub eh_data_getter = origin_with_eh->eh_data_getter;
+            pizlonated_getter eh_data_getter = origin_with_eh->eh_data_getter;
             if (eh_data_getter)
-                eh_data = eh_data_getter(NULL);
+                eh_data = eh_data_getter(my_thread, NULL);
         }
         filc_store_ptr_at(my_thread, context_ptr, &context->language_specific_data, eh_data);
         context->frame_address = (unsigned long)current_frame;
@@ -6376,15 +6592,15 @@ filc_ptr filc_native_zsys_dlsym(filc_thread* my_thread, filc_ptr handle_ptr, fil
     pas_string_stream_construct(&stream, &allocation_config);
     pas_string_stream_printf(&stream, "pizlonated_%s", symbol);
     filc_exit(my_thread);
-    filc_ptr (*raw_symbol)(filc_global_initialization_context*) =
-        dlsym(handle, pas_string_stream_get_string(&stream));
+    pizlonated_getter raw_symbol =
+        (pizlonated_getter)dlsym(handle, pas_string_stream_get_string(&stream));
     filc_enter(my_thread);
     pas_string_stream_destruct(&stream);
     if (!raw_symbol) {
         set_dlerror(dlerror());
         return filc_ptr_forge_null();
     }
-    return raw_symbol(NULL);
+    return raw_symbol(my_thread, NULL);
 }
 
 int filc_native_zsys_faccessat(filc_thread* my_thread, int dirfd, filc_ptr pathname_ptr, int mode,
@@ -8541,6 +8757,10 @@ filc_ptr filc_native_zthread_create(filc_thread* my_thread, filc_ptr callback_pt
         did_run_deferred_global_ctors,
         NULL,
         "cannot create threads before global constructors have started being run.");
+    FILC_CHECK(
+        did_run_deferred_ifuncs,
+        NULL,
+        "cannot create threads before deferred ifuncs have started being run.");
     filc_check_function_call(callback_ptr);
     filc_thread* thread = filc_thread_create_with_manual_tracking();
     filc_thread_track_object(my_thread, filc_object_for_special_payload(thread));

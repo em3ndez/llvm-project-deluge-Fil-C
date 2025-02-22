@@ -36,8 +36,8 @@ extern char** environ;
 
 static void really_start_program(
     int argc, char** argv,
-    pizlonated_linker_stub pizlonated___libc_start_main,
-    pizlonated_linker_stub pizlonated_main)
+    pizlonated_getter pizlonated___libc_start_main,
+    pizlonated_getter pizlonated_main)
 {
     static const bool verbose = false;
     
@@ -69,7 +69,7 @@ static void really_start_program(
         filc_store_ptr(my_thread, pizlonated_argv, filc_mul_size(index, sizeof(void*)), arg);
     }
 
-    main_ptr = pizlonated_main(NULL);
+    main_ptr = pizlonated_main(my_thread, NULL);
     if (verbose)
         pas_log("main_ptr.ptr = %p, main_ptr.lower = %p\n", main_ptr.ptr, main_ptr.lower);
     filc_thread_track_object(my_thread, filc_ptr_object(main_ptr));
@@ -121,9 +121,10 @@ static void really_start_program(
     PAS_ASSERT(!auxv[num_entries - 1]);
 
     filc_set_user_environment(my_thread, argc, pizlonated_argv, environ_ptr, auxv_ptr);
+    filc_run_deferred_ifuncs(my_thread);
     
     if (pizlonated___libc_start_main) {
-        __libc_start_main_ptr = pizlonated___libc_start_main(NULL);
+        __libc_start_main_ptr = pizlonated___libc_start_main(my_thread, NULL);
         if (verbose) {
             pas_log("__libc_start_main object = %p\n", filc_ptr_object(__libc_start_main_ptr));
             pas_log("__libc_start_main object->lower = %p\n",
@@ -164,8 +165,8 @@ static void really_start_program(
 struct args {
     int argc;
     char** argv;
-    pizlonated_linker_stub pizlonated___libc_start_main;
-    pizlonated_linker_stub pizlonated_main;
+    pizlonated_getter pizlonated___libc_start_main;
+    pizlonated_getter pizlonated_main;
     sigset_t oldset;
 };
 
@@ -175,8 +176,8 @@ static void* thread_main(void* arg)
 
     int argc = args->argc;
     char** argv = args->argv;
-    pizlonated_linker_stub pizlonated___libc_start_main = args->pizlonated___libc_start_main;
-    pizlonated_linker_stub pizlonated_main = args->pizlonated_main;
+    pizlonated_getter pizlonated___libc_start_main = args->pizlonated___libc_start_main;
+    pizlonated_getter pizlonated_main = args->pizlonated_main;
 
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &args->oldset, NULL));
 
@@ -189,8 +190,8 @@ static void* thread_main(void* arg)
 }
 
 void filc_start_program(int argc, char** argv,
-                        pizlonated_linker_stub pizlonated___libc_start_main,
-                        pizlonated_linker_stub pizlonated_main)
+                        pizlonated_getter pizlonated___libc_start_main,
+                        pizlonated_getter pizlonated_main)
 {
     struct args* args = (struct args*)bmalloc_allocate(sizeof(struct args));
     args->argc = argc;
