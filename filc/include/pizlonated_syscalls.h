@@ -284,6 +284,9 @@ int zsys_setdomainname(const char* name, __SIZE_TYPE__ len);
 int zsys_gethostname(char* name, __SIZE_TYPE__ len);
 int zsys_sethostname(const char* name, __SIZE_TYPE__ len);
 int zsys_remap_file_pages(void* addr, __SIZE_TYPE__ size, int prot, __SIZE_TYPE__ pgoff, int flags);
+int zsys_swapon(const char* path, int flags);
+int zsys_swapoff(const char* path);
+int zsys_syncfs(int fd);
 
 #ifdef __cplusplus
 }

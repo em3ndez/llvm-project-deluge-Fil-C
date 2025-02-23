@@ -84,6 +84,7 @@
 #include <sys/msg.h>
 #include <grp.h>
 #include <math.h>
+#include <sys/swap.h>
 
 #define DEFINE_LOCK(name) \
     pas_system_mutex filc_## name ## _lock; \
@@ -8703,6 +8704,23 @@ int filc_native_zsys_remap_file_pages(filc_thread* my_thread, filc_ptr addr_ptr,
     check_mmap(addr_ptr);
     return FILC_SYSCALL(my_thread, remap_file_pages(filc_ptr_ptr(addr_ptr), size, user_prot, pgoff,
                                                     flags));
+}
+
+int filc_native_zsys_swapon(filc_thread* my_thread, filc_ptr path_ptr, int flags)
+{
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    return FILC_SYSCALL(my_thread, swapon(path, flags));
+}
+
+int filc_native_zsys_swapoff(filc_thread* my_thread, filc_ptr path_ptr)
+{
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    return FILC_SYSCALL(my_thread, swapoff(path));
+}
+
+int filc_native_zsys_syncfs(filc_thread* my_thread, int fd)
+{
+    return FILC_SYSCALL(my_thread, syncfs(fd));
 }
 
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
