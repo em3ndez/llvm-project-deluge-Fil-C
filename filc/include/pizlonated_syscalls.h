@@ -288,6 +288,9 @@ int zsys_swapon(const char* path, int flags);
 int zsys_swapoff(const char* path);
 int zsys_syncfs(int fd);
 long zsys_syscall(long n, ...);
+int zsys_vhangup(void);
+int zsys_ioperm(unsigned long form, unsigned long num, int turn_on);
+int zsys_iopl(int level);
 
 #ifdef __cplusplus
 }

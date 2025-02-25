@@ -392,6 +392,9 @@ addSig "int", "zsys_remap_file_pages", "filc_ptr", "size_t", "int", "size_t", "i
 addSig "int", "zsys_swapon", "filc_ptr", "int"
 addSig "int", "zsys_swapoff", "filc_ptr"
 addSig "int", "zsys_syncfs", "int"
+addSig "int", "zsys_vhangup"
+addSig "int", "zsys_ioperm", "unsigned long", "unsigned long", "int"
+addSig "int", "zsys_iopl", "int"
 
 addSig "filc_ptr", "zthread_self"
 addSig "unsigned", "zthread_get_id", "filc_ptr"

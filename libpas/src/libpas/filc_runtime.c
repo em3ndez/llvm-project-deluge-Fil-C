@@ -85,6 +85,7 @@
 #include <grp.h>
 #include <math.h>
 #include <sys/swap.h>
+#include <sys/io.h>
 
 #define DEFINE_LOCK(name) \
     pas_system_mutex filc_## name ## _lock; \
@@ -8721,6 +8722,22 @@ int filc_native_zsys_swapoff(filc_thread* my_thread, filc_ptr path_ptr)
 int filc_native_zsys_syncfs(filc_thread* my_thread, int fd)
 {
     return FILC_SYSCALL(my_thread, syncfs(fd));
+}
+
+int filc_native_zsys_vhangup(filc_thread* my_thread)
+{
+    return FILC_SYSCALL(my_thread, vhangup());
+}
+
+int filc_native_zsys_ioperm(filc_thread* my_thread, unsigned long form, unsigned long num,
+                            int turn_on)
+{
+    return FILC_SYSCALL(my_thread, ioperm(form, num, turn_on));
+}
+
+int filc_native_zsys_iopl(filc_thread* my_thread, int level)
+{
+    return FILC_SYSCALL(my_thread, iopl(level));
 }
 
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
