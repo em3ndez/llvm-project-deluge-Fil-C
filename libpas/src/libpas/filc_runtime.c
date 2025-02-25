@@ -90,6 +90,8 @@
 #include <sys/fsuid.h>
 #include <asm/prctl.h>
 #include <sys/prctl.h>
+#include <sys/inotify.h>
+#include <sys/mount.h>
 
 #define DEFINE_LOCK(name) \
     pas_system_mutex filc_## name ## _lock; \
@@ -8795,6 +8797,205 @@ int filc_native_zsys_modify_ldt(filc_thread* my_thread, int func, filc_ptr ptr,
         "modify_ldt with func != 0 not allowed.");
     filc_check_write(ptr, bytecount);
     return FILC_SYSCALL(my_thread, syscall(SYS_modify_ldt, 0, filc_ptr_ptr(ptr), bytecount));
+}
+
+struct user_cap_header {
+    unsigned version;
+    int pid;
+};
+
+struct user_cap_data {
+    unsigned effective;
+    unsigned permitted;
+    unsigned inheritable;
+};
+
+#define CAP_VERSION_1 0x19980330
+#define CAP_VERSION_2 0x20071026
+#define CAP_VERSION_3 0x20080522
+
+static int get_preferred_version(filc_thread* my_thread, struct user_cap_header* header)
+{
+    header->version = CAP_VERSION_3;
+    struct user_cap_data data[2];
+    return FILC_SYSCALL(my_thread, syscall(SYS_capget, header, data));
+}
+
+int filc_native_zsys_capget(filc_thread* my_thread, filc_ptr header_ptr, filc_ptr data_ptr)
+{
+    filc_check_write(header_ptr, sizeof(struct user_cap_header));
+    struct user_cap_header* header = (struct user_cap_header*)filc_ptr_ptr(header_ptr);
+    switch (header->version) {
+    case CAP_VERSION_1:
+        filc_check_write(data_ptr, sizeof(struct user_cap_data));
+        break;
+    case CAP_VERSION_2:
+    case CAP_VERSION_3:
+        filc_check_write(data_ptr, sizeof(struct user_cap_data) * 2);
+        break;
+    default:
+        return get_preferred_version(my_thread, header);
+    }
+    return FILC_SYSCALL(my_thread, syscall(SYS_capget, header, filc_ptr_ptr(data_ptr)));
+}
+
+int filc_native_zsys_capset(filc_thread* my_thread, filc_ptr header_ptr, filc_ptr data_ptr)
+{
+    filc_check_write(header_ptr, sizeof(struct user_cap_header));
+    struct user_cap_header* header = (struct user_cap_header*)filc_ptr_ptr(header_ptr);
+    switch (header->version) {
+    case CAP_VERSION_1:
+        filc_check_read(data_ptr, sizeof(struct user_cap_data));
+        break;
+    case CAP_VERSION_2:
+    case CAP_VERSION_3:
+        filc_check_read(data_ptr, sizeof(struct user_cap_data) * 2);
+        break;
+    default:
+        return get_preferred_version(my_thread, header);
+    }
+    return FILC_SYSCALL(my_thread, syscall(SYS_capset, header, filc_ptr_ptr(data_ptr)));
+}
+
+int filc_native_zsys_delete_module(filc_thread* my_thread, filc_ptr name_ptr, int flags)
+{
+    char* name = filc_check_and_get_tmp_str(my_thread, name_ptr);
+    return FILC_SYSCALL(my_thread, syscall(SYS_delete_module, name, flags));
+}
+
+int filc_native_zsys_inotify_add_watch(filc_thread* my_thread, int fd, filc_ptr path_ptr,
+                                       unsigned mask)
+{
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    return FILC_SYSCALL(my_thread, inotify_add_watch(fd, path, mask));
+}
+
+int filc_native_zsys_fsconfig(filc_thread* my_thread, int fd, unsigned cmd, filc_ptr key_ptr,
+                              filc_ptr data_ptr, int aux)
+{
+#if PAS_GLIBC
+    void* data = NULL;
+    bool need_key = true;
+    switch (cmd) {
+    case FSCONFIG_SET_FLAG:
+        FILC_CHECK(
+            !filc_ptr_ptr(data_ptr),
+            NULL,
+            "data must be NULL for FSCONFIG_SET_FLAG.");
+        FILC_CHECK(
+            !aux,
+            NULL,
+            "aux must be 0 for FSCONFIG_SET_FLAG.");
+        break;
+    case FSCONFIG_SET_STRING:
+        FILC_CHECK(
+            !aux,
+            NULL,
+            "aux must be 0 for FSCONFIG_SET_STRING.");
+        data = filc_check_and_get_tmp_str(my_thread, data_ptr);
+        break;
+    case FSCONFIG_SET_BINARY:
+        filc_check_read(data_ptr, aux);
+        data = filc_ptr_ptr(data_ptr);
+        break;
+    case FSCONFIG_SET_PATH:
+    case FSCONFIG_SET_PATH_EMPTY:
+        data = filc_check_and_get_tmp_str(my_thread, data_ptr);
+        break;
+    case FSCONFIG_SET_FD:
+        FILC_CHECK(
+            !filc_ptr_ptr(data_ptr),
+            NULL,
+            "data must be NULL for FSCONFIG_SET_FD.");
+        break;
+    case FSCONFIG_CMD_CREATE:
+        need_key = false;
+        FILC_CHECK(
+            !filc_ptr_ptr(key_ptr),
+            NULL,
+            "key must be NULL for FSCONFIG_CMD_CREATE.");
+        FILC_CHECK(
+            !filc_ptr_ptr(data_ptr),
+            NULL,
+            "data must be NULL for FSCONFIG_CMD_CREATE.");
+        FILC_CHECK(
+            !aux,
+            NULL,
+            "aux must be 0 for FSCONFIG_CMD_CREATE.");
+        break;
+    case FSCONFIG_CMD_RECONFIGURE:
+        need_key = false;
+        FILC_CHECK(
+            !filc_ptr_ptr(key_ptr),
+            NULL,
+            "key must be NULL for FSCONFIG_CMD_RECONFIGURE.");
+        FILC_CHECK(
+            !filc_ptr_ptr(data_ptr),
+            NULL,
+            "data must be NULL for FSCONFIG_CMD_RECONFIGURE.");
+        FILC_CHECK(
+            !aux,
+            NULL,
+            "aux must be 0 for FSCONFIG_CMD_RECONFIGURE.");
+        break;
+    default:
+        filc_set_errno(EINVAL);
+        return -1;
+    }
+    char* key = NULL;
+    if (need_key)
+        key = filc_check_and_get_tmp_str(my_thread, key_ptr);
+    return FILC_SYSCALL(my_thread, fsconfig(fd, cmd, key, data, aux));
+#else /* PAS_GLIBC -> so !PAS_GLIBC. */
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fd);
+    PAS_UNUSED_PARAM(cmd);
+    PAS_UNUSED_PARAM(key_ptr);
+    PAS_UNUSED_PARAM(data_ptr);
+    PAS_UNUSED_PARAM(aux);
+    filc_internal_panic(NULL, "fsconfig not supported.");
+    return -1;
+#endif /* PAS_GLIBC -> so end of !PAS_GLIBC. */
+}
+
+int filc_native_zsys_fsmount(filc_thread* my_thread, int fd, unsigned flags, unsigned ms_flags)
+{
+#if PAS_GLIBC
+    return FILC_SYSCALL(my_thread, fsmount(fd, flags, ms_flags));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fd);
+    PAS_UNUSED_PARAM(flags);
+    PAS_UNUSED_PARAM(ms_flags);
+    filc_internal_panic(NULL, "fsmount not supported.");
+#endif
+}
+
+int filc_native_zsys_fsopen(filc_thread* my_thread, filc_ptr name_ptr, unsigned flags)
+{
+#if PAS_GLIBC
+    char* name = filc_check_and_get_tmp_str(my_thread, name_ptr);
+    return FILC_SYSCALL(my_thread, fsopen(name, flags));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(name_ptr);
+    PAS_UNUSED_PARAM(flags);
+    filc_internal_panic(NULL, "fsopen not supported.");
+#endif
+}
+
+int filc_native_zsys_fspick(filc_thread* my_thread, int fd, filc_ptr path_ptr, unsigned flags)
+{
+#if PAS_GLIBC
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    return FILC_SYSCALL(my_thread, fspick(fd, path, flags));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fd);
+    PAS_UNUSED_PARAM(path_ptr);
+    PAS_UNUSED_PARAM(flags);
+    filc_internal_panic(NULL, "fspick not supported.");
+#endif
 }
 
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)

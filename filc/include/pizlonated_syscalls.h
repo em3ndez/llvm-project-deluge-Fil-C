@@ -296,6 +296,14 @@ int zsys_setfsgid(unsigned fsgid);
 int zsys_setfsuid(unsigned fsuid);
 int zsys_arch_prctl(int code, void* addr);
 int zsys_modify_ldt(int func, void* ptr, unsigned long bytecount);
+int zsys_capset(void* header, void* data);
+int zsys_capget(void* header, void* data);
+int zsys_delete_module(const char* name, int flags);
+int zsys_inotify_add_watch(int fd, const char* path, unsigned mask);
+int zsys_fsconfig(int fd, unsigned cmd, const char* key, const void* data, int aux);
+int zsys_fsmount(int fd, unsigned flags, unsigned ms_flags);
+int zsys_fsopen(const char* name, unsigned flags);
+int zsys_fspick(int fd, const char* path, unsigned flags);
 
 #ifdef __cplusplus
 }
