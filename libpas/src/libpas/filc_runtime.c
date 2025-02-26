@@ -93,9 +93,11 @@
 #include <sys/inotify.h>
 #include <sys/mount.h>
 #include <sys/klog.h>
+#include <sys/timerfd.h>
 
 #if PAS_GLIBC
 #include <sys/pidfd.h>
+#include <sys/fanotify.h>
 #endif
 
 #define DEFINE_LOCK(name) \
@@ -9278,7 +9280,7 @@ ssize_t filc_native_zsys_process_madvise(filc_thread* my_thread, int pidfd, filc
             "process.", advice);
         iov = filc_prepare_iovec(my_thread, iov_ptr, n, filc_extended_no_access);
     }
-    return FILC_SYSCALL(my_thread, syscall(SYS_process_madvise, pidfd, iov, n, advice, flags));
+    return FILC_SYSCALL(my_thread, process_madvise(pidfd, iov, n, advice, flags));
 #else
     PAS_UNUSED_PARAM(my_thread);
     PAS_UNUSED_PARAM(pidfd);
@@ -9288,6 +9290,72 @@ ssize_t filc_native_zsys_process_madvise(filc_thread* my_thread, int pidfd, filc
     PAS_UNUSED_PARAM(flags);
     filc_internal_panic(NULL, "process_madvise not supported.");
 #endif
+}
+
+int filc_native_zsys_process_mrelease(filc_thread* my_thread, int pidfd, unsigned flags)
+{
+#if PAS_GLIBC
+    return FILC_SYSCALL(my_thread, process_mrelease(pidfd, flags));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(pidfd);
+    PAS_UNUSED_PARAM(flags);
+    filc_internal_panic(NULL, "process_mrelease not supported.");
+#endif
+}
+
+int filc_native_zsys_fanotify_init(filc_thread* my_thread, unsigned flags, unsigned event_flags)
+{
+#if PAS_GLIBC
+    return FILC_SYSCALL(my_thread, fanotify_init(flags, event_flags));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(flags);
+    PAS_UNUSED_PARAM(event_flags);
+    filc_internal_panic(NULL, "fanotify_init not supported.");
+#endif
+}
+
+int filc_native_zsys_fanotify_mark(filc_thread* my_thread, int fd, unsigned flags,
+                                   unsigned long long mask, int dfd, filc_ptr path_ptr)
+{
+#if PAS_GLIBC
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    return FILC_SYSCALL(my_thread, fanotify_mark(fd, flags, mask, dfd, path));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fd);
+    PAS_UNUSED_PARAM(flags);
+    PAS_UNUSED_PARAM(mask);
+    PAS_UNUSED_PARAM(dfd);
+    PAS_UNUSED_PARAM(path_ptr);
+    filc_internal_panic(NULL, "fanotify_mark not supported.");
+#endif
+}
+
+int filc_native_zsys_timerfd_create(filc_thread* my_thread, int clockid, int flags)
+{
+    return FILC_SYSCALL(my_thread, timerfd_create(clockid, flags));
+}
+
+int filc_native_zsys_timerfd_settime(filc_thread* my_thread, int fd, int flags,
+                                     filc_ptr new_value_ptr, filc_ptr old_value_ptr)
+{
+    if (filc_ptr_ptr(new_value_ptr))
+        filc_check_read(new_value_ptr, sizeof(struct itimerspec));
+    if (filc_ptr_ptr(old_value_ptr))
+        filc_check_write(old_value_ptr, sizeof(struct itimerspec));
+    return FILC_SYSCALL(
+        my_thread, timerfd_settime(fd, flags,
+                                   (const struct itimerspec*)filc_ptr_ptr(new_value_ptr),
+                                   (struct itimerspec*)filc_ptr_ptr(old_value_ptr)));
+}
+
+int filc_native_zsys_timerfd_gettime(filc_thread* my_thread, int fd, filc_ptr curr_value_ptr)
+{
+    filc_check_write(curr_value_ptr, sizeof(struct itimerspec));
+    return FILC_SYSCALL(
+        my_thread, timerfd_gettime(fd, (struct itimerspec*)filc_ptr_ptr(curr_value_ptr)));
 }
 
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
