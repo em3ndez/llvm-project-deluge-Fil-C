@@ -1,0 +1,290 @@
+This document describes how Fil-C's pointers work. Fil-C is totally memory safe even though it gives you almost all of the power you'd expect from C, including sophisticated uses of pointers. Fil-C pointers achieve memory safety using a capability model called *invisicaps*, which have these properties:
+
+- Pointers appear to have their native size. Fil-C currently only works on 64-bit systems, so pointers appear to be 64-bit.
+
+- Pointers always carry an invisible capability (invisicap) that describes what memory they are allowed to access, and what they can do to that memory.
+
+The capability is invisible because other than via Fil-C reflection operations (compiler intrinsics and runtime functions unique to Fil-C), there is no way for a Fil-C program to see the capability. It's always there, but you cannot find it if you access memory.
+
+Invisicaps offer a similar programming model to SoftBound and CHERI. However, unlike CHERI, which uses wide pointers (`sizeof(void*)` is 16 or more) to store the capability, Fil-C's capabilities are invisible in the address space and do not affect pointer size. And unlike SoftBound, Fil-C's capabilities have a complete story for atomics (you cannot break invisicap protections by racing, and atomic pointer loads/stores really aree atomic).
+
+I'll show you how that works with a bunch of example programs. In these programs I'll use the Fil-C header `<stdfil.h>`, which you only need to `#include` if you want to mess with Fil-C's guts.
+
+All examples are compiled with `build/bin/clang -O -g` from my Fil-C working directory. If you want to try these examples yourself, [you can grab a recent binary release for Linux/X86_64](https://github.com/pizlonator/llvm-project-deluge/releases).
+
+# Simple Allocation
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        zprintf("p = %P\n", p + 42);
+        return 0;
+    }
+
+This simple program allocates a 16-byte object and prints the pointer to it using the special Fil-C `zprintf` function, which supports the Fil-C `%P` format specifier. This prints the invisible capability in addition to the pointer value. This program outputs:
+
+    p = 0x7d249450427a,0x7d2494504250,0x7d2494504260
+
+The format of this output is `ptr,lower,upper` - i.e. the first element is the pointer's value, the second element is the lower bound, and the last element is the upper bound. Since we added 42 to the pointer before printing it, the pointer is now above its upper bound.
+
+# Out Of Bounds Access
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        p[42] = 100;
+        return 0;
+    }
+
+Because Fil-C pointers carry bounds, we can trivially detect out-of-bounds stores like this. This program outputs:
+
+    filc safety error: cannot write pointer with ptr >= upper.
+        pointer: 0x75a882b0427a,0x75a882b04250,0x75a882b04260
+        expected 1 writable bytes.
+    semantic origin:
+        test2.c:7:11: main
+    check scheduled at:
+        test2.c:7:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [150645] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+The *semantic origin* is the place in the code that initiated the memory access that led to the safety check. Fil-C hoists checks so long as doing so doesn't break the program. The *check scheduled at* tells you where the check was hoisted to.
+
+# Pointers In Memory
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        *(int**)p = malloc(4);
+        **(int**)p = 42;
+        zprintf("p = %P\n", p);
+        zprintf("*p = %P\n", *(int**)p);
+        zprintf("**p = %d\n", **(int**)p);
+        return 0;
+    }
+
+Now let's look at what happens when a pointer is stored into memory. Fil-C has to track `malloc(4)`'s capability even though it's no longer local to the program. This program prints:
+
+    p = 0x77dab4504250,0x77dab4504250,0x77dab4504260,aux=0x77dab4508130
+    *p = 0x77dab4504270,0x77dab4504270,0x77dab4504280
+    **p = 42
+
+Note that the printout for `p` now has an extra field: `aux=0x77dab4508130`. This is because `p` now contains pointers with capabilities. The capability of `malloc(4)` is stored in the aux allocation associated with `p`. There is no way to get an in-bounds Fil-C pointer to an aux location because Fil-C never gives you capabilities to access auxes. The aux allocation stores the capabilities of any pointers stored into `p`.
+
+# Type Confusion: Integer Then Pointer
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        *(int*)p = 666;
+        int *p2 = *(int**)p;
+        zprintf("p2 = %P\n", p2);
+        return 0;
+    }
+
+In this program, we first store an integer to memory, and then we load it as a pointer. This is allowed, but the resulting program has the null capability. This program prints:
+
+    p2 = 0x29a,<null>
+
+If we modify the program to try to access the pointer:
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        *(int*)p = 666;
+        int *p2 = *(int**)p;
+        *p2 = 42;
+        return 0;
+    }
+
+Then we get:
+
+    filc safety error: cannot write pointer with null object.
+        pointer: 0x29a,<null>
+        expected 4 writable bytes.
+    semantic origin:
+        test5.c:9:9: main
+    check scheduled at:
+        test5.c:9:9: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [151596] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+Fil-C doesn't allow accessing pointers with null capabilities. Hence, Fil-C is allowing the first stage of this type confusion - you can use a pointer load to load from memory that does not have a pointer - but it doesn't let you do anything harmful after that. The resulting pointer just knows its integer value, but cannot be accessed.
+
+# Type Confusion: Pointer Then Integer
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        *(int**)p = malloc(4);
+        zprintf("%d\n", *(int*)p);
+        return 0;
+    }
+
+This program does the opposite kind of type confusion: we store a pointer to memory, then load it back as an integer. This is fine, and the program prints:
+
+    707805808
+
+Which happens to be the low 32 bits of the pointer.
+
+# Type Confusion: Store Pointer, Overwrite With Integer, Load Pointer
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        *(int**)p = malloc(4);
+        *(int*)p = 42;
+        zprintf("*(int**)p = %P\n", *(int**)p);
+        return 0;
+    }
+
+Here, we first store a pointer to memory, then we overwrite the low 32 bits of that pointer with an integer, and then we load the pointer back. This prints:
+
+    *(int**)p = 0x7cb50000002a,0x7cb571f04270,0x7cb571f04280
+
+Notice that the pointer is below the lower bounds, because the low 32 bits of the pointer have 0x2a (i.e. 42). Now consider a version of the program that tries to access the resulting pointer:
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        char* p = malloc(16);
+        *(int**)p = malloc(4);
+        *(int*)p = 42;
+        **(int**)p = 666;
+        return 0;
+    }
+
+This prints:
+
+    filc safety error: cannot write pointer with ptr < lower.
+        pointer: 0x73780000002a,0x737806f04270,0x737806f04280
+        expected 4 writable bytes.
+    semantic origin:
+        test8.c:9:16: main
+    check scheduled at:
+        test8.c:9:16: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [152073] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+Since the pointer is below lower bounds due to the integer store, this fails with a safety error.
+
+# Type Confusion: Function As Data
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    static void foo(void)
+    {
+    }
+    
+    int main()
+    {
+        char* p = (char*)foo;
+        zprintf("%d\n", (int)*p);
+        return 0;
+    }
+
+This program illustrates another attempt to break Fil-C's protections: we are going to use a function as if it had data. This triggers a Fil-C error:
+
+    filc safety error: cannot read pointer to special object.
+        pointer: 0x63a6c0187200,aux=0x63a6c0187200,special(function),global,readonly
+        expected 1 bytes.
+    semantic origin:
+        test10.c:11:26: main
+    check scheduled at:
+        test10.c:11:26: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [152314] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+This is because Fil-C function pointers are special capabilities that know that they have no accessible data in them. Here, the aux tells us the function's true address. So, the pointer that got printed out is saying:
+
+- This is a function pointer.
+
+- It really points at the function it should be pointing at.
+
+- It's a global.
+
+- It's readonly.
+
+# Type Confusion: Data As Function
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        void (*foo)(void) = malloc(16);
+        foo();
+        return 0;
+    }
+
+Now we're trying to call a pointer to data. This also triggers a safety error:
+
+    filc safety error: cannot access pointer as function, object isn't even special (pts = 0x7d6f8a704250,0x7d6f8a704250,0x7d6f8a704260).
+        test11.c:7:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [152457] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+# Offset Function Pointer
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    static void foo(void)
+    {
+    }
+    
+    int main()
+    {
+        void (*my_foo)(void) = (void(*)(void))((char*)foo + 42);
+        my_foo();
+        return 0;
+    }
+
+For the last example, we'll offset a function pointer and then try to call it. This also fails:
+
+    filc safety error: cannot access pointer as function with ptr != aux (ptr = 0x6189fdb3a2aa,aux=0x6189fdb3a280,special(function),global,readonly).
+        test12.c:11:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [152538] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+Because the function pointer no longer points at the function entrypoint indicated by the capability's aux, Fil-C rejects this function call.
+
+# Conclusion
+
+This document is meant to give you a feeling for how Fil-C pointer work by showing some examples. This is not an exhaustive list of safety checks that Fil-C performs.
