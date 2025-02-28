@@ -276,7 +276,7 @@ Now we're trying to call a pointer to data. This also triggers a safety error:
         return 0;
     }
 
-For the last example, we'll offset a function pointer and then try to call it. This also fails:
+We offset a function pointer and then try to call it. This also fails:
 
     filc safety error: cannot access pointer as function with ptr != aux (ptr = 0x6189fdb3a2aa,aux=0x6189fdb3a280,special(function),global,readonly).
         test12.c:11:5: main
@@ -286,6 +286,35 @@ For the last example, we'll offset a function pointer and then try to call it. T
     Trace/breakpoint trap (core dumped)
 
 Because the function pointer no longer points at the function entrypoint indicated by the capability's aux, Fil-C rejects this function call.
+
+# Use After Free
+
+    #include <stdfil.h>
+    #include <stdlib.h>
+    
+    int main()
+    {
+        int* p = malloc(4);
+        free(p);
+        *p = 42;
+        return 0;
+    }
+
+For the last example, I do a simple use after free bug. This is guaranteed to fail:
+
+    filc safety error: cannot write pointer to free object.
+        pointer: 0x792000904250,0x792000904250,0x792000904250,free
+        expected 4 writable bytes.
+    semantic origin:
+        test13.c:8:8: main
+    check scheduled at:
+        test13.c:8:8: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [153367] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+The failure is guaranteed because `free()` doesn't actually free the memory; it just marks the capability free in-place. All subsequent accesses to that object then fail with this error. Note that the freed object appears to have an upper bound that is equal to the lower bound; this is due to an optimization (Fil-C doesn't actually do a distinct "is this free" check; free objects just have their upper bound clamped to force the bounds checks to fail).
 
 # Conclusion
 
