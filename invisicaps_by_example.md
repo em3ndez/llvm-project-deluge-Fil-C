@@ -30,6 +30,8 @@ This simple program allocates a 16-byte object and prints the pointer to it usin
 
 The format of this output is `ptr,lower,upper` - i.e. the first element is the pointer's value, the second element is the lower bound, and the last element is the upper bound. Since we added 42 to the pointer before printing it, the pointer is now above its upper bound.
 
+Note that all Fil-C allocations are rounded up to 16 bytes and have 16 byte alignment. This is just for compatibility with other 64-bit C implementations, which also tend to have 16 byte minimum alignment.
+
 # Out Of Bounds Access
 
     #include <stdfil.h>
