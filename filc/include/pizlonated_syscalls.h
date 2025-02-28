@@ -338,6 +338,12 @@ int zsys_setns(int fd, int nstype);
 int zsys_gettid(void);
 int zsys_tkill(int tid, int sig);
 int zsys_tgkill(int tgid, int tid, int sig);
+void* zsys_create_module(const char* name, __SIZE_TYPE__ size);
+int zsys_get_kernel_syms(void* table);
+long zsys_nfsservctl(int cmd, void* argp, void* resp);
+int zsys_query_module(const char* name, int which, void* buf, __SIZE_TYPE__ bufsize,
+                      __SIZE_TYPE__* ret);
+int zsys_uselib(const char* library);
 
 #ifdef __cplusplus
 }

@@ -9490,6 +9490,17 @@ int filc_native_zsys_setns(filc_thread* my_thread, int fd, int nstype)
     return FILC_SYSCALL(my_thread, setns(fd, nstype));
 }
 
+int filc_native_zsys_query_module(filc_thread* my_thread, filc_ptr name_ptr, int which,
+                                  filc_ptr buf_ptr, size_t bufsize, filc_ptr ret_ptr)
+{
+    char* name = filc_check_and_get_tmp_str_or_null(my_thread, name_ptr);
+    filc_check_write(buf_ptr, bufsize);
+    if (filc_ptr_ptr(ret_ptr))
+        filc_check_write(ret_ptr, sizeof(size_t));
+    return FILC_SYSCALL(my_thread, syscall(SYS_query_module, name, which, filc_ptr_ptr(buf_ptr),
+                                           bufsize, filc_ptr_ptr(ret_ptr)));
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;

@@ -535,3 +535,39 @@ int zsys_tgkill(int tgid, int tid, int sig)
     return -1;
 }
 
+void* zsys_create_module(const char* name, __SIZE_TYPE__ size)
+{
+    /* We don't support this because this syscall has been removed. */
+    (void)name;
+    (void)size;
+    zerror("create_module not supported.");
+    return 0;
+}
+
+int zsys_get_kernel_syms(void* table)
+{
+    /* We don't support this because this syscall has been removed. */
+    (void)table;
+    zerror("get_kernel_syms not supported.");
+    return -1;
+}
+
+long zsys_nfsservctl(int cmd, void* argp, void* resp)
+{
+    /* We don't support this because this syscall has been removed. */
+    (void)cmd;
+    (void)argp;
+    (void)resp;
+    zerror("nfsservctl not supported.");
+    return -1;
+}
+
+int zsys_uselib(const char* library)
+{
+    /* We don't support this because it's probably super unsafe and it's no longer really supported.
+       You can build a kernel that still has this syscall, but glibc supposedly doesn't need it
+       anymore. */
+    (void)library;
+    zerror("uselib not supported.");
+    return -1;
+}

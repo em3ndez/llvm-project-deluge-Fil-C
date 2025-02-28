@@ -437,6 +437,7 @@ addSig "int", "zsys_pkey_alloc", "unsigned", "unsigned"
 addSig "int", "zsys_pkey_free", "int"
 addSig "int", "zsys_memfd_create", "filc_ptr", "unsigned"
 addSig "int", "zsys_setns", "int", "int"
+addSig "int", "zsys_query_module", "filc_ptr", "int", "filc_ptr", "size_t", "filc_ptr"
 
 addSig "filc_ptr", "zthread_self"
 addSig "unsigned", "zthread_get_id", "filc_ptr"
