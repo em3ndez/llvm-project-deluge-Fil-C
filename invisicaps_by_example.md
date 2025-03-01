@@ -539,7 +539,7 @@ Because the function pointer no longer points at the function entrypoint indicat
         return 0;
     }
 
-For the last example, I do a simple use after free bug. This is guaranteed to fail:
+Let's do a simple use after free bug. This is guaranteed to fail:
 
     filc safety error: cannot write pointer to free object.
         pointer: 0x792000904250,0x792000904250,0x792000904250,free
@@ -789,6 +789,248 @@ This program panics:
         <runtime>: start_program
     [722837] filc panic: thwarted a futile attempt to violate memory safety.
     Trace/breakpoint trap (core dumped)
+
+# Bad Linking: Not Enough Arguments
+
+Fil-C's capability model extends to linker symbols. In Yolo-C, using a linker symbol really means getting a pointer to something allocated by the linker. In Fil-C, using a linker symbol really means getting a Fil-C pointer (so a pointer value and a capability) to something allocated by the Fil-C linker (Fil-C handles linking using a combination of the Fil-C runtime and a modified ELF linker). Additionally, function calls involve passing data along with capabilities, so a mismatch in function arguments is caught dynamically. Let's consider a simple example of this in action.
+
+In one file we have:
+
+    #include <stdio.h>
+    
+    void foo(int x)
+    {
+        printf("%d\n", x);
+    }
+
+And the other file:
+
+    void foo(void);
+    
+    int main()
+    {
+        foo();
+        return 0;
+    }
+
+Compiling and running this yields:
+
+    filc safety error: argument size mismatch (actual = 0, expected = 8).
+        test32a.c: foo
+        test32b.c:5:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [1216773] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+We get this error because the call to `foo()` passed no arguments (and the module containing the call declared it as an extern function that takes no arguments), but the actual definition is a function that takes one argument.
+
+# Bad Linking: Wrong Arguments (Expected Pointer, Passed Integer)
+
+First file:
+
+    #include <stdio.h>
+    
+    void foo(char* str)
+    {
+        printf("%s\n", str);
+    }
+
+Second file:
+
+    void foo(int x);
+    
+    int main()
+    {
+        foo(666);
+        return 0;
+    }
+
+This yields:
+
+    filc safety error: cannot read pointer with null object.
+        pointer: 0x29a,<null>
+        expected 1 bytes.
+    semantic origin:
+        src/string/strlen.c:8:9: strlen
+    check scheduled at:
+        src/string/strlen.c:8:9: strlen
+        src/stdio/fputs.c:6:13: fputs
+        src/stdio/puts.c:7:8: puts
+        test33a.c:5:5: foo
+        test33b.c:5:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [1217134] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+# Bad Linking: Function As Data
+
+First file:
+
+    #include <stdio.h>
+    
+    void foo(void)
+    {
+        printf("witaj\n");
+    }
+
+Second file:
+
+    #include <stdio.h>
+    
+    extern int foo;
+    
+    int main()
+    {
+        printf("%d\n", foo);
+        return 0;
+    }
+
+We're trying to use `foo` as data, but it's really a function. This gives us:
+
+    filc safety error: cannot read pointer to special object.
+        pointer: 0x5d845ccaf210,aux=0x5d845ccaf210,special(function),global,readonly
+        expected 4 bytes.
+    semantic origin:
+        test34b.c:7:20: main
+    check scheduled at:
+        test34b.c:7:20: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [1217401] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+# Bad Linking: Data As Function
+
+First file:
+
+    int foo = 666;
+
+Second file:
+
+    void foo(void);
+    
+    int main()
+    {
+        foo();
+        return 0;
+    }
+
+Now we're going to try to use data as if it was a function. This gives us:
+
+    filc safety error: cannot access pointer as function, object isn't even special (pts = 0x5ae542c2f068,0x5ae542c2f068,0x5ae542c2f070,global).
+        test35b.c:5:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [1217542] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+# Variadic Function Misuse: Not Enough Args
+
+    #include <stdio.h>
+    #include <stdarg.h>
+    #include <stdlib.h>
+    
+    static void foo(int count, ...)
+    {
+        va_list list;
+        va_start(list, count);
+        printf("args:");
+        while (count--)
+            printf(" %d", va_arg(list, int));
+        printf("\n");
+    }
+    
+    int main()
+    {
+        setvbuf(stdout, NULL, _IONBF, 0); /* turn off buffered IO */
+        foo(5, 1, 2, 3, 4, 5); /* good */
+        foo(10, 666); /* bad */
+        return 0;
+    }
+
+Another cause of safety issues in C is using `va_arg` when there are no more arguments to get. Fil-C catches this:
+
+    args: 1 2 3 4 5
+    args: 666filc safety error: cannot read pointer with ptr >= upper (ptr = 0x708f8f1047c0,0x708f8f1047b0,0x708f8f1047c0,readonly).
+        test36.c:11:23: foo
+        test36.c:19:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [1218006] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+# Variadic Function Misuse: Wrong Arg Type
+
+    #include <stdio.h>
+    #include <stdarg.h>
+    #include <stdlib.h>
+    
+    static void foo(int count, ...)
+    {
+        va_list list;
+        va_start(list, count);
+        printf("args:");
+        while (count--)
+            printf(" %s", va_arg(list, const char*));
+        printf("\n");
+    }
+    
+    int main()
+    {
+        setvbuf(stdout, NULL, _IONBF, 0); /* turn off buffered IO */
+        foo(5, 1, 2, 3, 4, 5); /* good */
+        return 0;
+    }
+
+Another way to misuse `va_arg` is to try to get the wrong argument type. Fil-C allows `va_arg` to get a pointer when you really passed an integer, but then you get a pointer that lacks a capability. Using the capability then leads to a panic:
+
+    args:filc safety error: cannot read pointer with null object.
+        pointer: 0x1,<null>
+        expected 1 bytes.
+    semantic origin:
+        src/string/memchr.c:9:14: memchr
+    check scheduled at:
+        src/string/memchr.c:9:14: memchr
+        src/string/strnlen.c:6:18: strnlen
+        src/stdio/vfprintf.c:600:12: printf_core
+        src/stdio/vfprintf.c:690:13: vfprintf
+        src/stdio/printf.c:9:8: printf
+        test37.c:11:9: foo
+        test37.c:18:5: main
+        src/env/__libc_start_main.c:79:7: __libc_start_main
+        <runtime>: start_program
+    [1218108] filc panic: thwarted a futile attempt to violate memory safety.
+    Trace/breakpoint trap (core dumped)
+
+# Variadic Function Misuse: va_list Escape
+
+    #include <stdio.h>
+    #include <stdarg.h>
+    #include <stdlib.h>
+    
+    static void foo(va_list list, ...)
+    {
+        va_start(list, list);
+    }
+    
+    int main()
+    {
+        setvbuf(stdout, NULL, _IONBF, 0); /* turn off buffered IO */
+        va_list list;
+        foo(list, 1, 2, 3, 4, 5);
+        printf("args:");
+        unsigned count = 5;
+        while (count--)
+            printf(" %d", va_arg(list, int));
+        printf("\n");
+        return 0;
+    }
+
+Escaping a `va_list` from the stack frame that has the arguments is super dangerous in Yolo-C. In Fil-C, this just works, because internally, the `va_list` has a pointer to a heap-allocated readonly object containing a snapshot of the arguments. Arguments are only heap-allocated for variadic functions. So, this program just works:
+
+    args: 1 2 3 4 5
 
 # Conclusion
 
