@@ -579,11 +579,6 @@ when "src/libpas/filc_native_forwarders.c"
             end
             outp.puts "filc_cc_sizer_total_size(&rets_sizer));"
             outp.puts "}"
-            # FUCK: The way that I've arranged for aux to work means that function capabilities have
-            # to be GC-allocated or patched at runtime, since the aux needs to point at the function
-            # shifted up.
-            #
-            # Is there some way to rescue this?
             outp.puts "static const filc_object function_object_#{signature.name} = {"
             outp.puts "    .upper = (void*)(&function_object_#{signature.name} + 1),"
             outp.puts "    .aux = FILC_AUX_CREATE("
