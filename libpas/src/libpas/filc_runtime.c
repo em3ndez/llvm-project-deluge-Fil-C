@@ -5294,8 +5294,9 @@ filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind
     
     filc_jmp_buf* result = (filc_jmp_buf*)filc_object_special_payload_with_manual_tracking(
         filc_allocate_special(my_thread,
-                              PAS_OFFSETOF(filc_jmp_buf, lowers)
-                              + filc_mul_size(function_origin->base.num_lowers_ish, sizeof(void*)),
+                              filc_add_size(
+                                  PAS_OFFSETOF(filc_jmp_buf, lowers),
+                                  filc_mul_size(function_origin->base.num_lowers_ish, sizeof(void*))),
                               1,
                               FILC_SPECIAL_TYPE_JMP_BUF));
 
@@ -7944,14 +7945,14 @@ int filc_native_zsys_msgctl(filc_thread* my_thread, int msgid, int cmd, filc_ptr
 long filc_native_zsys_msgrcv(filc_thread* my_thread, int msgid, filc_ptr msgp_ptr, size_t msgsz,
                              long msgtyp, int msgflg)
 {
-    filc_check_write(msgp_ptr, PAS_OFFSETOF(struct msgbuf, mtext) + msgsz);
+    filc_check_write(msgp_ptr, filc_add_size(PAS_OFFSETOF(struct msgbuf, mtext), msgsz));
     return FILC_SYSCALL(my_thread, msgrcv(msgid, filc_ptr_ptr(msgp_ptr), msgsz, msgtyp, msgflg));
 }
 
 int filc_native_zsys_msgsnd(filc_thread* my_thread, int msgid, filc_ptr msgp_ptr, size_t msgsz,
                             int msgflg)
 {
-    filc_check_read(msgp_ptr, PAS_OFFSETOF(struct msgbuf, mtext) + msgsz);
+    filc_check_read(msgp_ptr, filc_add_size(PAS_OFFSETOF(struct msgbuf, mtext), msgsz));
     return FILC_SYSCALL(my_thread, msgsnd(msgid, filc_ptr_ptr(msgp_ptr), msgsz, msgflg));
 }
 
@@ -9434,7 +9435,9 @@ static struct file_handle* check_and_get_file_handle(filc_ptr handle_ptr)
     filc_check_write(handle_ptr, PAS_OFFSETOF(struct file_handle, f_handle));
     struct file_handle* handle = (struct file_handle*)filc_ptr_ptr(handle_ptr);
     filc_check_write(handle_ptr,
-                     PAS_OFFSETOF(struct file_handle, f_handle) + (size_t)handle->handle_bytes);
+                     filc_add_size(
+                         PAS_OFFSETOF(struct file_handle, f_handle),
+                         (size_t)handle->handle_bytes));
     return handle;
 }
 
@@ -9941,6 +9944,16 @@ void filc_call_syscall_with_guarded_ptr(filc_thread* my_thread,
         }
         PAS_ASSERT(!pas_mul_uintptr_overflow(extent_limit, 2, &extent_limit));
     }
+}
+
+size_t filc_add_size(size_t a, size_t b)
+{
+    size_t result;
+    FILC_CHECK(
+        !pas_add_uintptr_overflow(a, b, &result),
+        NULL,
+        "addition %zu + %zu overflowed", a, b);
+    return result;
 }
 
 size_t filc_mul_size(size_t a, size_t b)

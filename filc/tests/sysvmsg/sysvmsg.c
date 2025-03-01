@@ -52,10 +52,10 @@ int main()
         parent();
         int status;
         int wait_result = wait(&status);
+        ASSERT(!msgctl(msgid, IPC_RMID, NULL));
         ASSERT(wait_result == fork_result);
         ASSERT(WIFEXITED(status));
         ASSERT(!WEXITSTATUS(status));
-        ASSERT(!msgctl(msgid, IPC_RMID, NULL));
     }
     return 0;
 }

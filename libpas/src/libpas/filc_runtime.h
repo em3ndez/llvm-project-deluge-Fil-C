@@ -1092,6 +1092,7 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_user_panic(
    not fine to call this more than once or at any other time than in the CRT. */
 PAS_API void filc_initialize(void);
 
+PAS_API size_t filc_add_size(size_t a, size_t b);
 PAS_API size_t filc_mul_size(size_t a, size_t b);
 
 PAS_API filc_thread* filc_thread_create_with_manual_tracking(void);
