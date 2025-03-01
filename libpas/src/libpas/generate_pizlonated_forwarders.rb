@@ -584,8 +584,8 @@ when "src/libpas/filc_native_forwarders.c"
             # shifted up.
             #
             # Is there some way to rescue this?
-            outp.puts "static filc_object function_object_#{signature.name} = {"
-            outp.puts "    .upper = &function_object_#{signature.name} + 1,"
+            outp.puts "static const filc_object function_object_#{signature.name} = {"
+            outp.puts "    .upper = (void*)(&function_object_#{signature.name} + 1),"
             outp.puts "    .aux = FILC_AUX_CREATE("
             outp.puts "        FILC_OBJECT_FLAGS_CREATE("
             outp.puts "            FILC_OBJECT_FLAG_GLOBAL |"
@@ -600,7 +600,7 @@ when "src/libpas/filc_native_forwarders.c"
             outp.puts "    PAS_UNUSED_PARAM(my_thread);"
             outp.puts "    PAS_UNUSED_PARAM(origin);"
             outp.puts "    return filc_ptr_create_with_object_and_ptr_and_manual_tracking("
-            outp.puts "        &function_object_#{signature.name},"
+            outp.puts "        (filc_object*)&function_object_#{signature.name},"
             outp.puts "        native_thunk_#{signature.name});"
             outp.puts "}"
         }
