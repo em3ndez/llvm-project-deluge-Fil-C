@@ -5392,7 +5392,10 @@ void filc_resume_unwind(filc_thread* my_thread, const filc_origin *passed_origin
         NULL,
         "cannot resume unwinding, parent frame doesn't support catching.");
 
-    PAS_ASSERT(current_frame != my_thread->found_frame_for_unwind);
+    FILC_CHECK(
+        current_frame != my_thread->found_frame_for_unwind,
+        NULL,
+        "cannot resume unwinding from frame that was found in search phase.");
 
     if (!my_thread->is_force_unwinding) {
         PAS_ASSERT(my_thread->found_frame_for_unwind);
