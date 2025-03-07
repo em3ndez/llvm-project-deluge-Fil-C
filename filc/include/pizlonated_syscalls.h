@@ -345,6 +345,7 @@ int zsys_query_module(const char* name, int which, void* buf, __SIZE_TYPE__ bufs
                       __SIZE_TYPE__* ret);
 int zsys_uselib(const char* library);
 int zsys_sigqueue(int pid, int sig, void* value);
+int zsys_openat(int dirfd, const char* path, int flags, ...);
 
 #ifdef __cplusplus
 }

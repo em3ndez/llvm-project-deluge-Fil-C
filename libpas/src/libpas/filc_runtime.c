@@ -5833,18 +5833,17 @@ int filc_native_zsys_open(filc_thread* my_thread, filc_ptr path_ptr, int flags,
 {
     static const bool verbose = false;
     unsigned mode = 0;
-    if (flags >= 0 && (flags & O_CREAT))
+    if (verbose)
+        pas_log("args = %s\n", filc_cc_cursor_to_new_string(*args));
+    if (filc_cc_cursor_has_next(args, FILC_WORD_SIZE)) {
         mode = filc_cc_cursor_get_next_unsigned(my_thread, args);
+        if (verbose)
+            pas_log("got mode = %u\n", mode);
+    }
     char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
     if (verbose)
-        pas_log("doing an open with path = %s, flags = %d.\n", path, flags);
-    filc_exit(my_thread);
-    int result = open(path, flags, mode);
-    int my_errno = errno;
-    filc_enter(my_thread);
-    if (result < 0)
-        filc_set_errno(my_errno);
-    return result;
+        pas_log("doing an open with path = %s, flags = %d, mode = %u.\n", path, flags, mode);
+    return FILC_SYSCALL(my_thread, open(path, flags, (mode_t)mode));
 }
 
 int filc_native_zsys_getpid(filc_thread* my_thread)
@@ -9670,6 +9669,19 @@ int filc_native_zsys_sigqueue(filc_thread* my_thread, int pid, int sig, filc_ptr
     union sigval sigval;
     sigval.sival_ptr = filc_ptr_ptr(value_ptr);
     return FILC_SYSCALL(my_thread, sigqueue(pid, sig, sigval));
+}
+
+int filc_native_zsys_openat(filc_thread* my_thread, int dirfd, filc_ptr path_ptr, int flags,
+                            filc_cc_cursor* args)
+{
+    static const bool verbose = false;
+    unsigned mode = 0;
+    if (filc_cc_cursor_has_next(args, FILC_WORD_SIZE))
+        mode = filc_cc_cursor_get_next_unsigned(my_thread, args);
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    if (verbose)
+        pas_log("doing an openat with dirfd = %d, path = %s, flags = %d.\n", dirfd, path, flags);
+    return FILC_SYSCALL(my_thread, openat(dirfd, path, flags, mode));
 }
 
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)

@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <pthread.h>
 #include <fcntl.h>
 #include <string.h>
@@ -157,7 +158,7 @@ int main(int argc, char** argv)
     ZASSERT(!getrlimit(RLIMIT_CPU, &rlim));
 
     ZASSERT(umask(0644));
-    ZASSERT(umask(0644) == 0644);
+    ZASSERT(umask(0133) == 0644);
 
     struct utsname utsname;
     ZASSERT(!uname(&utsname));
@@ -199,10 +200,14 @@ int main(int argc, char** argv)
     unlink("filc/test-output/miscsyscall/execonly.txt");
     fd = open("filc/test-output/miscsyscall/readonly.txt", O_CREAT | O_WRONLY, 0600);
     ZASSERT(fd > 2);
+    ZASSERT(!fstat(fd, &st));
+    ZASSERT(st.st_mode == (0600 | S_IFREG));
     close(fd);
     ZASSERT(!chmod("filc/test-output/miscsyscall/readonly.txt", 0400));
-    fd = open("filc/test-output/miscsyscall/writeonly.txt", O_CREAT | O_WRONLY, 0600);
+    fd = openat(AT_FDCWD, "filc/test-output/miscsyscall/writeonly.txt", O_CREAT | O_WRONLY, 0600);
     ZASSERT(fd > 2);
+    ZASSERT(!fstat(fd, &st));
+    ZASSERT(st.st_mode == (0600 | S_IFREG));
     close(fd);
     ZASSERT(!chmod("filc/test-output/miscsyscall/writeonly.txt", 0200));
     fd = open("filc/test-output/miscsyscall/execonly.txt", O_CREAT | O_WRONLY, 0600);

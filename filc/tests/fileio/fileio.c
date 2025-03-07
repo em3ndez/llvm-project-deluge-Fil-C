@@ -41,6 +41,14 @@ int main(int argc, char** argv)
     zprintf("read with read way: %s", buf);
     ZASSERT(!close(fd));
 
+    fd = openat(AT_FDCWD, "filc/tests/fileio/test.txt", O_RDONLY);
+    ZASSERT(fd > 2);
+    __builtin_memset(buf, 0, sizeof(buf));
+    result = read(fd, buf, sizeof(buf));
+    ZASSERT(result == 14);
+    zprintf("read with read way: %s", buf);
+    ZASSERT(!close(fd));
+
     FILE* fin = fopen("filc/tests/fileio/test.txt", "r");
     ZASSERT(fin);
     __builtin_memset(buf, 0, sizeof(buf));
