@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -81,3 +81,5 @@ handle_git pizlonated-icu pizlonated-icu
 handle_git pizlonated-libedit pizlonated-libedit
 handle_git pizlonated-postgres pizlonated-postgres
 handle_git pizlonated-quickjs pizlonated-quickjs
+handle_git wg14_signals wg14_signals
+handle_git pizlonated-libuev pizlonated-libuev
