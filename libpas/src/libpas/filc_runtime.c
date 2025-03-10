@@ -5861,6 +5861,11 @@ int filc_native_zsys_getpid(filc_thread* my_thread)
 
 int filc_native_zsys_clock_gettime(filc_thread* my_thread, int clock_id, filc_ptr timespec_ptr)
 {
+    /* Fun fact: this syscall is often extremely cheap, like it's a vdso thing.
+       
+       Maybe that means we don't have to filc_exit?
+    
+       There are lots of other syscalls like that (mostly to do with time). */
     filc_check_write(timespec_ptr, sizeof(struct timespec));
     return FILC_SYSCALL(
         my_thread, clock_gettime(clock_id, (struct timespec*)filc_ptr_ptr(timespec_ptr)));
