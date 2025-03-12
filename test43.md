@@ -465,7 +465,7 @@ And finally we're loading the arguments:
 
 Seems like one of the arguments (`int value`) is immediately spilled to `0x8(%rsp)`. Notice that there are three loads total. This is because there is a *second* buffer for the arguments' capabilities. Since `struct list** list_head` is a pointer, we load its `lower` from that buffer (at offset `0x180`).
 
-Fil-C's calling convention allows for maximally slopping function pointer casts. If the callsite's signature disagrees with the callee's signature, then stuff just tends to work. It's not clear that this is a requirement of Fil-C, and even if it was, this thread-local buffer for arguments (and return values, as we'll see later) is hilariously inefficient. ([Issue 22: The Fil-C calling convention should be optimized](https://github.com/pizlonator/llvm-project-deluge/issues/22))
+Fil-C's calling convention allows for maximally sloppy function pointer casts. If the callsite's signature disagrees with the callee's signature, then stuff just tends to work. It's not clear that this is a requirement of Fil-C, and even if it was, this thread-local buffer for arguments (and return values, as we'll see later) is hilariously inefficient. ([Issue 22: The Fil-C calling convention should be optimized](https://github.com/pizlonator/llvm-project-deluge/issues/22))
 
 # Calling `malloc`
 
