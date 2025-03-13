@@ -9729,6 +9729,29 @@ int filc_native_zsys_renameat(filc_thread* my_thread, int oldfd, filc_ptr old_pt
     return FILC_SYSCALL(my_thread, renameat(oldfd, old, newfd, new));
 }
 
+int filc_native_zsys_getcpu(filc_thread* my_thread, filc_ptr cpu_ptr, filc_ptr node_ptr)
+{
+#if PAS_GLIBC
+    if (filc_ptr_ptr(cpu_ptr))
+        filc_check_write(cpu_ptr, sizeof(unsigned));
+    if (filc_ptr_ptr(node_ptr))
+        filc_check_write(node_ptr, sizeof(unsigned));
+    return FILC_SYSCALL(my_thread, getcpu((unsigned*)filc_ptr_ptr(cpu_ptr),
+                                          (unsigned*)filc_ptr_ptr(node_ptr)));
+#else
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(cpu_ptr);
+    PAS_UNUSED_PARAM(node_ptr);
+    filc_internal_panic(NULL, "getcpu not supported.");
+    return -1;
+#endif
+}
+
+int filc_native_zsys_sched_getcpu(filc_thread* my_thread)
+{
+    return FILC_SYSCALL(my_thread, sched_getcpu());
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;
