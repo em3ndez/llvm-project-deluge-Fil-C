@@ -4397,6 +4397,7 @@ def noprebind : Flag<["-"], "noprebind">;
 def noprofilelib : Flag<["-"], "noprofilelib">;
 def noseglinkedit : Flag<["-"], "noseglinkedit">;
 def nostartfiles : Flag<["-"], "nostartfiles">, Group<Link_Group>;
+def normalcrt : Flag<["-"], "normalcrt">, Group<Link_Group>;
 def nostdinc : Flag<["-"], "nostdinc">, Flags<[CoreOption]>, Group<IncludePath_Group>;
 def nostdlibinc : Flag<["-"], "nostdlibinc">, Group<IncludePath_Group>;
 def nostdincxx : Flag<["-"], "nostdinc++">, Flags<[CC1Option]>, Group<IncludePath_Group>,

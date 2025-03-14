@@ -583,16 +583,15 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   bool NeedsXRayDeps = addXRayRuntime(ToolChain, Args, CmdArgs);
   addLinkerCompressDebugSectionsOption(ToolChain, Args, CmdArgs);
   
-  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs,
-                   options::OPT_r)) {
-    if (!Args.hasArg(options::OPT_shared)) {
+  if (!Args.hasArg(options::OPT_shared)) {
+    if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs,
+                     options::OPT_r) ||
+        Args.hasArg(options::OPT_normalcrt)) {
       SmallString<128> P(ToolChain.getDriver().InstalledDir);
       llvm::sys::path::append(P, "..", "..", "pizfix", "lib");
       llvm::sys::path::append(P, "filc_crt.o");
       CmdArgs.push_back(Args.MakeArgString(P));
-    }
-  } else {
-    if (!Args.hasArg(options::OPT_shared)) {
+    } else {
       SmallString<128> P(ToolChain.getDriver().InstalledDir);
       llvm::sys::path::append(P, "..", "..", "pizfix", "lib");
       llvm::sys::path::append(P, "filc_mincrt.o");
