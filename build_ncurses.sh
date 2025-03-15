@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -29,7 +29,7 @@ set -x
 cd ncurses-6.5-20240720
 make distclean || echo whatever
 CC="$PWD/../build/bin/clang -O -g" CXX="$PWD/../build/bin/clang++ -O -g" ./configure \
-    --prefix="$PWD/../pizfix" --disable-lib-suffixes --with-shared
+    --prefix="$PWD/../pizfix" --disable-lib-suffixes --with-shared --without-ada
 make -j $NCPU
 make install
 
