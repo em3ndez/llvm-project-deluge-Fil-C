@@ -1384,6 +1384,7 @@ class Pizlonator {
       return ArrayType::get(toFlightType(AT->getElementType()), AT->getNumElements());
       
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
+      assert(!hasPtrs(VT->getElementType())); // We don't support pointer vectors yet.
       return FixedVectorType::get(
         toFlightType(VT->getElementType()), VT->getElementCount().getFixedValue());
     }
