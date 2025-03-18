@@ -27,17 +27,25 @@ require 'pathname'
 require 'getoptlong'
 require 'shellwords'
 
-BASE_BENCHMARK_NAME = "PizBench9007"
+BASE_BENCHMARK_NAME = "PizBench9008"
 $benchmarkName = BASE_BENCHMARK_NAME
 
 $repeats = 5
 $filter = /./
 $plugins = []
 
+# Check if we have avx512
+raise unless system("clang -O3 -g -o filc/tests/has_avx512 filc/tests/has_avx512.c")
+system("filc/tests/has_avx512 > filc/tests/has_avx512.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasAVX512 = $?.exitstatus == 0
+
 GetoptLong.new(
     [ '--repeat', '-r', GetoptLong::REQUIRED_ARGUMENT ],
     [ '--filter', '-f', GetoptLong::REQUIRED_ARGUMENT ],
     [ '--plugin', '-p', GetoptLong::REQUIRED_ARGUMENT ],
+    [ '--has-avx512', GetoptLong::REQUIRED_ARGUMENT ],
 ).each {
     | opt, arg |
     case opt
@@ -48,10 +56,22 @@ GetoptLong.new(
     when '--plugin'
         $plugins << arg
         $benchmarkName = BASE_BENCHMARK_NAME + "P"
+    when '--has-avx512'
+        if arg.downcase == "true"
+            $hasAVX512 = true
+        elsif arg.downcase == "false"
+            $hasAVX512 = false
+        else
+            raise "--has-avx needs 'true' or 'false' argument."
+        end
     else
         raise
     end
 }
+
+if $hasAVX512
+    $benchmarkName += "-AVX512"
+end
 
 def mysys(cmd)
     $stderr.puts ">> #{cmd}"
@@ -318,6 +338,30 @@ $benchmarks << Benchmark.new(
     "-P validate_utf8_with_errors+haswell",
     [])
 
+if $hasAVX512
+    $benchmarks << Benchmark.new(
+        "../pizlonated-simdutf/build/benchmarks/benchmark",
+        "-F benchmarkData/simdutf-README.md -I 2000 " +
+        "-P convert_latin1_to_utf16+icelake " +
+        "-P convert_latin1_to_utf32+icelake " +
+        "-P convert_latin1_to_utf8+icelake " +
+        "-P convert_utf8_to_utf16+icelake " +
+        "-P convert_utf8_to_utf16_with_dynamic_allocation+icelake " +
+        "-P convert_utf8_to_utf16_with_errors+icelake " +
+        "-P convert_utf8_to_utf32+icelake " +
+        "-P convert_utf8_to_utf32_with_dynamic_allocation+icelake " +
+        "-P convert_utf8_to_utf32_with_errors+icelake " +
+        "-P convert_valid_utf8_to_latin1+icelake " +
+        "-P convert_valid_utf8_to_utf16+icelake " +
+        "-P convert_valid_utf8_to_utf32+icelake " +
+        "-P count_utf8+icelake " +
+        "-P detect_encodings+icelake " +
+        "-P utf8_length_from_latin1+icelake " +
+        "-P validate_utf8+icelake " +
+        "-P validate_utf8_with_errors+icelake",
+        [])
+end
+
 $benchmarks << Benchmark.new(
     "bin/tclsh",
     "benchmarkData/richards.tcl",
@@ -351,6 +395,10 @@ $benchmarks.filter! {
     | benchmark |
     benchmark.to_s =~ $filter
 }
+
+if $benchmarks.empty?
+    raise "No benchmarks found."
+end
 
 $pizfixes = []
 ARGV.each {
