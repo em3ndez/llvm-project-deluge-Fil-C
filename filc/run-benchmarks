@@ -27,10 +27,10 @@ require 'pathname'
 require 'getoptlong'
 require 'shellwords'
 
-BASE_BENCHMARK_NAME = "PizBench9008"
+BASE_BENCHMARK_NAME = "PizBench9009"
 $benchmarkName = BASE_BENCHMARK_NAME
 
-$repeats = 5
+$repeats = 10
 $filter = /./
 $plugins = []
 
@@ -385,6 +385,31 @@ $benchmarks << Benchmark.new(
     [
         "diff -n benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
     ])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/binarytrees",
+    "21",
+    [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/fannkuch-redux",
+    "12",
+    [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/fannkuch-redux-2",
+    "11",
+    [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/n-body",
+    "10000000",
+    [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/n-body-2",
+    "10000000",
+    [])
 
 $plugins.each {
     | plugin |

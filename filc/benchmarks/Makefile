@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -25,13 +25,23 @@ all: \
 	../../pizfix/benchmarks/stepanov_container \
 	../../pizfix/benchmarks/richards \
 	../../pizfix/benchmarks/pcre_benchmark \
-	../../pizfix/benchmarks/deltablue
+	../../pizfix/benchmarks/deltablue \
+	../../pizfix/benchmarks/binarytrees \
+	../../pizfix/benchmarks/fannkuch-redux \
+	../../pizfix/benchmarks/fannkuch-redux-2 \
+	../../pizfix/benchmarks/n-body \
+	../../pizfix/benchmarks/n-body-2 \
 
 clean:
 	rm -f ../../pizfix/benchmarks/stepanov_container
 	rm -f ../../pizfix/benchmarks/richards
 	rm -f ../../pizfix/benchmarks/pcre_benchmark
 	rm -f ../../pizfix/benchmarks/deltablue
+	rm -f ../../pizfix/benchmarks/binarytrees
+	rm -f ../../pizfix/benchmarks/fannkuch-redux
+	rm -f ../../pizfix/benchmarks/fannkuch-redux-2
+	rm -f ../../pizfix/benchmarks/n-body
+	rm -f ../../pizfix/benchmarks/n-body-2
 
 ../../pizfix/benchmarks/stepanov_container: stepanov_container.cpp
 	../../build/bin/clang++ \
@@ -52,4 +62,29 @@ clean:
 	../../build/bin/clang \
 	    -o ../../pizfix/benchmarks/deltablue \
 	    deltablue.c -O3 -g
+
+../../pizfix/benchmarks/binarytrees: binarytrees.cpp
+	../../build/bin/clang++ \
+	    -o ../../pizfix/benchmarks/binarytrees \
+	    binarytrees.cpp -O3 -g
+
+../../pizfix/benchmarks/fannkuch-redux: fannkuch-redux.c
+	../../build/bin/clang \
+	    -o ../../pizfix/benchmarks/fannkuch-redux \
+	    fannkuch-redux.c -O3 -g
+
+../../pizfix/benchmarks/fannkuch-redux-2: fannkuch-redux-2.cpp
+	../../build/bin/clang++ \
+	    -o ../../pizfix/benchmarks/fannkuch-redux-2 \
+	    fannkuch-redux-2.cpp -O3 -g
+
+../../pizfix/benchmarks/n-body: n-body.c
+	../../build/bin/clang \
+	    -o ../../pizfix/benchmarks/n-body \
+	    n-body.c -O3 -g -march=ivybridge
+
+../../pizfix/benchmarks/n-body-2: n-body-2.c
+	../../build/bin/clang \
+	    -o ../../pizfix/benchmarks/n-body-2 \
+	    n-body-2.c -O3 -g
 

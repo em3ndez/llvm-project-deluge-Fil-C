@@ -5386,7 +5386,8 @@ class Pizlonator {
         Instruction::Mul, Length, ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)),
         "filc_alloca_size", AI);
       Size->setDebugLoc(AI->getDebugLoc());
-      AI->replaceAllUsesWith(allocate(Size, DL.getABITypeAlign(T).value(), AI));
+      AI->replaceAllUsesWith(
+          allocate(Size, std::max(DL.getABITypeAlign(T).value(), AI->getAlign().value()), AI));
       AI->eraseFromParent();
       return;
     }
