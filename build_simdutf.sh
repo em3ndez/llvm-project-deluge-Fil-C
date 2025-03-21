@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -35,3 +35,5 @@ CC="$PWD/../build/bin/clang -g -O3" CXX="$PWD/../build/bin/clang++ -g -O3" \
     cmake -DSIMDUTF_BENCHMARKS=ON -B build
 cmake --build build -j $NCPU
 build/singleheader/amalgamation_demo
+cd build
+ctest -j $NCPU .
