@@ -30,7 +30,7 @@ set -x
 
 cd pizlonated-ada
 rm -rf build
-CC="$PWD/../build/bin/clang -g -O3" CXX="$PWD/../build/bin/clang++ -g -O3" cmake -B build -DADA_TESTING=ON
+CC="$PWD/../build/bin/clang -g -O3" CXX="$PWD/../build/bin/clang++ -g -O3" cmake -B build -DADA_TESTING=ON -DADA_BENCHMARKS=ON
 cmake --build build -j $NCPU
 build/singleheader/demo
 
