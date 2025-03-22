@@ -1043,6 +1043,40 @@ struct IntrinsicAccessDetails {
   explicit operator bool() const { return !!T; }
 };
 
+struct AsmIO {
+  Type* T { nullptr };
+  int Matching { -1 };
+  int Index { -1 };
+
+  AsmIO() = default;
+
+  AsmIO(Type* T, int Matching, int Index):
+    T(T), Matching(Matching), Index(Index) {
+    assert(Matching >= -1);
+    assert(Index >= -1);
+  }
+};
+
+enum class AsmConstraintKind {
+  Input,
+  Output,
+  Other
+};
+
+struct AsmConstraint {
+  AsmConstraintKind Kind { AsmConstraintKind::Other };
+  unsigned Index { 0 };
+  unsigned NewIndex { UINT_MAX };
+  int MatchingIndex { -1 };
+  std::string String;
+
+  AsmConstraint() = default;
+
+  AsmConstraint(AsmConstraintKind Kind, unsigned Index, std::string String)
+    : Kind(Kind), Index(Index), String(String) {
+  }
+};
+
 class Pizlonator {
   static constexpr unsigned TargetAS = 0;
   
@@ -1512,7 +1546,7 @@ class Pizlonator {
   Value* flightPtrLower(Value* P, Instruction* InsertBefore) {
     if (isa<ConstantAggregateZero>(P))
       return RawNull;
-    Instruction* Result = ExtractValueInst::Create(RawPtrTy, P, { 1 }, "filc_ptr_ptr", InsertBefore);
+    Instruction* Result = ExtractValueInst::Create(RawPtrTy, P, { 1 }, "filc_ptr_lower", InsertBefore);
     Result->setDebugLoc(InsertBefore->getDebugLoc());
     return Result;
   }
@@ -1903,6 +1937,10 @@ class Pizlonator {
     }
     
     return false;
+  }
+
+  bool isSomePtr(Type* T) {
+    return T == RawPtrTy || T == FlightPtrTy;
   }
 
   Align lowAlign(Type* T, Align A, AtomicOrdering AO) {
@@ -5359,6 +5397,412 @@ class Pizlonator {
 
     return false;
   }
+
+  bool handleInlineAsm(CallBase* CI, std::string& Reason) {
+    if (verbose)
+      errs() << "Dealing with inline asm call: " << *CI << "\n";
+    
+    InlineAsm* IA = cast<InlineAsm>(CI->getCalledOperand());
+    if (IA->getAsmString() != "") {
+      Reason = "nontrivial assembly, cannot analyze";
+      return false;
+    }
+    
+    // If the inline asm doesn't deal in pointers, then we can just pass it through.
+    if (!hasPtrs(CI->getType())) {
+      bool hasPtrArg = false;
+      for (size_t Index = CI->arg_size(); Index--;) {
+        if (hasPtrs(CI->getArgOperand(Index)->getType())) {
+          hasPtrArg = true;
+          break;
+        }
+      }
+      if (!hasPtrArg)
+        return true;
+    }
+
+    if (verbose)
+      errs() << "It has pointers, going to parse the constraints.\n";
+
+    // The inline asm does have pointers. So, we need to analyze the constraints. We do our own
+    // analysis rather than relying on InlineAsm::ParseConstraints because we cannot handle the
+    // more complex ones and this parser rejects the ones we cannot handle.
+
+    std::vector<Type*> OutputTypes;
+    
+    auto checkType = [&] (Type* T) {
+      if (T->isIntegerTy() || T->isFloatTy() || T->isPointerTy() || T->isVectorTy())
+        return true;
+      std::string str;
+      raw_string_ostream buf(str);
+      buf << "unexpected return type: " << *T;
+      Reason = str;
+      return false;
+    };
+    
+    if (!CI->getType()->isVoidTy()) {
+      if (StructType* ST = dyn_cast<StructType>(CI->getType())) {
+        for (unsigned Index = 0; Index < ST->getNumElements(); ++Index) {
+          Type* T = ST->getElementType(Index);
+          if (!checkType(T))
+            return false;
+          OutputTypes.push_back(T);
+        }
+      } else {
+        if (!checkType(CI->getType()))
+          return false;
+        OutputTypes.push_back(CI->getType());
+      }
+    }
+
+    std::vector<AsmConstraint> ConstraintsArray;
+    std::vector<AsmIO> Outputs;
+    std::vector<AsmIO> Inputs;
+
+    std::string Constraints = IA->getConstraintString();
+    for (size_t Index = 0, EndIndex; Index < Constraints.size(); Index = EndIndex + 1) {
+      EndIndex = Constraints.find(',', Index);
+      if (EndIndex == std::string::npos)
+        EndIndex = Constraints.size();
+
+      std::string ThisConstraint = Constraints.substr(Index, EndIndex - Index);
+      ConstraintsArray.push_back(AsmConstraint(AsmConstraintKind::Other, 0, ThisConstraint));
+
+      if (verbose)
+        errs() << "Considering constraint: " << ThisConstraint << "\n";
+
+      if (Constraints[Index] == '!') {
+        Reason = "unsupported constraint: !, aka label";
+        return false;
+      }
+
+      if (Constraints[Index] == '~') {
+        Index++;
+        if (Index >= EndIndex) {
+          Reason = "malformed constraint: ~ at end";
+          return false;
+        }
+        if (Constraints[Index] != '{') {
+          Reason = "malformed constraint: ~ not followed by {";
+          return false;
+        }
+        Index++;
+        if (Index >= EndIndex) {
+          Reason = "malformed constraint: ~{ at end";
+          return false;
+        }
+        size_t EndClobberIndex = Constraints.find('}', Index);
+        if (EndClobberIndex == std::string::npos || EndClobberIndex >= EndIndex) {
+          Reason = "malformed constraint: unmatched ~{ and }";
+          return false;
+        }
+        if (EndClobberIndex != EndIndex - 1) {
+          Reason = "malformed constraint: junk after }";
+          return false;
+        }
+        continue;
+      }
+
+      if (isdigit(Constraints[Index])) {
+        for (size_t SubIndex = Index; SubIndex < EndIndex; ++SubIndex) {
+          if (!isdigit(Constraints[Index])) {
+            std::ostringstream buf;
+            buf << "nontrivial matching constraint: " << ThisConstraint;
+            Reason = buf.str();
+            return false;
+          }
+        }
+        int MatchingIndex = atoi(ThisConstraint.c_str());
+        assert(MatchingIndex >= 0);
+        if (static_cast<size_t>(MatchingIndex) >= ConstraintsArray.size()) {
+          std::ostringstream buf;
+          buf << "matching constraint out of bounds: " << ThisConstraint;
+          Reason = buf.str();
+          return false;
+        }
+        ConstraintsArray.back().MatchingIndex = MatchingIndex;
+        if (ConstraintsArray[MatchingIndex].Kind == AsmConstraintKind::Input) {
+          // This happens in situations like this: "=*r|m,0". The matching constraint is an indirect
+          // input in these cases.
+          assert(static_cast<size_t>(ConstraintsArray[MatchingIndex].Index) < Inputs.size());
+          if (!isSomePtr(Inputs[ConstraintsArray[MatchingIndex].Index].T)) {
+            std::ostringstream buf;
+            buf << "matching constraint points at input that isn't a pointer: " << ThisConstraint;
+            Reason = buf.str();
+            return false;
+          }
+          ConstraintsArray.back().Kind = AsmConstraintKind::Input;
+          ConstraintsArray.back().Index = Inputs.size();
+          Inputs.push_back(
+            AsmIO(CI->getArgOperand(Inputs.size())->getType(), -1, ConstraintsArray.size() - 1));
+          continue;
+        }
+        if (ConstraintsArray[MatchingIndex].Kind != AsmConstraintKind::Output) {
+          std::ostringstream buf;
+          buf << "matching constraint doesn't point at output: " << ThisConstraint;
+          Reason = buf.str();
+          return false;
+        }
+        if (Outputs[ConstraintsArray[MatchingIndex].Index].Matching != -1) {
+          std::ostringstream buf;
+          buf << "matching constraint points at taken output: " << ThisConstraint;
+          Reason = buf.str();
+          return false;
+        }
+        assert(Inputs.size() < CI->arg_size());
+        ConstraintsArray.back().Kind = AsmConstraintKind::Input;
+        ConstraintsArray.back().Index = Inputs.size();
+        Outputs[ConstraintsArray[MatchingIndex].Index].Matching = Inputs.size();
+        Inputs.push_back(AsmIO(CI->getArgOperand(Inputs.size())->getType(),
+                               ConstraintsArray[MatchingIndex].Index,
+                               ConstraintsArray.size() - 1));
+        continue;
+      }
+
+      bool isOutput = false;
+      bool isPtr = false;
+      
+      if (Constraints[Index] == '=') {
+        Index++;
+        if (Index >= EndIndex) {
+          Reason = "malformed constraint: = at end";
+          return false;
+        }
+        isOutput = true;
+      }
+
+      if (Constraints[Index] == '*') {
+        Index++;
+        if (Index >= EndIndex) {
+          Reason = "malformed constraint: * at end";
+          return false;
+        }
+        // This is an indirect operand, so from our standpoint, it's an input and that input is a
+        // pointer.
+        isOutput = false;
+        isPtr = true;
+      }
+
+      // I don't think we care about the rest of this string so long as it doesn't have digits.
+      for (size_t SubIndex = Index; SubIndex < EndIndex; ++SubIndex) {
+        if (isdigit(Constraints[Index])) {
+          std::ostringstream buf;
+          buf << "nontrivial matching constraint: " << ThisConstraint;
+          Reason = buf.str();
+          return false;
+        }
+      }
+
+      Type* T;
+      if (isOutput) {
+        assert(Outputs.size() < OutputTypes.size());
+        T = OutputTypes[Outputs.size()];
+      } else {
+        assert(Inputs.size() < CI->arg_size());
+        T = CI->getArgOperand(Inputs.size())->getType();
+      }
+
+      if (isPtr)
+        assert(isSomePtr(T));
+
+      if (isOutput) {
+        ConstraintsArray.back().Kind = AsmConstraintKind::Output;
+        ConstraintsArray.back().Index = Outputs.size();
+        Outputs.push_back(AsmIO(T, -1, ConstraintsArray.size() - 1));
+      } else {
+        ConstraintsArray.back().Kind = AsmConstraintKind::Input;
+        ConstraintsArray.back().Index = Inputs.size();
+        Inputs.push_back(AsmIO(T, -1, ConstraintsArray.size() - 1));
+      }
+    }
+
+    assert(Outputs.size() == OutputTypes.size());
+    assert(Inputs.size() == CI->arg_size());
+
+    std::vector<Type*> NewOutputTypes;
+    std::vector<Value*> NewInputOperands;
+    std::vector<Type*> NewInputElementTypes;
+    std::ostringstream NewConstraintBuf;
+    size_t NumNewConstraints = 0;
+
+    for (size_t Index = 0; Index < ConstraintsArray.size(); ++Index) {
+      AsmConstraint& AC = ConstraintsArray[Index];
+      if (Index)
+        NewConstraintBuf << ",";
+      AC.NewIndex = NumNewConstraints;
+      assert(AC.MatchingIndex >= -1);
+      if (AC.MatchingIndex >= 0) {
+        NewConstraintBuf << ConstraintsArray[AC.MatchingIndex].NewIndex;
+      } else
+        NewConstraintBuf << AC.String;
+      NumNewConstraints++;
+      switch (AC.Kind) {
+      case AsmConstraintKind::Other:
+        // We ignore these.
+        break;
+      case AsmConstraintKind::Input: {
+        assert(AC.Index < Inputs.size());
+        const AsmIO& AIO = Inputs[AC.Index];
+        Value* V = CI->getArgOperand(AC.Index);
+        assert(AIO.T == V->getType());
+        if (isSomePtr(AIO.T)) {
+          NewInputOperands.push_back(flightPtrPtr(V, CI));
+          NewInputElementTypes.push_back(CI->getAttributes().getParamElementType(AC.Index));
+          if (AIO.Matching >= 0) {
+            NewInputOperands.push_back(flightPtrLower(V, CI));
+            NewInputElementTypes.push_back(nullptr);
+            assert(static_cast<size_t>(AIO.Matching) < Outputs.size());
+            assert(static_cast<unsigned>(Outputs[AIO.Matching].Matching) == AC.Index);
+            unsigned NewMatchingIndex = ConstraintsArray[Outputs[AIO.Matching].Index].NewIndex;
+            assert(NewMatchingIndex < NumNewConstraints);
+            assert(NewMatchingIndex < AC.NewIndex);
+            assert(NewMatchingIndex + 1 < NumNewConstraints);
+            assert(NewMatchingIndex + 1 < AC.NewIndex);
+            NewConstraintBuf << "," << NewMatchingIndex + 1;
+            NumNewConstraints++;
+          } else {
+            // If we have an input constraint involving a pointer, then we don't bother passing the
+            // pointer's capability. I think that's right, but it's hard to tell.
+            //
+            // Reason why it might be right: the inline assembly is asking us to please compute this
+            // pointer. We are still asking for that.
+            //
+            // Reason why it might be wrong: the inline assembly we lower to isn't asking to compute
+            // the capability.
+            //
+            // But I can't think of any reason why failing to ask to compute the capability hurts us
+            // in any way.
+          }
+        } else {
+          assert(!hasPtrs(AIO.T));
+          NewInputOperands.push_back(V);
+          NewInputElementTypes.push_back(nullptr);
+        }
+        break;
+      }
+      case AsmConstraintKind::Output: {
+        assert(AC.Index < Outputs.size());
+        const AsmIO& AIO = Outputs[AC.Index];
+        assert(AIO.T == OutputTypes[AC.Index]);
+        if (isSomePtr(AIO.T)) {
+          NewOutputTypes.push_back(RawPtrTy);
+          if (AIO.Matching >= 0) {
+            assert(static_cast<size_t>(AIO.Matching) < Inputs.size());
+            assert(static_cast<unsigned>(Inputs[AIO.Matching].Matching) == AC.Index);
+            NewOutputTypes.push_back(RawPtrTy);
+            NewConstraintBuf << ",=r";
+            NumNewConstraints++;
+          }
+        } else {
+          assert(!hasPtrs(AIO.T));
+          NewOutputTypes.push_back(AIO.T);
+        }
+        break;
+      } }
+    }
+
+    if (verbose) {
+      errs() << "New constraints: " << NewConstraintBuf.str() << "\n";
+      errs() << "Num new inputs: " << NewInputOperands.size() << "\n";
+      errs() << "Num new outputs: " << NewOutputTypes.size() << "\n";
+    }
+
+    assert(NewInputOperands.size() == NewInputElementTypes.size());
+
+    Type* NewRetT;
+    if (NewOutputTypes.empty())
+      NewRetT = VoidTy;
+    else if (NewOutputTypes.size() == 1)
+      NewRetT = NewOutputTypes[0];
+    else
+      NewRetT = StructType::get(C, NewOutputTypes);
+
+    std::vector<Type*> NewInputTypes;
+    for (Value* V : NewInputOperands)
+      NewInputTypes.push_back(V->getType());
+
+    FunctionType* NewFT = FunctionType::get(NewRetT, NewInputTypes, false);
+
+    InlineAsm* NewIA = InlineAsm::get(
+      NewFT, "", NewConstraintBuf.str(), IA->hasSideEffects(), IA->isAlignStack(), IA->getDialect(),
+      IA->canThrow());
+
+    CallInst* NewCI = CallInst::Create(
+      NewIA, NewInputOperands, NewRetT == VoidTy ? "" : "filc_inline_asm_call", CI);
+
+    for (size_t Index = 0; Index < NewInputElementTypes.size(); ++Index) {
+      if (Type* T = NewInputElementTypes[Index])
+        NewCI->addParamAttr(Index, Attribute::get(C, Attribute::ElementType, T));
+    }
+
+    Instruction* InsertionPoint = CI->getNextNode();
+
+    if (hasPtrs(NewRetT)) {
+      assert(NewOutputTypes.size() > Outputs.size());
+      
+      auto GetReturnValue = [&] (size_t Index) -> Value* {
+        assert(static_cast<unsigned>(Index) == Index);
+        assert(NewOutputTypes.size());
+        if (NewOutputTypes.size() == 1) {
+          assert(!Index);
+          return NewCI;
+        }
+        assert(Index < NewOutputTypes.size());
+        Instruction* Result = ExtractValueInst::Create(
+          NewOutputTypes[Index], NewCI, { static_cast<unsigned>(Index) },
+          "filc_inline_asm_return_value", InsertionPoint);
+        Result->setDebugLoc(CI->getDebugLoc());
+        return Result;
+      };
+
+      std::vector<Value*> NewOutputValues;
+      for (size_t Index = 0, ReturnValueIndex = 0; Index < Outputs.size(); ++Index) {
+        assert(ReturnValueIndex < NewOutputTypes.size());
+        const AsmIO& AIO = Outputs[Index];
+        Value* V = GetReturnValue(ReturnValueIndex++);
+        if (!isSomePtr(AIO.T)) {
+          assert(!hasPtrs(AIO.T));
+          NewOutputValues.push_back(V);
+          continue;
+        }
+        if (AIO.Matching < 0) {
+          assert(AIO.Matching == -1);
+          NewOutputValues.push_back(badFlightPtr(V, InsertionPoint));
+          continue;
+        }
+        NewOutputValues.push_back(
+          createFlightPtr(GetReturnValue(ReturnValueIndex++), V, InsertionPoint));
+      }
+
+      assert(NewOutputValues.size());
+      assert(NewOutputValues.size() == Outputs.size());
+      assert(NewOutputValues.size() < NewOutputTypes.size());
+
+      if (NewOutputValues.size() == 1) {
+        assert(toFlightType(CI->getType()) == NewOutputValues[0]->getType());
+        CI->replaceAllUsesWith(NewOutputValues[0]);
+      } else {
+        std::vector<Type*> NewOutputValueTypes;
+        for (Value* V : NewOutputValues)
+          NewOutputValueTypes.push_back(V->getType());
+        StructType* ST = StructType::get(C, NewOutputValueTypes);
+        assert(ST == toFlightType(CI->getType()));
+        Value* Result = UndefValue::get(ST);
+        for (size_t Index = 0; Index < NewOutputValues.size(); ++Index) {
+          assert(static_cast<unsigned>(Index) == Index);
+          Instruction* Insert = InsertValueInst::Create(
+            Result, NewOutputValues[Index], { static_cast<unsigned>(Index) },
+            "filc_inline_asm_insert", InsertionPoint);
+          Insert->setDebugLoc(CI->getDebugLoc());
+          Result = Insert;
+        }
+        CI->replaceAllUsesWith(Result);
+      }
+    } else
+      CI->replaceAllUsesWith(NewCI);
+    CI->eraseFromParent();
+    return true;
+  }
   
   // This lowers the instruction "in place", so all references to it are fixed up after this runs.
   void lowerInstruction(Instruction *I) {
@@ -5551,26 +5995,17 @@ class Pizlonator {
       // have the Fil-C CC version wrap the direct version.
       
       if (CI->isInlineAsm()) {
-        // FIXME: Expand the support for fence assembly to include pointer arguments and return
-        // values. The trick to getting that right will be rewriting the asm constraints so that
-        // constraints covering pointers are duplicated (one for the ptr itself and one for the
-        // lower).
-        if (cast<InlineAsm>(CI->getCalledOperand())->getAsmString() == ""
-            && !hasPtrs(CI->getType())) {
-          bool hasPtrArg = false;
-          for (size_t Index = CI->arg_size(); Index--;) {
-            if (hasPtrs(CI->getArgOperand(Index)->getType())) {
-              hasPtrArg = true;
-              break;
-            }
-          }
-          if (!hasPtrArg)
-            return;
-        }
+        std::string Reason = "";
+
+        if (handleInlineAsm(CI, Reason))
+          return;
+
+        assert(!Reason.empty());
+        
         assert(isa<CallInst>(CI));
         std::string str;
         raw_string_ostream outs(str);
-        outs << "Cannot handle inline asm: " << *CI;
+        outs << "cannot handle inline asm (" << Reason << "): " << *CI;
         CallInst::Create(Error, { getString(str), getOrigin(I->getDebugLoc()) }, "", I)
           ->setDebugLoc(I->getDebugLoc());
         if (I->getType() != VoidTy) {
