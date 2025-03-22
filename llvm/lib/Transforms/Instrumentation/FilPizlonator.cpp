@@ -7289,7 +7289,6 @@ public:
       std::vector<Constant*> Args;
       for (size_t Index = 0; Index < Array->getNumOperands(); ++Index) {
         ConstantStruct* Struct = cast<ConstantStruct>(Array->getOperand(Index));
-        assert(Struct->getOperand(2) == RawNull);
         Function* Ctor = cast<Function>(Struct->getOperand(1));
         Function* HiddenCtor = FunctionToHiddenFunction[Ctor];
         assert(HiddenCtor);
@@ -7310,7 +7309,6 @@ public:
       std::vector<Constant*> Args;
       for (size_t Index = 0; Index < Array->getNumOperands(); ++Index) {
         ConstantStruct* Struct = cast<ConstantStruct>(Array->getOperand(Index));
-        assert(Struct->getOperand(2) == RawNull);
         Function* Dtor = cast<Function>(Struct->getOperand(1));
         Function* HiddenDtor = FunctionToHiddenFunction[Dtor];
         Function* NewF = Function::Create(

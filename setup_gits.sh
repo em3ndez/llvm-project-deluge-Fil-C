@@ -85,3 +85,4 @@ handle_git wg14_signals wg14_signals
 handle_git pizlonated-libuev pizlonated-libuev
 handle_git pizlonated-bzip3 pizlonated-bzip3
 handle_git pizlonated-simdjson pizlonated-simdjson
+handle_git pizlonated-ada pizlonated-ada
