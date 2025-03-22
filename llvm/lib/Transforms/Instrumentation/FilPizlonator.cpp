@@ -1069,6 +1069,7 @@ struct AsmConstraint {
   unsigned NewIndex { UINT_MAX };
   int MatchingIndex { -1 };
   std::string String;
+  bool IsIndirect { false };
 
   AsmConstraint() = default;
 
@@ -5503,7 +5504,45 @@ class Pizlonator {
         continue;
       }
 
+      bool isOutput = false;
+      bool isOutputLogically = false;
+      bool isPtr = false;
+      
+      if (Constraints[Index] == '=') {
+        Index++;
+        if (Index >= EndIndex) {
+          Reason = "malformed constraint: = at end";
+          return false;
+        }
+        isOutput = true;
+        isOutputLogically = true;
+      }
+
+      if (Constraints[Index] == '*') {
+        Index++;
+        if (Index >= EndIndex) {
+          Reason = "malformed constraint: * at end";
+          return false;
+        }
+        // This is an indirect operand, so from our standpoint, it's an input and that input is a
+        // pointer.
+        isOutput = false;
+        isPtr = true;
+        ConstraintsArray.back().IsIndirect = true;
+      }
+
       if (isdigit(Constraints[Index])) {
+        if (isOutputLogically) {
+          std::ostringstream buf;
+          buf << "output matching constraint: " << ThisConstraint;
+          Reason = buf.str();
+          return false;
+        }
+
+        Type* T = CI->getArgOperand(Inputs.size())->getType();
+        if (isPtr)
+          assert(isSomePtr(T));
+
         for (size_t SubIndex = Index; SubIndex < EndIndex; ++SubIndex) {
           if (!isdigit(Constraints[Index])) {
             std::ostringstream buf;
@@ -5533,8 +5572,7 @@ class Pizlonator {
           }
           ConstraintsArray.back().Kind = AsmConstraintKind::Input;
           ConstraintsArray.back().Index = Inputs.size();
-          Inputs.push_back(
-            AsmIO(CI->getArgOperand(Inputs.size())->getType(), -1, ConstraintsArray.size() - 1));
+          Inputs.push_back(AsmIO(T, -1, ConstraintsArray.size() - 1));
           continue;
         }
         if (ConstraintsArray[MatchingIndex].Kind != AsmConstraintKind::Output) {
@@ -5553,34 +5591,9 @@ class Pizlonator {
         ConstraintsArray.back().Kind = AsmConstraintKind::Input;
         ConstraintsArray.back().Index = Inputs.size();
         Outputs[ConstraintsArray[MatchingIndex].Index].Matching = Inputs.size();
-        Inputs.push_back(AsmIO(CI->getArgOperand(Inputs.size())->getType(),
-                               ConstraintsArray[MatchingIndex].Index,
-                               ConstraintsArray.size() - 1));
+        Inputs.push_back(
+          AsmIO(T, ConstraintsArray[MatchingIndex].Index, ConstraintsArray.size() - 1));
         continue;
-      }
-
-      bool isOutput = false;
-      bool isPtr = false;
-      
-      if (Constraints[Index] == '=') {
-        Index++;
-        if (Index >= EndIndex) {
-          Reason = "malformed constraint: = at end";
-          return false;
-        }
-        isOutput = true;
-      }
-
-      if (Constraints[Index] == '*') {
-        Index++;
-        if (Index >= EndIndex) {
-          Reason = "malformed constraint: * at end";
-          return false;
-        }
-        // This is an indirect operand, so from our standpoint, it's an input and that input is a
-        // pointer.
-        isOutput = false;
-        isPtr = true;
       }
 
       // I don't think we care about the rest of this string so long as it doesn't have digits.
@@ -5632,6 +5645,8 @@ class Pizlonator {
       AC.NewIndex = NumNewConstraints;
       assert(AC.MatchingIndex >= -1);
       if (AC.MatchingIndex >= 0) {
+        if (AC.IsIndirect)
+          NewConstraintBuf << "*";
         NewConstraintBuf << ConstraintsArray[AC.MatchingIndex].NewIndex;
       } else
         NewConstraintBuf << AC.String;
