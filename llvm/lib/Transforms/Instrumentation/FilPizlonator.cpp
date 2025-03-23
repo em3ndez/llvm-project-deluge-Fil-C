@@ -5753,7 +5753,7 @@ class Pizlonator {
     Instruction* InsertionPoint = CI->getNextNode();
 
     if (hasPtrs(NewRetT)) {
-      assert(NewOutputTypes.size() > Outputs.size());
+      assert(NewOutputTypes.size() >= Outputs.size());
       
       auto GetReturnValue = [&] (size_t Index) -> Value* {
         assert(static_cast<unsigned>(Index) == Index);
@@ -5791,7 +5791,7 @@ class Pizlonator {
 
       assert(NewOutputValues.size());
       assert(NewOutputValues.size() == Outputs.size());
-      assert(NewOutputValues.size() < NewOutputTypes.size());
+      assert(NewOutputValues.size() <= NewOutputTypes.size());
 
       if (NewOutputValues.size() == 1) {
         assert(toFlightType(CI->getType()) == NewOutputValues[0]->getType());
