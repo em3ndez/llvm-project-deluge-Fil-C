@@ -33,6 +33,8 @@
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TargetParser/TargetParser.h"
 #include <system_error>
+#include <fstream>
+#include <sstream>
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -367,6 +369,132 @@ void tools::gnutools::StaticLibTool::ConstructJob(
                                          Exec, CmdArgs, Inputs, Output));
 }
 
+namespace {
+
+std::string PizlonateVersionScript(const std::string& Input) {
+  size_t InputIndex = 0;
+
+  std::ostringstream Output;
+
+  auto fail = [&] (const std::string& Reason) {
+    llvm::errs() << "Failed to parse version script: " << Input << "\n";
+    llvm::errs() << "Failed at byte index " << InputIndex << "\n";
+    llvm::errs() << "Reason: " << Reason << "\n";
+    llvm::errs() << "Output so far: " << Output.str() << "\n";
+    llvm_unreachable("Failed to parse version script.");
+  };
+
+  auto atEnd = [&] () {
+    assert(InputIndex <= Input.size());
+    return InputIndex == Input.size();
+  };
+
+  auto peek = [&] () {
+    assert(InputIndex < Input.size());
+    return Input[InputIndex];
+  };
+
+  auto take = [&] () {
+    if (atEnd())
+      llvm_unreachable("Unexpected end of file");
+    return Input[InputIndex++];
+  };
+
+  auto skipWhitespace = [&] () {
+    while (!atEnd()) {
+      if (isspace(peek())) {
+        take();
+        continue;
+      }
+      if (peek() == '/' && InputIndex + 1 < Input.size() && Input[InputIndex + 1] == '*') {
+        InputIndex += 2;
+        assert(InputIndex <= Input.size());
+        for (;;) {
+          if (take() == '*' && take() == '/')
+            break;
+        }
+      } else
+        break;
+    }
+  };
+
+  auto skipID = [&] () {
+    while (!atEnd() && (isalnum(peek()) ||
+                        peek() == '_' ||
+                        peek() == '$' ||
+                        peek() == '@' ||
+                        peek() == '.'))
+      take();
+  };
+
+  auto parseID = [&] () -> std::string {
+    skipWhitespace();
+    size_t Start = InputIndex;
+    skipID();
+    size_t End = InputIndex;
+    if (End == Start)
+      fail("Expected identifier");
+    return Input.substr(Start, End - Start);
+  };
+
+  auto parseSymbol = [&] (char symbol) {
+    skipWhitespace();
+    if (atEnd() || peek() != symbol)
+      fail(std::string("Expected ") + symbol);
+    InputIndex++;
+  };
+
+  for (;;) {
+    skipWhitespace();
+    if (atEnd())
+      break;
+    Output << " " << parseID();
+    parseSymbol('{');
+    Output << " {";
+    for (;;) {
+      skipWhitespace();
+      if (atEnd())
+        fail("Unexpected end of file (expected group)");
+      if (peek() == '}') {
+        take();
+        Output << " }";
+        break;
+      }
+      if (peek() == '*') {
+        take();
+        parseSymbol(';');
+        Output << " *;";
+        continue;
+      }
+      std::string ID = parseID();
+      skipWhitespace();
+      if (atEnd())
+        fail("Unexpected end of file (expected ; or :)");
+      if (peek() == ':') {
+        take();
+        Output << " " << ID << ":";
+        continue;
+      }
+      parseSymbol(';');
+      Output << " pizlonated_" << ID << ";";
+    }
+    skipWhitespace();
+    if (atEnd())
+      fail("Unexpected end of file (expected version or ;)");
+    if (peek() == ';') {
+      take();
+      Output << ";";
+      continue;
+    }
+    parseSymbol(';');
+    Output << " " << parseID() << ";";
+  }
+
+  return Output.str();
+}
+
+} // anonymous namespace
+
 void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                            const InputInfo &Output,
                                            const InputInfoList &Inputs,
@@ -600,6 +728,29 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
+
+  for (auto InputVersionScriptFilename : Args.getAllArgValues(options::OPT_version_script_EQ)) {
+    const char* OutputVersionScriptFilename =
+      ToolChain.getDriver().CreateTempFile(C, "version-script", "ld");
+    std::string InputVersionScript;
+    {
+      std::ifstream InputStream(InputVersionScriptFilename);
+      if (!InputStream.good()) {
+        // LMAO should turn this into a proper diagnostic maybe?
+        llvm_unreachable(("Could not open " + InputVersionScriptFilename).c_str());
+      }
+      std::ostringstream InputBuffer;
+      InputBuffer << InputStream.rdbuf();
+      std::string Input = InputBuffer.str();
+      std::string Output = PizlonateVersionScript(Input);
+      std::ofstream OutputStream(OutputVersionScriptFilename);
+      OutputStream << Output;
+      if (!OutputStream.good())
+        llvm_unreachable((std::string("Could not write ") + OutputVersionScriptFilename).c_str());
+    }
+    CmdArgs.push_back(
+      Args.MakeArgString(std::string("--version-script=") + OutputVersionScriptFilename));
+  }
 
   addHIPRuntimeLibArgs(ToolChain, Args, CmdArgs);
 
