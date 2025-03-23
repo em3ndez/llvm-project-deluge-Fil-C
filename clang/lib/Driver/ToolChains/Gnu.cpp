@@ -448,7 +448,8 @@ std::string PizlonateVersionScript(const std::string& Input) {
     skipWhitespace();
     if (atEnd())
       break;
-    Output << " " << parseID();
+    if (peek() != '{')
+      Output << " " << parseID();
     parseSymbol('{');
     Output << " {";
     for (;;) {
@@ -486,8 +487,8 @@ std::string PizlonateVersionScript(const std::string& Input) {
       Output << ";";
       continue;
     }
-    parseSymbol(';');
     Output << " " << parseID() << ";";
+    parseSymbol(';');
   }
 
   return Output.str();
