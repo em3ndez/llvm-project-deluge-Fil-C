@@ -354,6 +354,8 @@ static void wait_and_start_marking(void)
         PAS_ASSERT(completed_cycle <= requested_cycle);
     }
 
+    verse_heap_live_bytes_trigger_threshold = SIZE_MAX;
+
     if (verbose >= VERBOSE_CYCLES)
         overall_start_time = pas_get_time_in_milliseconds();
 
