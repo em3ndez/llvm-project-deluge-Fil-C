@@ -257,17 +257,16 @@ space overhead of InvisiCaps is nowhere near 2x.
 is a semi-novel algorithm. For those well-versed in concurrent GC design, it'll sound almost like
 old hat - but the sort of old hat you enjoy wearing.
 
-In GC mafia jargon, FUGC is a *concurrent on-the-fly grey-stack Dijkstra accurate non-moving* collector.
-Let's break that down:
+In GC mafia jargon, FUGC is a *parallel concurrent on-the-fly grey-stack Dijkstra accurate non-moving*
+collector. Let's break that down:
 
-- Concurrent: marking and sweeping happen on some thread, which can run on whatever core or be
-  scheduled by the OS however the OS wants. The *mutator* (i.e. your program and all of its threads)
-  can run in other threads, concurrently to the collector. (This is different from saying
-  that the collector is *parallel* - a parallel collector is one that runs marking and sweeping in
-  multiple threads; a parallel-but-not-concurrent collector will pause your program to do this. FUGC
-  is concurrent, meaning that it doesn't pause your program to do this.) The interaction between the
-  collector thread and mutator threads is mostly non-blocking (locking is only used on allocation slow
-  paths).
+- Parallel: marking and sweeping happen in multiple threads, in parallel. The more cores you have, the
+  faster the collector finishes.
+
+- Concurrent: marking and sweeping happen on some threads other than the *mutator* threads (i.e. your
+  program's threads). Mutator threads don't have to stop and wait for the collector. The interaction
+  between the collector thread and mutator threads is mostly non-blocking (locking is only used on
+  allocation slow paths).
 
 - On-the-fly: there is no global stop-the-world, but instead we use what some mafia members will call
   "soft handshakes" while other made men will call "ragged safepoints". In the language of civilians,
@@ -377,12 +376,6 @@ fast compared to marking. This is made thanks to the
 that I added to
 [libpas](https://github.com/WebKit/WebKit/blob/main/Source/bmalloc/libpas/Documentation.md). FUGC
 typically spends <5% of its time sweeping.
-
-FUGC can easily be made parallel. Sweeping is trivial to parallelize; I just haven't done it because
-I want to test it more and fix all the bugs I find before I do that. Marking is easy to paralellize
-using any of the usual parallel marking algorithms (though I am especially fond of the one I used in
-[Riptide](https://webkit.org/blog/7122/introducing-riptide-webkits-retreating-wavefront-concurrent-garbage-collector/),
-so I'll probably just do that when ready).
 
 ## Conclusion
 

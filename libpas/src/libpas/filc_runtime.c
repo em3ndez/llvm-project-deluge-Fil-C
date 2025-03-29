@@ -1276,6 +1276,18 @@ void filc_object_array_pop_all_from_and_push_to(filc_object_array* from, filc_ob
     filc_object_array_reset(from);
 }
 
+void filc_object_array_pop_n_from_and_push_to(filc_object_array* from, filc_object_array* to,
+                                              size_t n)
+{
+    PAS_ASSERT(n <= from->num_objects);
+
+    enlarge_array_if_necessary(to, to->num_objects + n);
+    memcpy(to->objects + to->num_objects, from->objects + from->num_objects - n,
+           n * sizeof(filc_object*));
+    to->num_objects += n;
+    from->num_objects -= n;
+}
+
 void filc_object_array_reset(filc_object_array* array)
 {
     filc_object_array_destruct(array);

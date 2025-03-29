@@ -1649,6 +1649,7 @@ typedef void* pas_thread_return_type;
 #define PAS_SYSTEM_ONCE_INIT PTHREAD_ONCE_INIT
 
 static inline int pas_getpid(void) { return getpid(); }
+static inline int pas_gettid(void) { return gettid(); }
 #endif /* _WIN32 -> so end of !_WIN32 */
 
 PAS_API double pas_get_time_in_milliseconds_for_system_condition(void);

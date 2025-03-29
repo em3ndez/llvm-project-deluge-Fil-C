@@ -1284,6 +1284,9 @@ PAS_API void filc_object_array_reset(filc_object_array* array);
 PAS_API void filc_object_array_push_all(filc_object_array* to, filc_object_array* from);
 PAS_API void filc_object_array_pop_all_from_and_push_to(filc_object_array* from,
                                                         filc_object_array* to);
+PAS_API void filc_object_array_pop_n_from_and_push_to(filc_object_array* from,
+                                                      filc_object_array* to,
+                                                      size_t n);
 
 static inline void filc_push_allocation_root(filc_thread* my_thread, void* allocation_root)
 {

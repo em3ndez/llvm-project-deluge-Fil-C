@@ -104,6 +104,7 @@ int main()
         int pid = fork();
         ZASSERT(pid >= 0);
         if (pid) {
+            zprintf("Child pid = %d\n", pid);
             /* Make sure that the thread runs at all. */
             while (!thread_node)
                 zfence();
