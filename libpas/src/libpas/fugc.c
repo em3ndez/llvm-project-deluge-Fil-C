@@ -251,11 +251,16 @@ static void do_parallel_work_impl(worker_function my_worker, const char* name)
         pas_log("[%d] fugc: doing parallel work: %s\n", pas_getpid(), name);
     
     unsigned target_num_workers = parallelism_target();
+    bool thread_creation_failed = false;
     while (num_workers < target_num_workers) {
         num_workers++;
         uint64_t* version_ptr = (uint64_t*)bmalloc_allocate(sizeof(uint64_t));
         *version_ptr = worker_version;
-        pas_create_detached_thread(parallel_worker_thread, version_ptr);
+        if (!pas_create_detached_thread_allowing_errors(parallel_worker_thread, version_ptr)) {
+            /* Thread creation may fail because the user program is already in execve(2). */
+            thread_creation_failed = true;
+            break;
+        }
     }
 
     if (verbose >= VERBOSE_EXTREME) {
@@ -264,7 +269,7 @@ static void do_parallel_work_impl(worker_function my_worker, const char* name)
     }
     /* It's possible for us to have more workers than our target if the heap shrank and we still have
        workers around from last time that haven't died. */
-    PAS_ASSERT(num_workers >= target_num_workers);
+    PAS_ASSERT(num_workers >= target_num_workers || thread_creation_failed);
     
     current_worker = my_worker;
     num_workers_dispatched = num_workers;

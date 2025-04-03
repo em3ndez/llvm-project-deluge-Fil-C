@@ -309,16 +309,38 @@ double pas_get_time_in_milliseconds_for_system_condition(void)
     return current_time.tv_sec * 1000. + current_time.tv_usec / 1000.;
 }
 
-void pas_create_detached_thread(pas_thread_return_type (*thread_main)(void* arg), void* arg)
+bool create_detached_thread_impl(pas_thread_return_type (*thread_main)(void* arg), void* arg,
+                                 bool ignore_errors)
 {
     pthread_t thread;
     int result;
     result = pthread_create(&thread, NULL, thread_main, arg);
-    if (result)
+    if (result) {
+        if (ignore_errors)
+            return false;
         pas_log("failed to pthread_create: %s\n", strerror(result));
+    }
     PAS_ASSERT(!result);
     PAS_ASSERT(thread);
     pthread_detach(thread);
+    return true;
+}
+
+void pas_create_detached_thread(pas_thread_return_type (*thread_main)(void* arg), void* arg)
+{
+    bool ignore_errors = false;
+    PAS_ASSERT(create_detached_thread_impl(thread_main, arg, ignore_errors));
+}
+
+/* This is necessary for cases where we create a thread while some other thread might concurrently be
+   executing an execve(2).
+
+   If that thread is already in execve(2), then clone(2) might fail. */
+bool pas_create_detached_thread_allowing_errors(pas_thread_return_type (*thread_main)(void* arg),
+                                                void* arg)
+{
+    bool ignore_errors = true;
+    return create_detached_thread_impl(thread_main, arg, ignore_errors);
 }
 
 void pas_system_mutex_construct(pas_system_mutex* mutex)
