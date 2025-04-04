@@ -154,6 +154,12 @@ const filc_object filc_free_singleton = {
 filc_object_array filc_global_variable_roots;
 filc_object_array filc_global_variable_root_ptrs;
 
+static bmalloc_type filc_object_array_type = BMALLOC_TYPE_INITIALIZER(1, 1, "filc_object_array_heap");
+static bmalloc_type filc_mark_stack_type = BMALLOC_TYPE_INITIALIZER(1, 1, "filc_mark_stack_heap");
+
+pas_heap_ref filc_object_array_heap = BMALLOC_HEAP_REF_INITIALIZER(&filc_object_array_type);
+pas_heap_ref filc_mark_stack_heap = BMALLOC_HEAP_REF_INITIALIZER(&filc_mark_stack_type);
+
 void filc_check_user_sigset(filc_ptr ptr, filc_access_kind access_kind)
 {
     filc_check_access(ptr, sizeof(sigset_t), access_kind);
@@ -186,7 +192,7 @@ filc_thread* filc_thread_create_with_manual_tracking(void)
     pas_system_mutex_construct(&thread->lock);
     pas_system_condition_construct(&thread->cond);
     filc_ptr_array_construct(&thread->allocation_roots);
-    filc_object_array_construct(&thread->mark_stack);
+    filc_mark_stack_construct(&thread->mark_stack);
     filc_object_array_construct(&thread->thread_locals);
 
     unsigned allocator_index = 0;
@@ -258,14 +264,13 @@ void filc_thread_undo_create(filc_thread* thread)
         PAS_ASSERT(thread != filc_get_my_thread());
     }
     PAS_ASSERT(!thread->allocation_roots.size);
-    PAS_ASSERT(!thread->mark_stack.num_objects);
+    PAS_ASSERT(!filc_mark_stack_num_objects(&thread->mark_stack));
     filc_ptr_array_destruct(&thread->allocation_roots);
-    filc_object_array_destruct(&thread->mark_stack);
     filc_object_array_destruct(&thread->thread_locals);
     filc_thread_destroy_space_with_guard_page(thread);
 }
 
-void filc_thread_mark_outgoing_ptrs(filc_thread* thread, filc_object_array* stack)
+void filc_thread_mark_outgoing_ptrs(filc_thread* thread, filc_mark_stack* stack)
 {
     /* There's a bunch of other stuff that threads "point" to that is part of their roots, and we
        mark those as part of marking thread roots. The things here are the ones that are treated
@@ -290,6 +295,8 @@ void filc_thread_destruct(filc_thread* thread)
         pas_log("destructing thread %p\n", thread);
     
     PAS_ASSERT(thread->has_stopped || thread->error_starting || thread->forked);
+
+    filc_mark_stack_destruct(&thread->mark_stack);
 
 #if PAS_OS(LINUX)
     /* On Linux, pthread_condition_destroy waits if there's anyone waiting on the condition
@@ -1217,7 +1224,9 @@ void filc_ptr_array_add(filc_ptr_array* array, void* ptr)
     array->array[array->size++] = ptr;
 }
 
-PAS_NEVER_INLINE static void enlarge_array(filc_object_array* array, size_t anticipated_size)
+PAS_NEVER_INLINE void filc_object_array_impl_enlarge(filc_object_array_impl* array,
+                                                     size_t anticipated_size,
+                                                     pas_heap_ref* heap)
 {
     PAS_ASSERT(anticipated_size > array->objects_capacity);
     
@@ -1229,42 +1238,40 @@ PAS_NEVER_INLINE static void enlarge_array(filc_object_array* array, size_t anti
     PAS_ASSERT(new_objects_capacity >= anticipated_size);
     size_t total_size;
     PAS_ASSERT(!pas_mul_uintptr_overflow(new_objects_capacity, sizeof(filc_object*), &total_size));
-    new_objects = bmalloc_allocate(total_size);
-    memcpy(new_objects, array->objects, array->num_objects * sizeof(filc_object*));
+    new_objects = bmalloc_iso_allocate_array_by_size(heap, total_size);
+    /* These need to be ptr-safe atomic memcpy's and memset's, because we could get our hands
+       on an array backing store that is being cowboyed. */
+    filc_low_level_ptr_safe_memcpy(
+        new_objects, array->objects, array->num_objects * sizeof(filc_object*));
+    filc_low_level_ptr_safe_bzero(
+        new_objects + array->num_objects,
+        (new_objects_capacity - array->num_objects) * sizeof(filc_object*));
     bmalloc_deallocate(array->objects);
     array->objects = new_objects;
     array->objects_capacity = new_objects_capacity;
+    pas_store_store_fence();
 }
 
-static void enlarge_array_if_necessary(filc_object_array* array, size_t anticipated_size)
-{
-    if (PAS_UNLIKELY(anticipated_size > array->objects_capacity))
-        enlarge_array(array, anticipated_size);
-}
-
-void filc_object_array_push(filc_object_array* array, filc_object* object)
-{
-    enlarge_array_if_necessary(array, array->num_objects + 1);
-    PAS_TESTING_ASSERT(array->num_objects < array->objects_capacity);
-    array->objects[array->num_objects++] = object;
-}
-
-void filc_object_array_push_all(filc_object_array* to, filc_object_array* from)
+void filc_object_array_impl_push_all(filc_object_array_impl* to, filc_object_array_impl* from,
+                                     pas_heap_ref* heap)
 {
     size_t new_num_objects;
     PAS_ASSERT(!pas_add_uintptr_overflow(from->num_objects, to->num_objects, &new_num_objects));
-    enlarge_array_if_necessary(to, new_num_objects);
-    memcpy(to->objects + to->num_objects, from->objects, sizeof(filc_object*) * from->num_objects);
+    filc_object_array_impl_enlarge_if_necessary(to, new_num_objects, heap);
+    filc_low_level_ptr_safe_memcpy(
+        to->objects + to->num_objects, from->objects, sizeof(filc_object*) * from->num_objects);
     to->num_objects += from->num_objects;
 }
 
-void filc_object_array_pop_all_from_and_push_to(filc_object_array* from, filc_object_array* to)
+void filc_object_array_impl_pop_all_from_and_push_to(filc_object_array_impl* from,
+                                                     filc_object_array_impl* to,
+                                                     pas_heap_ref* heap)
 {
     if (!from->num_objects)
         return;
 
     if (!to->num_objects) {
-        filc_object_array tmp;
+        filc_object_array_impl tmp;
         tmp = *to;
         *to = *from;
         *from = tmp;
@@ -1272,26 +1279,29 @@ void filc_object_array_pop_all_from_and_push_to(filc_object_array* from, filc_ob
         return;
     }
 
-    filc_object_array_push_all(to, from);
-    filc_object_array_reset(from);
+    filc_object_array_impl_push_all(to, from, heap);
+    filc_object_array_impl_reset(from);
 }
 
-void filc_object_array_pop_n_from_and_push_to(filc_object_array* from, filc_object_array* to,
-                                              size_t n)
+void filc_object_array_impl_pop_n_from_and_push_to(filc_object_array_impl* from,
+                                                   filc_object_array_impl* to,
+                                                   size_t n,
+                                                   pas_heap_ref* heap)
 {
     PAS_ASSERT(n <= from->num_objects);
 
-    enlarge_array_if_necessary(to, to->num_objects + n);
-    memcpy(to->objects + to->num_objects, from->objects + from->num_objects - n,
-           n * sizeof(filc_object*));
+    filc_object_array_impl_enlarge_if_necessary(to, to->num_objects + n, heap);
+    filc_low_level_ptr_safe_memcpy(
+        to->objects + to->num_objects, from->objects + from->num_objects - n,
+        n * sizeof(filc_object*));
     to->num_objects += n;
     from->num_objects -= n;
 }
 
-void filc_object_array_reset(filc_object_array* array)
+void filc_object_array_impl_reset(filc_object_array_impl* array)
 {
-    filc_object_array_destruct(array);
-    filc_object_array_construct(array);
+    filc_object_array_impl_destruct(array);
+    filc_object_array_impl_construct(array);
 }
 
 static PAS_NEVER_INLINE void native_frame_enlarge(filc_native_frame* frame)
@@ -1461,24 +1471,24 @@ void filc_thread_mark_roots(filc_thread* my_thread)
     for (index = FILC_NUM_UNWIND_REGISTERS; index--;)
         PAS_ASSERT(filc_ptr_is_totally_null(my_thread->unwind_registers[index]));
 
-    for (index = my_thread->thread_locals.num_objects; index--;)
-        fugc_mark(&my_thread->mark_stack, my_thread->thread_locals.objects[index]);
+    for (index = filc_object_array_num_objects(&my_thread->thread_locals); index--;)
+        fugc_mark(&my_thread->mark_stack, filc_object_array_at(&my_thread->thread_locals, index));
 }
 
 void filc_thread_sweep_mark_stack(filc_thread* my_thread)
 {
     assert_participates_in_pollchecks(my_thread);
 
-    if (my_thread->mark_stack.num_objects) {
+    if (filc_mark_stack_num_objects(&my_thread->mark_stack)) {
         pas_log("Non-empty thread mark stack at start of sweep! Objects:\n");
         size_t index;
-        for (index = 0; index < my_thread->mark_stack.num_objects; ++index) {
-            filc_object_dump(my_thread->mark_stack.objects[index], pas_log_stream);
+        for (index = 0; index < filc_mark_stack_num_objects(&my_thread->mark_stack); ++index) {
+            filc_object_dump(filc_mark_stack_at(&my_thread->mark_stack, index), pas_log_stream);
             pas_log("\n");
         }
     }
-    PAS_ASSERT(!my_thread->mark_stack.num_objects);
-    filc_object_array_reset(&my_thread->mark_stack);
+    PAS_ASSERT(!filc_mark_stack_num_objects(&my_thread->mark_stack));
+    filc_mark_stack_reset(&my_thread->mark_stack);
 }
 
 void filc_thread_donate(filc_thread* my_thread)
@@ -1488,7 +1498,7 @@ void filc_thread_donate(filc_thread* my_thread)
     fugc_donate(&my_thread->mark_stack);
 }
 
-void filc_mark_global_roots(filc_object_array* mark_stack)
+void filc_mark_global_roots(filc_mark_stack* mark_stack)
 {
     size_t index;
     for (index = FILC_MAX_USER_SIGNUM + 1; index--;)
@@ -1498,9 +1508,9 @@ void filc_mark_global_roots(filc_object_array* mark_stack)
     /* Global roots point to filc_objects that are global, i.e. they are not GC-allocated, but they do
        have outgoing pointers. So, rather than fugc_marking them, we just shove them into the mark
        stack. */
-    filc_object_array_push_all(mark_stack, &filc_global_variable_roots);
-    for (index = filc_global_variable_root_ptrs.num_objects; index--;)
-        fugc_mark(mark_stack, filc_global_variable_roots.objects[index]);
+    filc_mark_stack_push_all_from_object_array(mark_stack, &filc_global_variable_roots);
+    for (index = filc_object_array_num_objects(&filc_global_variable_root_ptrs); index--;)
+        fugc_mark(mark_stack, filc_object_array_at(&filc_global_variable_roots, index));
     filc_global_variable_roots_lock_unlock();
 
     filc_thread** threads;
@@ -1934,7 +1944,8 @@ static PAS_NEVER_INLINE void store_barrier_slowest_path_impl(filc_thread* my_thr
     PAS_TESTING_ASSERT(my_thread == filc_get_my_thread());
     PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
     fugc_mark_slow(&my_thread->mark_stack, object);
-    if (my_thread->mark_stack.num_objects > 100 || !fugc_global_stack.num_objects)
+    if (filc_mark_stack_num_objects(&my_thread->mark_stack) > 100
+        || !filc_mark_stack_num_objects(&fugc_global_stack))
         fugc_try_donate(&my_thread->mark_stack);
 }
 
@@ -2765,7 +2776,7 @@ filc_ptr filc_ptr_table_decode(filc_thread* my_thread, filc_ptr_table* ptr_table
     return result;
 }
 
-void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table, filc_object_array* stack)
+void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table, filc_mark_stack* stack)
 {
     static const bool verbose = false;
     if (verbose)
@@ -2857,7 +2868,7 @@ filc_ptr_table_array* filc_ptr_table_array_create(filc_thread* my_thread, size_t
     return result;
 }
 
-void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array, filc_object_array* stack)
+void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array, filc_mark_stack* stack)
 {
     size_t index;
     for (index = array->num_entries; index--;) {
@@ -2933,7 +2944,8 @@ filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_tabl
     return result;
 }
 
-void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact_ptr_table* ptr_table, filc_object_array* stack)
+void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact_ptr_table* ptr_table,
+                                             filc_mark_stack* stack)
 {
     static const bool verbose = false;
     if (verbose)
@@ -5526,7 +5538,7 @@ filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind
     return result;
 }
 
-void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_object_array* stack)
+void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_mark_stack* stack)
 {
     size_t index;
     for (index = jmp_buf->num_lowers; index--;)

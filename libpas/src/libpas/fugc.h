@@ -40,7 +40,7 @@ PAS_API extern pas_heap* fugc_destructor_heap;
 PAS_API extern verse_heap_object_set* fugc_destructor_set;
 PAS_API extern verse_heap_object_set* fugc_scribble_set; /* Only used if FUGC_SCRIBBLE=1 */
 
-PAS_API extern filc_object_array fugc_global_stack;
+PAS_API extern filc_mark_stack fugc_global_stack;
 
 PAS_API void fugc_initialize_heaps(void); /* Called first. */
 PAS_API void fugc_initialize_collector(void); /* Called second. */
@@ -81,12 +81,12 @@ static PAS_ALWAYS_INLINE fugc_mark_fast_result fugc_mark_fast(filc_object* objec
     return fugc_mark_fast_marked_leaf;
 }
 
-static PAS_ALWAYS_INLINE void fugc_mark_slow(filc_object_array* mark_stack, filc_object* object)
+static PAS_ALWAYS_INLINE void fugc_mark_slow(filc_mark_stack* mark_stack, filc_object* object)
 {
-    filc_object_array_push(mark_stack, object);
+    filc_mark_stack_push(mark_stack, object);
 }
 
-static PAS_ALWAYS_INLINE bool fugc_mark(filc_object_array* mark_stack, filc_object* object)
+static PAS_ALWAYS_INLINE bool fugc_mark(filc_mark_stack* mark_stack, filc_object* object)
 {
     switch (fugc_mark_fast(object)) {
     case fugc_mark_fast_already_marked:
@@ -101,7 +101,7 @@ static PAS_ALWAYS_INLINE bool fugc_mark(filc_object_array* mark_stack, filc_obje
     return false;
 }
 
-static PAS_ALWAYS_INLINE void fugc_mark_or_free_flight(filc_object_array* mark_stack, filc_ptr* ptr)
+static PAS_ALWAYS_INLINE void fugc_mark_or_free_flight(filc_mark_stack* mark_stack, filc_ptr* ptr)
 {
     for (;;) {
         void* lower = filc_flight_ptr_load_lower(ptr);
@@ -120,7 +120,7 @@ static PAS_ALWAYS_INLINE void fugc_mark_or_free_flight(filc_object_array* mark_s
     }
 }
 
-static PAS_ALWAYS_INLINE void fugc_mark_or_free_lower_or_box(filc_object_array* mark_stack,
+static PAS_ALWAYS_INLINE void fugc_mark_or_free_lower_or_box(filc_mark_stack* mark_stack,
                                                              filc_lower_or_box* lower_or_box_ptr)
 {
     for (;;) {
@@ -172,8 +172,8 @@ static PAS_ALWAYS_INLINE void fugc_mark_or_free_lower_or_box(filc_object_array* 
     }
 }
 
-PAS_API void fugc_donate(filc_object_array* mark_stack);
-PAS_API bool fugc_try_donate(filc_object_array* mark_stack);
+PAS_API void fugc_donate(filc_mark_stack* mark_stack);
+PAS_API bool fugc_try_donate(filc_mark_stack* mark_stack);
 
 /* Request that a collection cycle begins. If one is already running, then that's the one you get.
  

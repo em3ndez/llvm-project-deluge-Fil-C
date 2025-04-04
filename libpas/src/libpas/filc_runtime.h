@@ -70,9 +70,11 @@ struct filc_global_initialization_work_item;
 struct filc_inline_frame;
 struct filc_jmp_buf;
 struct filc_lower_or_box;
+struct filc_mark_stack;
 struct filc_native_frame;
 struct filc_object;
 struct filc_object_array;
+struct filc_object_array_impl;
 struct filc_optimized_access_check_origin;
 struct filc_optimized_alignment_contradiction_origin;
 struct filc_origin;
@@ -113,9 +115,11 @@ typedef struct filc_global_initialization_work_item filc_global_initialization_w
 typedef struct filc_inline_frame filc_inline_frame;
 typedef struct filc_jmp_buf filc_jmp_buf;
 typedef struct filc_lower_or_box filc_lower_or_box;
+typedef struct filc_mark_stack filc_mark_stack;
 typedef struct filc_native_frame filc_native_frame;
 typedef struct filc_object filc_object;
 typedef struct filc_object_array filc_object_array;
+typedef struct filc_object_array_impl filc_object_array_impl;
 typedef struct filc_optimized_access_check_origin filc_optimized_access_check_origin;
 typedef struct filc_optimized_alignment_contradiction_origin filc_optimized_alignment_contradiction_origin;
 typedef struct filc_origin filc_origin;
@@ -541,10 +545,18 @@ struct filc_ptr_array {
     unsigned capacity;
 };
 
-struct filc_object_array {
+struct filc_object_array_impl {
     size_t num_objects;
     size_t objects_capacity;
     filc_object** objects;
+};
+
+struct filc_object_array {
+    filc_object_array_impl impl;
+};
+
+struct filc_mark_stack {
+    filc_object_array_impl impl;
 };
 
 struct filc_native_frame {
@@ -627,7 +639,7 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
     /* Each thread has a mark stack used for GC. It's primarily used by the store barrier. GC soft
        handshakes (and other events) result in the thread donating all of the contents of its mark
        stack back to the GC's global mark stack. */
-    filc_object_array mark_stack;
+    filc_mark_stack mark_stack;
 
     /* Thread locals (as in __thread, not pthread_key) are lowered to a thread local that points to
        an object that holds the actual value. Threads track all of those thread local objects in this
@@ -992,6 +1004,9 @@ PAS_API extern unsigned filc_global_initialization_depth;
    The size of the stack of stacks is the "generation". */
 PAS_API extern filc_ptr_array filc_global_initialization_stack_of_stacks;
 
+PAS_API extern pas_heap_ref filc_object_array_heap;
+PAS_API extern pas_heap_ref filc_mark_stack_heap;
+
 typedef filc_ptr* filc_global_initialization_key;
 
 static inline filc_global_initialization_work_item
@@ -1118,7 +1133,7 @@ PAS_API size_t filc_mul_size(size_t a, size_t b);
 
 PAS_API filc_thread* filc_thread_create_with_manual_tracking(void);
 
-PAS_API void filc_thread_mark_outgoing_ptrs(filc_thread* thread, filc_object_array* stack);
+PAS_API void filc_thread_mark_outgoing_ptrs(filc_thread* thread, filc_mark_stack* stack);
 PAS_API void filc_thread_destruct(filc_thread* thread);
 
 /* This undoes thread creation. It destroys the things that are normally destroyed by end of
@@ -1258,35 +1273,185 @@ static inline void* filc_ptr_array_pop(filc_ptr_array* array)
     return array->array[--array->size];
 }
 
-static inline void filc_object_array_construct(filc_object_array* array)
+static inline void filc_object_array_impl_construct(filc_object_array_impl* array)
 {
     array->num_objects = 0;
     array->objects_capacity = 0;
     array->objects = NULL;
 }
 
-static inline void filc_object_array_destruct(filc_object_array* array)
+static inline void filc_object_array_impl_destruct(filc_object_array_impl* array)
 {
     if (array->objects)
         bmalloc_deallocate(array->objects);
 }
 
-PAS_API void filc_object_array_push(filc_object_array* array, filc_object* object);
+PAS_ALWAYS_INLINE filc_object* filc_object_array_impl_at(filc_object_array_impl* array,
+                                                         size_t index)
+{
+    PAS_TESTING_ASSERT(index < array->num_objects);
+    return array->objects[index];
+}
 
-static filc_object* filc_object_array_pop(filc_object_array* array)
+PAS_API PAS_NEVER_INLINE void filc_object_array_impl_enlarge(filc_object_array_impl* array,
+                                                             size_t anticipated_size,
+                                                             pas_heap_ref* heap);
+
+static PAS_ALWAYS_INLINE bool filc_object_array_impl_need_to_enlarge(filc_object_array_impl* array,
+                                                                     size_t anticipated_size)
+{
+    return anticipated_size > array->objects_capacity;
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_impl_enlarge_if_necessary(
+    filc_object_array_impl* array, size_t anticipated_size, pas_heap_ref* heap)
+{
+    if (PAS_UNLIKELY(filc_object_array_impl_need_to_enlarge(array, anticipated_size)))
+        filc_object_array_impl_enlarge(array, anticipated_size, heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_impl_push(filc_object_array_impl* array,
+                                                          filc_object* object,
+                                                          pas_heap_ref* heap)
+{
+    filc_object_array_impl_enlarge_if_necessary(array, array->num_objects + 1, heap);
+    PAS_TESTING_ASSERT(array->num_objects < array->objects_capacity);
+    array->objects[array->num_objects++] = object;
+}
+
+static inline filc_object* filc_object_array_impl_pop(filc_object_array_impl* array)
 {
     if (!array->num_objects)
         return NULL;
     return array->objects[--array->num_objects];
 }
 
-PAS_API void filc_object_array_reset(filc_object_array* array);
-PAS_API void filc_object_array_push_all(filc_object_array* to, filc_object_array* from);
-PAS_API void filc_object_array_pop_all_from_and_push_to(filc_object_array* from,
-                                                        filc_object_array* to);
-PAS_API void filc_object_array_pop_n_from_and_push_to(filc_object_array* from,
-                                                      filc_object_array* to,
-                                                      size_t n);
+PAS_API void filc_object_array_impl_reset(filc_object_array_impl* array);
+PAS_API void filc_object_array_impl_push_all(filc_object_array_impl* to, filc_object_array_impl* from,
+                                             pas_heap_ref* heap);
+PAS_API void filc_object_array_impl_pop_all_from_and_push_to(filc_object_array_impl* from,
+                                                             filc_object_array_impl* to,
+                                                             pas_heap_ref* heap);
+PAS_API void filc_object_array_impl_pop_n_from_and_push_to(filc_object_array_impl* from,
+                                                           filc_object_array_impl* to,
+                                                           size_t n,
+                                                           pas_heap_ref* heap);
+
+static PAS_ALWAYS_INLINE void filc_object_array_construct(filc_object_array* array)
+{
+    filc_object_array_impl_construct(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_destruct(filc_object_array* array)
+{
+    filc_object_array_impl_destruct(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE size_t filc_object_array_num_objects(filc_object_array* array)
+{
+    return array->impl.num_objects;
+}
+
+static PAS_ALWAYS_INLINE filc_object* filc_object_array_at(filc_object_array* array, size_t index)
+{
+    return filc_object_array_impl_at(&array->impl, index);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_push(filc_object_array* array,
+                                                     filc_object* object)
+{
+    filc_object_array_impl_push(&array->impl, object, &filc_object_array_heap);
+}
+
+static PAS_ALWAYS_INLINE filc_object* filc_object_array_pop(filc_object_array* array)
+{
+    return filc_object_array_impl_pop(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_reset(filc_object_array* array)
+{
+    filc_object_array_impl_reset(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_push_all(filc_object_array* to,
+                                                         filc_object_array* from)
+{
+    filc_object_array_impl_push_all(&to->impl, &from->impl, &filc_object_array_heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_pop_all_from_and_push_to(filc_object_array* from,
+                                                                         filc_object_array* to)
+{
+    filc_object_array_impl_pop_all_from_and_push_to(&from->impl, &to->impl, &filc_object_array_heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_object_array_pop_n_from_and_push_to(filc_object_array* from,
+                                                                       filc_object_array* to,
+                                                                       size_t n)
+{
+    filc_object_array_impl_pop_n_from_and_push_to(&from->impl, &to->impl, n, &filc_object_array_heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_construct(filc_mark_stack* array)
+{
+    filc_object_array_impl_construct(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_destruct(filc_mark_stack* array)
+{
+    filc_object_array_impl_destruct(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE size_t filc_mark_stack_num_objects(filc_mark_stack* array)
+{
+    return array->impl.num_objects;
+}
+
+static PAS_ALWAYS_INLINE filc_object* filc_mark_stack_at(filc_mark_stack* array, size_t index)
+{
+    return filc_object_array_impl_at(&array->impl, index);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_push(filc_mark_stack* array,
+                                                   filc_object* object)
+{
+    filc_object_array_impl_push(&array->impl, object, &filc_mark_stack_heap);
+}
+
+static PAS_ALWAYS_INLINE filc_object* filc_mark_stack_pop(filc_mark_stack* array)
+{
+    return filc_object_array_impl_pop(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_reset(filc_mark_stack* array)
+{
+    filc_object_array_impl_reset(&array->impl);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_push_all(filc_mark_stack* to,
+                                                       filc_mark_stack* from)
+{
+    filc_object_array_impl_push_all(&to->impl, &from->impl, &filc_mark_stack_heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_push_all_from_object_array(
+    filc_mark_stack* to, filc_object_array* from)
+{
+    filc_object_array_impl_push_all(&to->impl, &from->impl, &filc_mark_stack_heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_pop_all_from_and_push_to(filc_mark_stack* from,
+                                                                       filc_mark_stack* to)
+{
+    filc_object_array_impl_pop_all_from_and_push_to(&from->impl, &to->impl, &filc_mark_stack_heap);
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_stack_pop_n_from_and_push_to(filc_mark_stack* from,
+                                                                     filc_mark_stack* to,
+                                                                     size_t n)
+{
+    filc_object_array_impl_pop_n_from_and_push_to(&from->impl, &to->impl, n, &filc_mark_stack_heap);
+}
 
 static inline void filc_push_allocation_root(filc_thread* my_thread, void* allocation_root)
 {
@@ -1432,7 +1597,7 @@ PAS_API void filc_thread_mark_roots(filc_thread* my_thread);
 PAS_API void filc_thread_sweep_mark_stack(filc_thread* my_thread);
 PAS_API void filc_thread_donate(filc_thread* my_thread);
 
-PAS_API void filc_mark_global_roots(filc_object_array* mark_stack);
+PAS_API void filc_mark_global_roots(filc_mark_stack* mark_stack);
 
 static inline bool filc_origin_node_is_inline_frame(const filc_origin_node* origin_node)
 {
@@ -2911,10 +3076,10 @@ filc_ptr filc_ptr_table_decode_with_manual_tracking(
     filc_ptr_table* ptr_table, uintptr_t encoded_ptr);
 filc_ptr filc_ptr_table_decode(filc_thread* my_thread, filc_ptr_table* ptr_table,
                                uintptr_t encoded_ptr);
-void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table, filc_object_array* stack);
+void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table, filc_mark_stack* stack);
 
 filc_ptr_table_array* filc_ptr_table_array_create(filc_thread* my_thread, size_t capacity);
-void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array, filc_object_array* stack);
+void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array, filc_mark_stack* stack);
 
 filc_exact_ptr_table* filc_exact_ptr_table_create(filc_thread* my_thread);
 void filc_exact_ptr_table_destruct(filc_exact_ptr_table* ptr_table);
@@ -2925,7 +3090,7 @@ filc_ptr filc_exact_ptr_table_decode_with_manual_tracking(
 filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_table* ptr_table,
                                      uintptr_t encoded_ptr);
 void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact_ptr_table* ptr_table,
-                                             filc_object_array* stack);
+                                             filc_mark_stack* stack);
 
 static inline const char* filc_access_kind_get_string(filc_access_kind access_kind)
 {
@@ -3082,7 +3247,7 @@ void filc_memset_with_exit(filc_thread* my_thread, void* ptr, unsigned value, si
 void filc_memcpy_with_exit(filc_thread* my_thread, void* dst, const void* src, size_t bytes);
 void filc_memmove_with_exit(filc_thread* my_thread, void* dst, const void* src, size_t bytes);
 
-static inline void filc_low_level_ptr_safe_bzero(void* raw_ptr, size_t bytes)
+static PAS_ALWAYS_INLINE void filc_low_level_ptr_safe_bzero(void* raw_ptr, size_t bytes)
 {
     static const bool verbose = false;
     size_t words;
@@ -3094,6 +3259,25 @@ static inline void filc_low_level_ptr_safe_bzero(void* raw_ptr, size_t bytes)
     words = bytes / sizeof(void*);
     while (words--)
         __c11_atomic_store((void*_Atomic*)ptr++, NULL, __ATOMIC_RELAXED);
+}
+
+static PAS_ALWAYS_INLINE void filc_low_level_ptr_safe_memcpy(void* raw_dst,
+                                                             void* raw_src,
+                                                             size_t bytes)
+{
+    size_t words;
+    void** dst;
+    void** src;
+    dst = (void**)raw_dst;
+    src = (void**)raw_src;
+    PAS_TESTING_ASSERT(pas_is_aligned(bytes, sizeof(void*)));
+    words = bytes / sizeof(void*);
+    while (words--) {
+        __c11_atomic_store(
+            (void*_Atomic*)dst++,
+            __c11_atomic_load((void*_Atomic*)src++, __ATOMIC_RELAXED),
+            __ATOMIC_RELAXED);
+    }
 }
 
 void filc_low_level_ptr_safe_bzero_with_exit(filc_thread* my_thread, void* ptr, size_t bytes);
@@ -3286,7 +3470,7 @@ static inline const char* filc_jmp_buf_kind_get_longjmp_string(filc_jmp_buf_kind
 /* This creates all of the filc_jmp_buf except for the system_buf, which must be populated by the
    caller. The `value` argument is ignored unless kind is sigsetjmp. */
 filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind, int value);
-void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_object_array* stack);
+void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_mark_stack* stack);
 
 /* This is for cases where you want to grab a lock while entered and hold it across an exit.
    
