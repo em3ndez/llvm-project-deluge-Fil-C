@@ -71,6 +71,7 @@ struct filc_inline_frame;
 struct filc_jmp_buf;
 struct filc_lower_or_box;
 struct filc_mark_stack;
+struct filc_marker;
 struct filc_native_frame;
 struct filc_object;
 struct filc_object_array;
@@ -116,6 +117,7 @@ typedef struct filc_inline_frame filc_inline_frame;
 typedef struct filc_jmp_buf filc_jmp_buf;
 typedef struct filc_lower_or_box filc_lower_or_box;
 typedef struct filc_mark_stack filc_mark_stack;
+typedef struct filc_marker filc_marker;
 typedef struct filc_native_frame filc_native_frame;
 typedef struct filc_object filc_object;
 typedef struct filc_object_array filc_object_array;
@@ -557,6 +559,27 @@ struct filc_object_array {
 
 struct filc_mark_stack {
     filc_object_array_impl impl;
+};
+
+struct filc_marker {
+    /* Mark the given object. This function doesn't get to know how its caller knows about the object,
+       so it has to really mark the object and moving the object is impossible. */
+    bool (*mark)(filc_mark_stack* stack, filc_object* object);
+
+    /* Mark or free the object pointed at by the given flight poiner. If the destination object is
+       free then this function could repoint the pointer to the free singleton. */
+    void (*mark_or_free_flight)(filc_mark_stack* stack, filc_ptr* ptr);
+
+    /* Mark or free the object pointed at by the given filc_lower_or_box. This is the object pointer
+       "format" for auxes, which is where the invisible capabilities are stored. This function has to
+       handle the intricacies of the atomic pointer representation. It may repoint the lower_or_box at
+       the free singleton if the object being pointed at is free. */
+    void (*mark_or_free_lower_or_box)(filc_mark_stack* stack, filc_lower_or_box* lower_or_box_ptr);
+
+    /* Set that the object is marked and that's it. Effectively, this makes the object black possibly
+       without ever having been grey. This is used for allocation roots for example (objects that have
+       been allocated but aren't initialized enough to be looked at by the GC). */
+    void (*set_is_marked)(void* mark_base);
 };
 
 struct filc_native_frame {
@@ -1007,6 +1030,8 @@ PAS_API extern filc_ptr_array filc_global_initialization_stack_of_stacks;
 PAS_API extern pas_heap_ref filc_object_array_heap;
 PAS_API extern pas_heap_ref filc_mark_stack_heap;
 
+PAS_API extern filc_signal_handler* filc_signal_table[FILC_MAX_USER_SIGNUM + 1];
+
 typedef filc_ptr* filc_global_initialization_key;
 
 static inline filc_global_initialization_work_item
@@ -1133,7 +1158,25 @@ PAS_API size_t filc_mul_size(size_t a, size_t b);
 
 PAS_API filc_thread* filc_thread_create_with_manual_tracking(void);
 
-PAS_API void filc_thread_mark_outgoing_ptrs(filc_thread* thread, filc_mark_stack* stack);
+static PAS_ALWAYS_INLINE void filc_thread_mark_outgoing_ptrs(filc_thread* thread,
+                                                             const filc_marker marker,
+                                                             filc_mark_stack* stack)
+{
+    /* There's a bunch of other stuff that threads "point" to that is part of their roots, and we
+       mark those as part of marking thread roots. The things here are the ones that are treated
+       as normal outgoing object ptrs rather than roots. */
+    
+    marker.mark_or_free_flight(stack, &thread->arg_ptr);
+    marker.mark_or_free_flight(stack, &thread->cookie_ptr);
+    marker.mark_or_free_flight(stack, &thread->result_ptr);
+
+    /* These need to be marked because phase2 of unwinding calls the personality function multiple
+       times before finishing using them. */
+    marker.mark_or_free_flight(stack, &thread->unwind_context_ptr);
+    marker.mark_or_free_flight(stack, &thread->exception_object_ptr);
+    marker.mark_or_free_flight(stack, &thread->force_stop_arg_ptr);
+}
+
 PAS_API void filc_thread_destruct(filc_thread* thread);
 
 /* This undoes thread creation. It destroys the things that are normally destroyed by end of
@@ -1191,6 +1234,8 @@ static inline bool filc_thread_is_entered(filc_thread* thread)
 
 PAS_API void filc_assert_my_thread_is_not_entered(void);
 
+PAS_API void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads);
+
 PAS_API void filc_soft_handshake_no_op_callback(filc_thread* my_thread, void* arg);
 
 /* Calls the callback from every thread. Returns when every thread has done so. */
@@ -1210,6 +1255,14 @@ PAS_API void filc_enter(filc_thread* my_thread);
    
    You can exit and then reenter as much as you like. It'll be super cheap eventually. */
 PAS_API void filc_exit(filc_thread* my_thread);
+
+static PAS_ALWAYS_INLINE void filc_signal_handler_mark_outgoing_ptrs(filc_signal_handler* handler,
+                                                                     const filc_marker marker,
+                                                                     filc_mark_stack* stack)
+{
+    /* I guess that instead, we could just assert that this thing is global. But, like, whatever. */
+    marker.mark_or_free_flight(stack, &handler->function_ptr);
+}
 
 /* These have to be called entered, currently. The only thing stopping us from making them work
    exited is that then, decrease_special_signal_deferral_depth would have to
@@ -1593,11 +1646,12 @@ static inline bool filc_pollcheck(filc_thread* my_thread, const filc_origin* ori
 PAS_API void filc_pollcheck_outline(filc_thread* my_thread, const filc_origin* origin);
 
 PAS_API void filc_thread_stop_allocators(filc_thread* my_thread);
-PAS_API void filc_thread_mark_roots(filc_thread* my_thread);
+
+PAS_API void filc_thread_assert_participates_in_handshakes(filc_thread* my_thread);
+PAS_API void filc_thread_assert_participates_in_pollchecks(filc_thread* my_thread);
+
 PAS_API void filc_thread_sweep_mark_stack(filc_thread* my_thread);
 PAS_API void filc_thread_donate(filc_thread* my_thread);
-
-PAS_API void filc_mark_global_roots(filc_mark_stack* mark_stack);
 
 static inline bool filc_origin_node_is_inline_frame(const filc_origin_node* origin_node)
 {
@@ -3076,10 +3130,97 @@ filc_ptr filc_ptr_table_decode_with_manual_tracking(
     filc_ptr_table* ptr_table, uintptr_t encoded_ptr);
 filc_ptr filc_ptr_table_decode(filc_thread* my_thread, filc_ptr_table* ptr_table,
                                uintptr_t encoded_ptr);
-void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table, filc_mark_stack* stack);
+
+static PAS_ALWAYS_INLINE void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table,
+                                                                const filc_marker marker,
+                                                                filc_mark_stack* stack)
+{
+    static const bool verbose = false;
+    if (verbose)
+        pas_log("Marking ptr table at %p.\n", ptr_table);
+    /* This needs to rehash the the whole table, marking non-free objects, and just skipping the free
+       ones.
+       
+       Then it needs to walk the array and remove the free entries, putting their indices into the
+       free_indices array.
+    
+       This may result in the hashtable and the array disagreeing a bit, and that's fine. They'll only
+       disagree on things that are free.
+    
+       If the hashtable has an entry that the array doesn't have: this means that the object in question
+       is free, so we'll never look up that entry in the hashtable due to the free check. New objects
+       that take the same address will get a fresh entry in the hashtable and a fresh index.
+    
+       If the array has an entry that the hashtable doesn't have: decoding that object will fail the
+       free check, so you won't be able to tell that the object has an index. Adding new objects that
+       take the same address won't be able to reuse that index, because it'll seem to be taken. */
+
+    pas_lock_lock(&ptr_table->lock);
+
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
+
+    filc_ptr_uintptr_hash_map new_encode_map;
+    filc_ptr_uintptr_hash_map_construct(&new_encode_map);
+    size_t index;
+    for (index = ptr_table->encode_map.table_size; index--;) {
+        filc_ptr_uintptr_hash_map_entry entry = ptr_table->encode_map.table[index];
+        if (filc_ptr_uintptr_hash_map_entry_is_empty_or_deleted(entry))
+            continue;
+        if (filc_object_get_flags(filc_ptr_object(entry.key)) & FILC_OBJECT_FLAG_FREE)
+            continue;
+        marker.mark(stack, filc_ptr_object(entry.key));
+        filc_ptr_uintptr_hash_map_add_new(&new_encode_map, entry, NULL, &allocation_config);
+    }
+    filc_ptr_uintptr_hash_map_destruct(&ptr_table->encode_map, &allocation_config);
+    ptr_table->encode_map = new_encode_map;
+
+    marker.mark(stack, filc_object_for_special_payload(ptr_table->array));
+
+    /* It's not necessary to mark entries in this array, since they'll be marked when we
+       filc_ptr_table_array_mark_outgoing_ptrs(). It's not clear that we could avoid marking them in
+       that function, though maybe we could avoid it. */
+    for (index = ptr_table->array->num_entries; index--;) {
+        filc_ptr ptr = filc_flight_ptr_load_with_manual_tracking(ptr_table->array->ptrs + index);
+        if (!filc_ptr_ptr(ptr))
+            continue;
+        if (!(filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
+            continue;
+        if (ptr_table->num_free_indices >= ptr_table->free_indices_capacity) {
+            PAS_ASSERT(ptr_table->num_free_indices == ptr_table->free_indices_capacity);
+
+            size_t new_free_indices_capacity = ptr_table->free_indices_capacity << 1;
+            PAS_ASSERT(new_free_indices_capacity > ptr_table->free_indices_capacity);
+
+            uintptr_t* new_free_indices =
+                bmalloc_allocate(sizeof(uintptr_t) * new_free_indices_capacity);
+            memcpy(new_free_indices, ptr_table->free_indices,
+                   sizeof(uintptr_t) * ptr_table->num_free_indices);
+
+            bmalloc_deallocate(ptr_table->free_indices);
+            ptr_table->free_indices = new_free_indices;
+            ptr_table->free_indices_capacity = new_free_indices_capacity;
+        }
+        PAS_ASSERT(ptr_table->num_free_indices < ptr_table->free_indices_capacity);
+        ptr_table->free_indices[ptr_table->num_free_indices++] = index;
+        filc_flight_ptr_store_without_barrier(ptr_table->array->ptrs + index, filc_ptr_forge_null());
+    }
+    
+    pas_lock_unlock(&ptr_table->lock);
+}
 
 filc_ptr_table_array* filc_ptr_table_array_create(filc_thread* my_thread, size_t capacity);
-void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array, filc_mark_stack* stack);
+
+static PAS_ALWAYS_INLINE void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array,
+                                                                      const filc_marker marker,
+                                                                      filc_mark_stack* stack)
+{
+    size_t index;
+    for (index = array->num_entries; index--;) {
+        marker.mark(stack, filc_ptr_object(
+                        filc_flight_ptr_load_with_manual_tracking(array->ptrs + index)));
+    }
+}
 
 filc_exact_ptr_table* filc_exact_ptr_table_create(filc_thread* my_thread);
 void filc_exact_ptr_table_destruct(filc_exact_ptr_table* ptr_table);
@@ -3089,8 +3230,37 @@ filc_ptr filc_exact_ptr_table_decode_with_manual_tracking(
     filc_exact_ptr_table* ptr_table, uintptr_t encoded_ptr);
 filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_table* ptr_table,
                                      uintptr_t encoded_ptr);
-void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact_ptr_table* ptr_table,
-                                             filc_mark_stack* stack);
+
+static PAS_ALWAYS_INLINE void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact_ptr_table* ptr_table,
+                                                                      const filc_marker marker,
+                                                                      filc_mark_stack* stack)
+{
+    static const bool verbose = false;
+    if (verbose)
+        pas_log("Marking exact ptr table at %p.\n", ptr_table);
+
+    pas_lock_lock(&ptr_table->lock);
+    
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
+
+    filc_uintptr_ptr_hash_map new_decode_map;
+    filc_uintptr_ptr_hash_map_construct(&new_decode_map);
+    size_t index;
+    for (index = ptr_table->decode_map.table_size; index--;) {
+        filc_uintptr_ptr_hash_map_entry entry = ptr_table->decode_map.table[index];
+        if (filc_uintptr_ptr_hash_map_entry_is_empty_or_deleted(entry))
+            continue;
+        if (filc_object_get_flags(filc_ptr_object(entry.value)) & FILC_OBJECT_FLAG_FREE)
+            continue;
+        marker.mark(stack, filc_ptr_object(entry.value));
+        filc_uintptr_ptr_hash_map_add_new(&new_decode_map, entry, NULL, &allocation_config);
+    }
+    filc_uintptr_ptr_hash_map_destruct(&ptr_table->decode_map, &allocation_config);
+    ptr_table->decode_map = new_decode_map;
+    
+    pas_lock_unlock(&ptr_table->lock);
+}
 
 static inline const char* filc_access_kind_get_string(filc_access_kind access_kind)
 {
@@ -3401,6 +3571,7 @@ void filc_execute_constant_relocations(
 
 PAS_API void filc_set_user_environment(filc_thread* my_thread,
                                        int argc, filc_ptr argv, filc_ptr environ, filc_ptr auxv);
+PAS_API bool filc_is_user_environment_set(void);
 PAS_API int filc_get_user_argc(void);
 PAS_API filc_ptr filc_get_user_argv(void);
 PAS_API filc_ptr filc_get_user_environ(void);
@@ -3470,7 +3641,15 @@ static inline const char* filc_jmp_buf_kind_get_longjmp_string(filc_jmp_buf_kind
 /* This creates all of the filc_jmp_buf except for the system_buf, which must be populated by the
    caller. The `value` argument is ignored unless kind is sigsetjmp. */
 filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind, int value);
-void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_mark_stack* stack);
+
+static PAS_ALWAYS_INLINE void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf,
+                                                              const filc_marker marker,
+                                                              filc_mark_stack* stack)
+{
+    size_t index;
+    for (index = jmp_buf->num_lowers; index--;)
+        marker.mark(stack, filc_object_for_lower(jmp_buf->lowers[index]));
+}
 
 /* This is for cases where you want to grab a lock while entered and hold it across an exit.
    
@@ -3633,6 +3812,178 @@ PAS_API size_t filc_get_size_env(const char* name, size_t default_value);
 void filc_start_program(int argc, char** argv,
                         pizlonated_getter pizlonated___libc_start_main,
                         pizlonated_getter pizlonated_main);
+
+static PAS_ALWAYS_INLINE void filc_mark_global_roots(const filc_marker marker, filc_mark_stack* stack)
+{
+    size_t index;
+    for (index = FILC_MAX_USER_SIGNUM + 1; index--;)
+        marker.mark(stack, filc_object_for_special_payload(filc_signal_table[index]));
+
+    filc_global_variable_roots_lock_lock();
+    /* Global roots point to filc_objects that are global, i.e. they are not GC-allocated, but they do
+       have outgoing pointers. So, rather than fugc_marking them, we just shove them into the mark
+       stack. */
+    filc_mark_stack_push_all_from_object_array(stack, &filc_global_variable_roots);
+    for (index = filc_object_array_num_objects(&filc_global_variable_root_ptrs); index--;)
+        marker.mark(stack, filc_object_array_at(&filc_global_variable_roots, index));
+    filc_global_variable_roots_lock_unlock();
+
+    filc_thread** threads;
+    size_t num_threads;
+    filc_snapshot_threads(&threads, &num_threads);
+    for (index = num_threads; index--;)
+        marker.mark(stack, filc_object_for_special_payload(threads[index]));
+    bmalloc_deallocate(threads);
+
+    if (filc_is_user_environment_set()) {
+        marker.mark(stack, filc_ptr_object(filc_get_user_argv()));
+        marker.mark(stack, filc_ptr_object(filc_get_user_environ()));
+        marker.mark(stack, filc_ptr_object(filc_get_user_auxv()));
+    }
+}
+
+static PAS_ALWAYS_INLINE void filc_thread_mark_roots(filc_thread* my_thread,
+                                                     const filc_marker marker,
+                                                     filc_mark_stack* stack)
+{
+    static const bool verbose = false;
+    
+    filc_thread_assert_participates_in_pollchecks(my_thread);
+
+    size_t index;
+    for (index = my_thread->allocation_roots.size; index--;) {
+        void* allocation_root = my_thread->allocation_roots.array[index];
+        /* Allocation roots have to have the mark bit set without being put on any mark stack, since
+           they have no outgoing references and they are not ready for scanning. */
+        marker.set_is_marked(allocation_root);
+    }
+
+    filc_frame* frame;
+    for (frame = my_thread->top_frame; frame; frame = frame->parent) {
+        PAS_ASSERT(frame->origin);
+        const filc_function_origin* function_origin = filc_origin_get_function_origin(frame->origin);
+        PAS_ASSERT(function_origin);
+        if (verbose) {
+            pas_log("Marking roots for ");
+            filc_origin_dump_all_inline(frame->origin, "; ", pas_log_stream);
+            pas_log("\n");
+        }
+        PAS_ASSERT(function_origin->base.num_lowers_ish < UINT_MAX);
+        for (index = function_origin->base.num_lowers_ish; index--;) {
+            if (verbose)
+                pas_log("Marking thread root %p\n", frame->lowers[index]);
+            marker.mark(stack, filc_object_for_lower(frame->lowers[index]));
+        }
+    }
+
+    filc_native_frame* native_frame;
+    for (native_frame = my_thread->top_native_frame;
+         native_frame;
+         native_frame = native_frame->parent) {
+        for (index = native_frame->size; index--;) {
+            uintptr_t encoded_ptr = native_frame->array[index];
+            if ((encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_TRACKED_PTR) {
+                marker.mark(
+                    stack, (filc_object*)(encoded_ptr & ~FILC_NATIVE_FRAME_PTR_MASK));
+            } else {
+                PAS_TESTING_ASSERT(
+                    (encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_BMALLOC_PTR);
+            }
+        }
+    }
+
+    for (index = FILC_NUM_UNWIND_REGISTERS; index--;)
+        PAS_ASSERT(filc_ptr_is_totally_null(my_thread->unwind_registers[index]));
+
+    for (index = filc_object_array_num_objects(&my_thread->thread_locals); index--;)
+        marker.mark(stack, filc_object_array_at(&my_thread->thread_locals, index));
+}
+
+static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_special_ptrs(filc_object* object,
+                                                                     const filc_marker marker,
+                                                                     filc_mark_stack* stack)
+{
+    PAS_TESTING_ASSERT(filc_object_is_special(object));
+    filc_special_type special_type = filc_object_special_type(object);
+    switch (special_type) {
+    case FILC_SPECIAL_TYPE_FUNCTION:
+    case FILC_SPECIAL_TYPE_DL_HANDLE:
+        break;
+    case FILC_SPECIAL_TYPE_SIGNAL_HANDLER:
+        filc_signal_handler_mark_outgoing_ptrs(
+            (filc_signal_handler*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+    case FILC_SPECIAL_TYPE_THREAD:
+        filc_thread_mark_outgoing_ptrs(
+            (filc_thread*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+    case FILC_SPECIAL_TYPE_PTR_TABLE:
+        filc_ptr_table_mark_outgoing_ptrs(
+            (filc_ptr_table*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+    case FILC_SPECIAL_TYPE_PTR_TABLE_ARRAY:
+        filc_ptr_table_array_mark_outgoing_ptrs(
+            (filc_ptr_table_array*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+    case FILC_SPECIAL_TYPE_JMP_BUF:
+        filc_jmp_buf_mark_outgoing_ptrs(
+            (filc_jmp_buf*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+    case FILC_SPECIAL_TYPE_EXACT_PTR_TABLE:
+        filc_exact_ptr_table_mark_outgoing_ptrs(
+            (filc_exact_ptr_table*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+    default:
+        pas_log("Got a bad special ptr type: ");
+        filc_special_type_dump(special_type, pas_log_stream);
+        pas_log("\n");
+        pas_log("Object: ");
+        filc_object_dump(object, pas_log_stream);
+        pas_log("\n");
+        PAS_ASSERT(!"Bad special word type");
+        break;
+    }
+}
+
+static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_ptrs(filc_object* object,
+                                                             const filc_marker marker,
+                                                             filc_mark_stack* stack)
+{
+    static const bool verbose = false;
+    if (verbose)
+        pas_log("Marking outgoing objects from %p\n", object);
+    if (filc_object_is_special(object)) {
+        filc_object_mark_outgoing_special_ptrs(object, marker, stack);
+        return;
+    }
+
+    /* It's unusual for an object without an aux ptr to be placed on the mark stack, but we forgive
+       cases like this anyway, since it might happen for globals. */
+    char* aux_ptr = filc_object_aux_ptr(object);
+    if (PAS_UNLIKELY(!aux_ptr))
+        return;
+    if (!(filc_object_get_flags(object) & FILC_OBJECT_FLAG_GLOBAL_AUX))
+        marker.set_is_marked(aux_ptr);
+    /* The only way for the aux to already be marked is if it's black, but then that means that all of
+       the things it points to are already marked (either black-allocated atomic boxes or things
+       marked with the store barrier).
+    
+       So, a possible optimization would be to skip this loop if the aux is already marked. */
+    size_t size = filc_object_size_not_null(object);
+    size_t offset;
+    PAS_ASSERT(sizeof(filc_lower_or_box) == FILC_WORD_SIZE);
+    PAS_ASSERT(sizeof(filc_lower_or_box) == sizeof(void*));
+    for (offset = 0; offset < size; offset += sizeof(filc_lower_or_box)) {
+        filc_lower_or_box* lower_or_box_ptr = (filc_lower_or_box*)(aux_ptr + offset);
+        marker.mark_or_free_lower_or_box(stack, lower_or_box_ptr);
+    }
+}
 
 PAS_END_EXTERN_C;
 

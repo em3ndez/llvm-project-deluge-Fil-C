@@ -172,6 +172,18 @@ static PAS_ALWAYS_INLINE void fugc_mark_or_free_lower_or_box(filc_mark_stack* ma
     }
 }
 
+static PAS_ALWAYS_INLINE void fugc_marker_set_is_marked(void* mark_base)
+{
+    verse_heap_set_is_marked_relaxed(mark_base, true);
+}
+
+#define FUGC_MARKER ((filc_marker){ \
+        .mark = fugc_mark, \
+        .mark_or_free_flight = fugc_mark_or_free_flight, \
+        .mark_or_free_lower_or_box = fugc_mark_or_free_lower_or_box, \
+        .set_is_marked = fugc_marker_set_is_marked \
+    })
+
 PAS_API void fugc_donate(filc_mark_stack* mark_stack);
 PAS_API bool fugc_try_donate(filc_mark_stack* mark_stack);
 

@@ -142,6 +142,7 @@ typedef void (*worker_function)(void);
 static worker_function current_worker;
 static uint64_t worker_version;
 static unsigned num_workers = 1; /* 1 worker means 0 parallel_worker_threads. */
+static unsigned num_workers_shutting_down;
 static unsigned num_workers_dispatched;
 static unsigned num_workers_finished;
 
@@ -153,6 +154,11 @@ static unsigned parallelism_target(void)
     if (threads_override)
         return threads_override;
     return pas_max_uintptr(1, pas_min_uintptr(number_of_cores, verse_heap_live_bytes / 5000000));
+}
+
+static unsigned num_worker_threads_alive(void)
+{
+    return num_workers + num_workers_shutting_down;
 }
 
 static pas_thread_return_type parallel_worker_thread(void* arg)
@@ -189,12 +195,19 @@ static pas_thread_return_type parallel_worker_thread(void* arg)
                         pas_getpid(), pas_gettid());
             }
 
+            num_workers--;
+            num_workers_shutting_down++;
+            PAS_ASSERT(num_worker_threads_alive() > 1);
+            pas_system_mutex_unlock(&collector_thread_state_lock);
+            
             /* Make sure we get rid of our TLC before telling the world that the thread is done. We
                don't want the TLC deletion to happen in the middle of the fork(2)! */
             pas_thread_local_cache_destroy(pas_lock_is_not_held);
 
-            num_workers--;
-            if (num_workers == 1)
+            pas_system_mutex_lock(&collector_thread_state_lock);
+            num_workers_shutting_down--;
+
+            if (num_worker_threads_alive() == 1)
                 pas_system_condition_broadcast(&collector_thread_state_cond);
             pas_system_mutex_unlock(&collector_thread_state_lock);
             return PAS_THREAD_RETURN_VALUE;
@@ -294,7 +307,7 @@ static void do_parallel_work_impl(worker_function my_worker, const char* name)
                 pas_getpid(), num_workers_finished, num_workers_dispatched, num_workers);
     }
     while ((num_workers_finished < num_workers_dispatched && !collector_control_request) ||
-           (num_workers > 1 && collector_control_request)) {
+           (num_worker_threads_alive() > 1 && collector_control_request)) {
         if (verbose >= VERBOSE_EXTREME)
             pas_log("[%d] fugc: waiting for parallel workers to finish.\n", pas_getpid());
         pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
@@ -358,7 +371,7 @@ static void marking_pollcheck_callback(filc_thread* thread, void* arg)
     PAS_ASSERT(!arg);
     dump_handshake(thread, "marking");
     filc_thread_stop_allocators(thread);
-    filc_thread_mark_roots(thread);
+    filc_thread_mark_roots(thread, FUGC_MARKER, &thread->mark_stack);
     filc_thread_donate(thread);
 }
 
@@ -368,89 +381,6 @@ static void after_marking_pollcheck_callback(filc_thread* thread, void* arg)
     dump_handshake(thread, "after_marking");
     filc_thread_stop_allocators(thread);
     filc_thread_sweep_mark_stack(thread);
-}
-
-static void mark_outgoing_signal_handler_ptrs(filc_mark_stack* stack,
-                                              filc_signal_handler* signal_handler)
-{
-    /* I guess that instead, we could just assert that this thing is global. But, like, whatever. */
-    fugc_mark_or_free_flight(stack, &signal_handler->function_ptr);
-}
-
-static void mark_outgoing_special_ptrs(filc_mark_stack* stack, filc_object* object)
-{
-    PAS_TESTING_ASSERT(filc_object_is_special(object));
-    filc_special_type special_type = filc_object_special_type(object);
-    switch (special_type) {
-    case FILC_SPECIAL_TYPE_FUNCTION:
-    case FILC_SPECIAL_TYPE_DL_HANDLE:
-        break;
-    case FILC_SPECIAL_TYPE_SIGNAL_HANDLER:
-        mark_outgoing_signal_handler_ptrs(
-            stack, (filc_signal_handler*)filc_object_special_payload_with_manual_tracking(object));
-        break;
-    case FILC_SPECIAL_TYPE_THREAD:
-        filc_thread_mark_outgoing_ptrs(
-            (filc_thread*)filc_object_special_payload_with_manual_tracking(object), stack);
-        break;
-    case FILC_SPECIAL_TYPE_PTR_TABLE:
-        filc_ptr_table_mark_outgoing_ptrs(
-            (filc_ptr_table*)filc_object_special_payload_with_manual_tracking(object), stack);
-        break;
-    case FILC_SPECIAL_TYPE_PTR_TABLE_ARRAY:
-        filc_ptr_table_array_mark_outgoing_ptrs(
-            (filc_ptr_table_array*)filc_object_special_payload_with_manual_tracking(object), stack);
-        break;
-    case FILC_SPECIAL_TYPE_JMP_BUF:
-        filc_jmp_buf_mark_outgoing_ptrs(
-            (filc_jmp_buf*)filc_object_special_payload_with_manual_tracking(object), stack);
-        break;
-    case FILC_SPECIAL_TYPE_EXACT_PTR_TABLE:
-        filc_exact_ptr_table_mark_outgoing_ptrs(
-            (filc_exact_ptr_table*)filc_object_special_payload_with_manual_tracking(object), stack);
-        break;
-    default:
-        pas_log("Got a bad special ptr type: ");
-        filc_special_type_dump(special_type, pas_log_stream);
-        pas_log("\n");
-        pas_log("Object: ");
-        filc_object_dump(object, pas_log_stream);
-        pas_log("\n");
-        PAS_ASSERT(!"Bad special word type");
-        break;
-    }
-}
-
-static void mark_outgoing_ptrs(filc_mark_stack* stack, filc_object* object)
-{
-    static const bool verbose = false;
-    if (verbose)
-        pas_log("Marking outgoing objects from %p\n", object);
-    if (filc_object_is_special(object)) {
-        mark_outgoing_special_ptrs(stack, object);
-        return;
-    }
-
-    /* It's unusual for an object without an aux ptr to be placed on the mark stack, but we forgive
-       cases like this anyway, since it might happen for globals. */
-    char* aux_ptr = filc_object_aux_ptr(object);
-    if (PAS_UNLIKELY(!aux_ptr))
-        return;
-    if (!(filc_object_get_flags(object) & FILC_OBJECT_FLAG_GLOBAL_AUX))
-        verse_heap_set_is_marked_relaxed(aux_ptr, true);
-    /* The only way for the aux to already be marked is if it's black, but then that means that all of
-       the things it points to are already marked (either black-allocated atomic boxes or things
-       marked with the store barrier).
-    
-       So, a possible optimization would be to skip this loop if the aux is already marked. */
-    size_t size = filc_object_size_not_null(object);
-    size_t offset;
-    PAS_ASSERT(sizeof(filc_lower_or_box) == FILC_WORD_SIZE);
-    PAS_ASSERT(sizeof(filc_lower_or_box) == sizeof(void*));
-    for (offset = 0; offset < size; offset += sizeof(filc_lower_or_box)) {
-        filc_lower_or_box* lower_or_box_ptr = (filc_lower_or_box*)(aux_ptr + offset);
-        fugc_mark_or_free_lower_or_box(stack, lower_or_box_ptr);
-    }
 }
 
 static void destruct_object_callback(void* allocation, void* arg)
@@ -571,7 +501,7 @@ static void wait_and_start_marking(void)
     filc_mark_stack local_stack;
     filc_mark_stack_construct(&local_stack);
     /* FIXME: You could imagine this being a place we can suspend. */
-    filc_mark_global_roots(&local_stack);
+    filc_mark_global_roots(FUGC_MARKER, &local_stack);
     fugc_donate(&local_stack);
     filc_mark_stack_destruct(&local_stack);
 
@@ -666,7 +596,7 @@ static void mark_parallel_worker(void)
                 filc_object* object = filc_mark_stack_pop(&local_stack);
                 if (!object)
                     break;
-                mark_outgoing_ptrs(&local_stack, object);
+                filc_object_mark_outgoing_ptrs(object, FUGC_MARKER, &local_stack);
             }
 
             objects_traced += count;
@@ -1086,7 +1016,7 @@ void fugc_suspend(void)
     PAS_ASSERT(!(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND));
     collector_control_request |= COLLECTOR_CONTROL_REQUEST_SUSPEND;
     pas_system_condition_broadcast(&collector_thread_state_cond);
-    while (collector_thread_is_running || num_workers > 1)
+    while (collector_thread_is_running || num_worker_threads_alive() > 1)
         pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }

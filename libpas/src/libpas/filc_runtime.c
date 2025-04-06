@@ -270,23 +270,6 @@ void filc_thread_undo_create(filc_thread* thread)
     filc_thread_destroy_space_with_guard_page(thread);
 }
 
-void filc_thread_mark_outgoing_ptrs(filc_thread* thread, filc_mark_stack* stack)
-{
-    /* There's a bunch of other stuff that threads "point" to that is part of their roots, and we
-       mark those as part of marking thread roots. The things here are the ones that are treated
-       as normal outgoing object ptrs rather than roots. */
-    
-    fugc_mark_or_free_flight(stack, &thread->arg_ptr);
-    fugc_mark_or_free_flight(stack, &thread->cookie_ptr);
-    fugc_mark_or_free_flight(stack, &thread->result_ptr);
-
-    /* These need to be marked because phase2 of unwinding calls the personality function multiple
-       times before finishing using them. */
-    fugc_mark_or_free_flight(stack, &thread->unwind_context_ptr);
-    fugc_mark_or_free_flight(stack, &thread->exception_object_ptr);
-    fugc_mark_or_free_flight(stack, &thread->force_stop_arg_ptr);
-}
-
 void filc_thread_destruct(filc_thread* thread)
 {
     static const bool verbose = false;
@@ -338,7 +321,7 @@ static void check_zthread(filc_ptr ptr)
     filc_check_access_special(ptr, FILC_SPECIAL_TYPE_THREAD);
 }
 
-static filc_signal_handler* signal_table[FILC_MAX_USER_SIGNUM + 1];
+filc_signal_handler* filc_signal_table[FILC_MAX_USER_SIGNUM + 1];
 
 static bool user_environment_is_set = false;
 static int user_argc;
@@ -495,7 +478,7 @@ void filc_assert_my_thread_is_not_entered(void)
     PAS_ASSERT(!filc_get_my_thread() || !filc_thread_is_entered(filc_get_my_thread()));
 }
 
-static void snapshot_threads(filc_thread*** threads, size_t* num_threads)
+void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads)
 {
     filc_thread_list_lock_lock();
     *num_threads = 0;
@@ -529,14 +512,14 @@ static bool participates_in_pollchecks(filc_thread* thread)
     return participates_in_handshakes(thread) && !thread->is_stopping;
 }
 
-static void assert_participates_in_handshakes(filc_thread* thread)
+void filc_thread_assert_participates_in_handshakes(filc_thread* thread)
 {
     PAS_ASSERT(thread->has_started);
 }
 
-static void assert_participates_in_pollchecks(filc_thread* thread)
+void filc_thread_assert_participates_in_pollchecks(filc_thread* thread)
 {
-    assert_participates_in_handshakes(thread);
+    filc_thread_assert_participates_in_handshakes(thread);
     PAS_ASSERT(!thread->is_stopping);
 }
 
@@ -560,7 +543,7 @@ void filc_stop_the_world(void)
     
     filc_thread** threads;
     size_t num_threads;
-    snapshot_threads(&threads, &num_threads);
+    filc_snapshot_threads(&threads, &num_threads);
 
     size_t index;
     for (index = num_threads; index--;) {
@@ -619,7 +602,7 @@ void filc_resume_the_world(void)
     
     filc_thread** threads;
     size_t num_threads;
-    snapshot_threads(&threads, &num_threads);
+    filc_snapshot_threads(&threads, &num_threads);
 
     size_t index;
     for (index = num_threads; index--;) {
@@ -662,7 +645,7 @@ static void run_pollcheck_callback(filc_thread* thread)
        What matters is that we're holding the lock! */
     PAS_ASSERT(thread->state & FILC_THREAD_STATE_CHECK_REQUESTED);
     PAS_ASSERT(thread->pollcheck_callback);
-    assert_participates_in_handshakes(thread);
+    filc_thread_assert_participates_in_handshakes(thread);
     if (participates_in_pollchecks(thread))
         thread->pollcheck_callback(thread, thread->pollcheck_arg);
     thread->pollcheck_callback = NULL;
@@ -723,7 +706,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
 
     filc_thread** threads;
     size_t num_threads;
-    snapshot_threads(&threads, &num_threads);
+    filc_snapshot_threads(&threads, &num_threads);
 
     /* Tell all the threads that the soft handshake is happening sort of as fast as we possibly
        can, so without calling the callback just yet. We want to maximize the window of time during
@@ -897,7 +880,7 @@ static void lookup_and_call_signal_handler_with_mask(filc_thread* my_thread, sig
     static const bool verbose = false;
     PAS_ASSERT(info->si_signo);
     PAS_ASSERT((unsigned)info->si_signo <= FILC_MAX_USER_SIGNUM);
-    filc_signal_handler* handler = signal_table[info->si_signo];
+    filc_signal_handler* handler = filc_signal_table[info->si_signo];
     PAS_ASSERT(handler);
     sigset_t oldset;
     if (verbose)
@@ -1411,7 +1394,7 @@ static void stop_thread_allocators(filc_thread* my_thread)
 
 void filc_thread_stop_allocators(filc_thread* my_thread)
 {
-    assert_participates_in_pollchecks(my_thread);
+    filc_thread_assert_participates_in_pollchecks(my_thread);
 
     pas_thread_local_cache_node* node = my_thread->tlc_node;
     uint64_t version = my_thread->tlc_node_version;
@@ -1421,63 +1404,9 @@ void filc_thread_stop_allocators(filc_thread* my_thread)
     stop_thread_allocators(my_thread);
 }
 
-void filc_thread_mark_roots(filc_thread* my_thread)
-{
-    static const bool verbose = false;
-    
-    assert_participates_in_pollchecks(my_thread);
-
-    size_t index;
-    for (index = my_thread->allocation_roots.size; index--;) {
-        void* allocation_root = my_thread->allocation_roots.array[index];
-        /* Allocation roots have to have the mark bit set without being put on any mark stack, since
-           they have no outgoing references and they are not ready for scanning. */
-        verse_heap_set_is_marked_relaxed(allocation_root, true);
-    }
-
-    filc_frame* frame;
-    for (frame = my_thread->top_frame; frame; frame = frame->parent) {
-        PAS_ASSERT(frame->origin);
-        const filc_function_origin* function_origin = filc_origin_get_function_origin(frame->origin);
-        PAS_ASSERT(function_origin);
-        if (verbose) {
-            pas_log("Marking roots for ");
-            filc_origin_dump_all_inline(frame->origin, "; ", pas_log_stream);
-            pas_log("\n");
-        }
-        PAS_ASSERT(function_origin->base.num_lowers_ish < UINT_MAX);
-        for (index = function_origin->base.num_lowers_ish; index--;) {
-            if (verbose)
-                pas_log("Marking thread root %p\n", frame->lowers[index]);
-            fugc_mark(&my_thread->mark_stack, filc_object_for_lower(frame->lowers[index]));
-        }
-    }
-
-    filc_native_frame* native_frame;
-    for (native_frame = my_thread->top_native_frame; native_frame; native_frame = native_frame->parent) {
-        for (index = native_frame->size; index--;) {
-            uintptr_t encoded_ptr = native_frame->array[index];
-            if ((encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_TRACKED_PTR) {
-                fugc_mark(
-                    &my_thread->mark_stack,
-                    (filc_object*)(encoded_ptr & ~FILC_NATIVE_FRAME_PTR_MASK));
-            } else {
-                PAS_TESTING_ASSERT(
-                    (encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_BMALLOC_PTR);
-            }
-        }
-    }
-
-    for (index = FILC_NUM_UNWIND_REGISTERS; index--;)
-        PAS_ASSERT(filc_ptr_is_totally_null(my_thread->unwind_registers[index]));
-
-    for (index = filc_object_array_num_objects(&my_thread->thread_locals); index--;)
-        fugc_mark(&my_thread->mark_stack, filc_object_array_at(&my_thread->thread_locals, index));
-}
-
 void filc_thread_sweep_mark_stack(filc_thread* my_thread)
 {
-    assert_participates_in_pollchecks(my_thread);
+    filc_thread_assert_participates_in_pollchecks(my_thread);
 
     if (filc_mark_stack_num_objects(&my_thread->mark_stack)) {
         pas_log("Non-empty thread mark stack at start of sweep! Objects:\n");
@@ -1493,36 +1422,9 @@ void filc_thread_sweep_mark_stack(filc_thread* my_thread)
 
 void filc_thread_donate(filc_thread* my_thread)
 {
-    assert_participates_in_pollchecks(my_thread);
+    filc_thread_assert_participates_in_pollchecks(my_thread);
 
     fugc_donate(&my_thread->mark_stack);
-}
-
-void filc_mark_global_roots(filc_mark_stack* mark_stack)
-{
-    size_t index;
-    for (index = FILC_MAX_USER_SIGNUM + 1; index--;)
-        fugc_mark(mark_stack, filc_object_for_special_payload(signal_table[index]));
-
-    filc_global_variable_roots_lock_lock();
-    /* Global roots point to filc_objects that are global, i.e. they are not GC-allocated, but they do
-       have outgoing pointers. So, rather than fugc_marking them, we just shove them into the mark
-       stack. */
-    filc_mark_stack_push_all_from_object_array(mark_stack, &filc_global_variable_roots);
-    for (index = filc_object_array_num_objects(&filc_global_variable_root_ptrs); index--;)
-        fugc_mark(mark_stack, filc_object_array_at(&filc_global_variable_roots, index));
-    filc_global_variable_roots_lock_unlock();
-
-    filc_thread** threads;
-    size_t num_threads;
-    snapshot_threads(&threads, &num_threads);
-    for (index = num_threads; index--;)
-        fugc_mark(mark_stack, filc_object_for_special_payload(threads[index]));
-    bmalloc_deallocate(threads);
-
-    fugc_mark(mark_stack, filc_ptr_object(user_argv));
-    fugc_mark(mark_stack, filc_ptr_object(user_environ));
-    fugc_mark(mark_stack, filc_ptr_object(user_auxv));
 }
 
 static void dump_signals_mask(void)
@@ -1604,7 +1506,7 @@ static void signal_pizlonator(int signum, siginfo_t* info, void* context)
     if (verbose)
         pas_log("calling signal handler from pizlonator\n");
     
-    call_signal_handler(thread, signal_table[signum], info);
+    call_signal_handler(thread, filc_signal_table[signum], info);
 
     filc_exit(thread);
 }
@@ -2776,82 +2678,6 @@ filc_ptr filc_ptr_table_decode(filc_thread* my_thread, filc_ptr_table* ptr_table
     return result;
 }
 
-void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* ptr_table, filc_mark_stack* stack)
-{
-    static const bool verbose = false;
-    if (verbose)
-        pas_log("Marking ptr table at %p.\n", ptr_table);
-    /* This needs to rehash the the whole table, marking non-free objects, and just skipping the free
-       ones.
-       
-       Then it needs to walk the array and remove the free entries, putting their indices into the
-       free_indices array.
-    
-       This may result in the hashtable and the array disagreeing a bit, and that's fine. They'll only
-       disagree on things that are free.
-    
-       If the hashtable has an entry that the array doesn't have: this means that the object in question
-       is free, so we'll never look up that entry in the hashtable due to the free check. New objects
-       that take the same address will get a fresh entry in the hashtable and a fresh index.
-    
-       If the array has an entry that the hashtable doesn't have: decoding that object will fail the
-       free check, so you won't be able to tell that the object has an index. Adding new objects that
-       take the same address won't be able to reuse that index, because it'll seem to be taken. */
-
-    pas_lock_lock(&ptr_table->lock);
-
-    pas_allocation_config allocation_config;
-    bmalloc_initialize_allocation_config(&allocation_config);
-
-    filc_ptr_uintptr_hash_map new_encode_map;
-    filc_ptr_uintptr_hash_map_construct(&new_encode_map);
-    size_t index;
-    for (index = ptr_table->encode_map.table_size; index--;) {
-        filc_ptr_uintptr_hash_map_entry entry = ptr_table->encode_map.table[index];
-        if (filc_ptr_uintptr_hash_map_entry_is_empty_or_deleted(entry))
-            continue;
-        if (filc_object_get_flags(filc_ptr_object(entry.key)) & FILC_OBJECT_FLAG_FREE)
-            continue;
-        fugc_mark(stack, filc_ptr_object(entry.key));
-        filc_ptr_uintptr_hash_map_add_new(&new_encode_map, entry, NULL, &allocation_config);
-    }
-    filc_ptr_uintptr_hash_map_destruct(&ptr_table->encode_map, &allocation_config);
-    ptr_table->encode_map = new_encode_map;
-
-    fugc_mark(stack, filc_object_for_special_payload(ptr_table->array));
-
-    /* It's not necessary to mark entries in this array, since they'll be marked when we
-       filc_ptr_table_array_mark_outgoing_ptrs(). It's not clear that we could avoid marking them in
-       that function, though maybe we could avoid it. */
-    for (index = ptr_table->array->num_entries; index--;) {
-        filc_ptr ptr = filc_flight_ptr_load_with_manual_tracking(ptr_table->array->ptrs + index);
-        if (!filc_ptr_ptr(ptr))
-            continue;
-        if (!(filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
-            continue;
-        if (ptr_table->num_free_indices >= ptr_table->free_indices_capacity) {
-            PAS_ASSERT(ptr_table->num_free_indices == ptr_table->free_indices_capacity);
-
-            size_t new_free_indices_capacity = ptr_table->free_indices_capacity << 1;
-            PAS_ASSERT(new_free_indices_capacity > ptr_table->free_indices_capacity);
-
-            uintptr_t* new_free_indices =
-                bmalloc_allocate(sizeof(uintptr_t) * new_free_indices_capacity);
-            memcpy(new_free_indices, ptr_table->free_indices,
-                   sizeof(uintptr_t) * ptr_table->num_free_indices);
-
-            bmalloc_deallocate(ptr_table->free_indices);
-            ptr_table->free_indices = new_free_indices;
-            ptr_table->free_indices_capacity = new_free_indices_capacity;
-        }
-        PAS_ASSERT(ptr_table->num_free_indices < ptr_table->free_indices_capacity);
-        ptr_table->free_indices[ptr_table->num_free_indices++] = index;
-        filc_flight_ptr_store_without_barrier(ptr_table->array->ptrs + index, filc_ptr_forge_null());
-    }
-    
-    pas_lock_unlock(&ptr_table->lock);
-}
-
 filc_ptr_table_array* filc_ptr_table_array_create(filc_thread* my_thread, size_t capacity)
 {
     size_t array_size;
@@ -2866,15 +2692,6 @@ filc_ptr_table_array* filc_ptr_table_array_create(filc_thread* my_thread, size_t
     result->capacity = capacity;
 
     return result;
-}
-
-void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_table_array* array, filc_mark_stack* stack)
-{
-    size_t index;
-    for (index = array->num_entries; index--;) {
-        fugc_mark(stack, filc_ptr_object(
-                      filc_flight_ptr_load_with_manual_tracking(array->ptrs + index)));
-    }
 }
 
 filc_exact_ptr_table* filc_exact_ptr_table_create(filc_thread* my_thread)
@@ -2942,36 +2759,6 @@ filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_tabl
     filc_ptr result = filc_exact_ptr_table_decode_with_manual_tracking(ptr_table, encoded_ptr);
     filc_thread_track_object(my_thread, filc_ptr_object(result));
     return result;
-}
-
-void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact_ptr_table* ptr_table,
-                                             filc_mark_stack* stack)
-{
-    static const bool verbose = false;
-    if (verbose)
-        pas_log("Marking exact ptr table at %p.\n", ptr_table);
-
-    pas_lock_lock(&ptr_table->lock);
-    
-    pas_allocation_config allocation_config;
-    bmalloc_initialize_allocation_config(&allocation_config);
-
-    filc_uintptr_ptr_hash_map new_decode_map;
-    filc_uintptr_ptr_hash_map_construct(&new_decode_map);
-    size_t index;
-    for (index = ptr_table->decode_map.table_size; index--;) {
-        filc_uintptr_ptr_hash_map_entry entry = ptr_table->decode_map.table[index];
-        if (filc_uintptr_ptr_hash_map_entry_is_empty_or_deleted(entry))
-            continue;
-        if (filc_object_get_flags(filc_ptr_object(entry.value)) & FILC_OBJECT_FLAG_FREE)
-            continue;
-        fugc_mark(stack, filc_ptr_object(entry.value));
-        filc_uintptr_ptr_hash_map_add_new(&new_decode_map, entry, NULL, &allocation_config);
-    }
-    filc_uintptr_ptr_hash_map_destruct(&ptr_table->decode_map, &allocation_config);
-    ptr_table->decode_map = new_decode_map;
-    
-    pas_lock_unlock(&ptr_table->lock);
 }
 
 filc_ptr filc_native_zgc_alloc(filc_thread* my_thread, size_t size)
@@ -4670,6 +4457,11 @@ void filc_set_user_environment(filc_thread* my_thread,
     user_environment_is_set = true;
 }
 
+bool filc_is_user_environment_set(void)
+{
+    return user_environment_is_set;
+}
+
 int filc_get_user_argc(void)
 {
     PAS_ASSERT(user_environment_is_set);
@@ -5538,13 +5330,6 @@ filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind
     return result;
 }
 
-void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf, filc_mark_stack* stack)
-{
-    size_t index;
-    for (index = jmp_buf->num_lowers; index--;)
-        fugc_mark(stack, filc_object_for_lower(jmp_buf->lowers[index]));
-}
-
 void filc_native_zlongjmp(filc_thread* my_thread, filc_ptr jmp_buf_ptr, int value)
 {
     static const bool verbose = false;
@@ -6058,7 +5843,7 @@ int filc_native_zsys_sigaction(
             pas_store_store_fence();
             PAS_ASSERT((unsigned)signum <= FILC_MAX_USER_SIGNUM);
             filc_store_barrier(my_thread, filc_object_for_special_payload(handler));
-            signal_table[signum] = handler;
+            filc_signal_table[signum] = handler;
             act.sa_sigaction = signal_pizlonator;
             act.sa_flags |= SA_SIGINFO; /* the signal_pizlonator always wants siginfo. FIXME: we could
                                            optimize this so that we use siginfo-less handler for those
@@ -6091,7 +5876,7 @@ int filc_native_zsys_sigaction(
             /* FIXME: The signal_table entry should really be a filc_ptr so we can return it here. */
             filc_store_ptr_at(my_thread, oact_ptr, &user_oact->sa_handler,
                               filc_flight_ptr_load(
-                                  my_thread, &signal_table[signum]->function_ptr));
+                                  my_thread, &filc_signal_table[signum]->function_ptr));
         }
         filc_to_user_sigset(&oact.sa_mask, &user_oact->sa_mask);
         user_oact->sa_flags = to_user_sa_flags(oact.sa_flags);
