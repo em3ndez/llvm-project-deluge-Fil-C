@@ -579,7 +579,7 @@ struct filc_marker {
     /* Set that the object is marked and that's it. Effectively, this makes the object black possibly
        without ever having been grey. This is used for allocation roots for example (objects that have
        been allocated but aren't initialized enough to be looked at by the GC). */
-    void (*set_is_marked)(void* mark_base);
+    bool (*set_is_marked)(void* mark_base);
 };
 
 struct filc_native_frame {
@@ -1647,6 +1647,8 @@ PAS_API void filc_pollcheck_outline(filc_thread* my_thread, const filc_origin* o
 
 PAS_API void filc_thread_stop_allocators(filc_thread* my_thread);
 
+PAS_API bool filc_thread_participates_in_handshakes(filc_thread* thread);
+PAS_API bool filc_thread_participates_in_pollchecks(filc_thread* thread);
 PAS_API void filc_thread_assert_participates_in_handshakes(filc_thread* my_thread);
 PAS_API void filc_thread_assert_participates_in_pollchecks(filc_thread* my_thread);
 

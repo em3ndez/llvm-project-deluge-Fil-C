@@ -502,14 +502,14 @@ void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads)
     filc_thread_list_lock_unlock();
 }
 
-static bool participates_in_handshakes(filc_thread* thread)
+bool filc_thread_participates_in_handshakes(filc_thread* thread)
 {
     return thread->has_started;
 }
 
-static bool participates_in_pollchecks(filc_thread* thread)
+bool filc_thread_participates_in_pollchecks(filc_thread* thread)
 {
-    return participates_in_handshakes(thread) && !thread->is_stopping;
+    return filc_thread_participates_in_handshakes(thread) && !thread->is_stopping;
 }
 
 void filc_thread_assert_participates_in_handshakes(filc_thread* thread)
@@ -548,7 +548,7 @@ void filc_stop_the_world(void)
     size_t index;
     for (index = num_threads; index--;) {
         filc_thread* thread = threads[index];
-        if (!participates_in_handshakes(thread))
+        if (!filc_thread_participates_in_handshakes(thread))
             continue;
 
         pas_system_mutex_lock(&thread->lock);
@@ -564,7 +564,7 @@ void filc_stop_the_world(void)
 
     for (index = num_threads; index--;) {
         filc_thread* thread = threads[index];
-        if (!participates_in_handshakes(thread))
+        if (!filc_thread_participates_in_handshakes(thread))
             continue;
 
         pas_system_mutex_lock(&thread->lock);
@@ -607,7 +607,7 @@ void filc_resume_the_world(void)
     size_t index;
     for (index = num_threads; index--;) {
         filc_thread* thread = threads[index];
-        if (!participates_in_handshakes(thread))
+        if (!filc_thread_participates_in_handshakes(thread))
             continue;
 
         pas_system_mutex_lock(&thread->lock);
@@ -646,7 +646,7 @@ static void run_pollcheck_callback(filc_thread* thread)
     PAS_ASSERT(thread->state & FILC_THREAD_STATE_CHECK_REQUESTED);
     PAS_ASSERT(thread->pollcheck_callback);
     filc_thread_assert_participates_in_handshakes(thread);
-    if (participates_in_pollchecks(thread))
+    if (filc_thread_participates_in_pollchecks(thread))
         thread->pollcheck_callback(thread, thread->pollcheck_arg);
     thread->pollcheck_callback = NULL;
     thread->pollcheck_arg = NULL;
@@ -718,7 +718,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
     size_t index;
     for (index = num_threads; index--;) {
         filc_thread* thread = threads[index];
-        if (!participates_in_handshakes(thread))
+        if (!filc_thread_participates_in_handshakes(thread))
             continue;
 
         pas_system_mutex_lock(&thread->lock);
@@ -741,7 +741,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
        that have to run the callbacks themselves might just end up doing it. */
     for (index = num_threads; index--;) {
         filc_thread* thread = threads[index];
-        if (!participates_in_handshakes(thread))
+        if (!filc_thread_participates_in_handshakes(thread))
             continue;
         
         pas_system_mutex_lock(&thread->lock);
@@ -752,7 +752,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
     /* Now actually wait for every thread to do it. */
     for (index = num_threads; index--;) {
         filc_thread* thread = threads[index];
-        if (!participates_in_handshakes(thread))
+        if (!filc_thread_participates_in_handshakes(thread))
             continue;
         
         pas_system_mutex_lock(&thread->lock);

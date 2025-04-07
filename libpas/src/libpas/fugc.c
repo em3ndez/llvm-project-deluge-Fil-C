@@ -29,6 +29,7 @@
 
 #include "fugc.h"
 #include "pas_fd_stream.h"
+#include "pas_ptr_hash_set.h"
 #include "verse_heap_mark_bits_page_commit_controller.h"
 #include "verse_heap_object_set_inlines.h"
 #include <signal.h>
@@ -120,6 +121,7 @@ static unsigned verbose;
 static bool should_stop_the_world;
 static bool should_scribble;
 static bool scribble_concurrently;
+static bool should_verify;
 static bool rage_mode;
 
 enum collector_state {
@@ -635,6 +637,77 @@ done:
     filc_mark_stack_destruct(&local_stack);
 }
 
+static pas_ptr_hash_set verify_set;
+static bool verify_failed;
+static const char* source_explanation;
+static filc_object* source_object;
+static filc_thread* source_thread;
+
+static bool verify_set_is_marked(void* mark_base)
+{
+    if (!verse_heap_is_marked(mark_base)) {
+        pas_log("[%d] fugc: verify: found unmarked %p in %s",
+                pas_getpid(), mark_base, source_explanation);
+        if (source_object)
+            pas_log(" %p", source_object);
+        if (source_thread)
+            pas_log(" %p", source_thread);
+        pas_log("\n");
+        verify_failed = true;
+    }
+
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
+    return pas_ptr_hash_set_set(&verify_set, mark_base, NULL, &allocation_config);
+}
+
+static bool verify_mark(filc_mark_stack* mark_stack, filc_object* object)
+{
+    if (!object)
+        return false;
+    uintptr_t aux = object->aux;
+    filc_object_flags flags = filc_aux_get_flags(aux);
+    if ((flags & FILC_OBJECT_FLAG_GLOBAL))
+        return false;
+    void* mark_base = filc_object_mark_base_with_flags(object, flags);
+    if (!verify_set_is_marked(mark_base))
+        return false;
+    filc_mark_stack_push(mark_stack, object);
+    return true;
+}
+
+static void verify_mark_or_free_flight(filc_mark_stack* mark_stack, filc_ptr* ptr)
+{
+    void* lower = filc_flight_ptr_load_lower(ptr);
+    if (!lower)
+        return;
+    filc_object* object = filc_object_for_lower_not_null(lower);
+    verify_mark(mark_stack, object);
+}
+
+static void verify_mark_or_free_lower_or_box(filc_mark_stack* mark_stack,
+                                             filc_lower_or_box* lower_or_box_ptr)
+{
+    filc_lower_or_box lower_or_box = filc_lower_or_box_load_unfenced(lower_or_box_ptr);
+    if (filc_lower_or_box_is_null(lower_or_box))
+        return;
+    if (filc_lower_or_box_is_box(lower_or_box)) {
+        filc_atomic_box* box = filc_lower_or_box_get_box(lower_or_box);
+        verify_set_is_marked(box);
+        verify_mark_or_free_flight(mark_stack, &box->ptr);
+        return;
+    }
+    filc_object* object = filc_object_for_lower_not_null(filc_lower_or_box_get_lower(lower_or_box));
+    verify_mark(mark_stack, object);
+}
+
+#define VERIFY_MARKER ((filc_marker){ \
+        .mark = verify_mark, \
+        .mark_or_free_flight = verify_mark_or_free_flight, \
+        .mark_or_free_lower_or_box = verify_mark_or_free_lower_or_box, \
+        .set_is_marked = verify_set_is_marked \
+    })
+
 static void mark_and_start_destructing(void)
 {
     if (verbose >= VERBOSE_PHASES)
@@ -659,6 +732,63 @@ static void mark_and_start_destructing(void)
     
     filc_is_marking = false;
     
+    if (should_verify) {
+        /* This is a super slow verify GC that you can optionally enable to make sure that FUGC marked
+           everything it was supposed to mark. Only useful for debugging FUGC itself. */
+        
+        if (verbose >= VERBOSE_PHASES)
+            pas_log("[%d] fugc: verifying\n", pas_getpid());
+        filc_stop_the_world();
+
+        pas_allocation_config allocation_config;
+        bmalloc_initialize_allocation_config(&allocation_config);
+        pas_ptr_hash_set_construct(&verify_set);
+
+        filc_thread** threads;
+        size_t num_threads;
+        filc_snapshot_threads(&threads, &num_threads);
+
+        size_t index;
+        for (index = num_threads; index--;) {
+            if (filc_thread_participates_in_pollchecks(threads[index]))
+                filc_thread_stop_allocators(threads[index]);
+        }
+        
+        filc_mark_stack verify_stack;
+        filc_mark_stack_construct(&verify_stack);
+
+        source_explanation = "global roots";
+        source_object = NULL;
+        source_thread = NULL;
+        filc_mark_global_roots(VERIFY_MARKER, &verify_stack);
+        
+        for (index = num_threads; index--;) {
+            if (filc_thread_participates_in_pollchecks(threads[index])) {
+                source_explanation = "thread roots";
+                source_object = NULL;
+                source_thread = threads[index];
+                filc_thread_mark_roots(threads[index], VERIFY_MARKER, &verify_stack);
+            }
+        }
+        
+        bmalloc_deallocate(threads);
+
+        source_explanation = "object";
+        source_thread = NULL;
+        filc_object* object;
+        while ((object = filc_mark_stack_pop(&verify_stack))) {
+            source_object = object;
+            filc_object_mark_outgoing_ptrs(object, VERIFY_MARKER, &verify_stack);
+        }
+
+        PAS_ASSERT(!verify_failed);
+
+        filc_mark_stack_destruct(&verify_stack);
+        pas_ptr_hash_set_destruct(&verify_set, &allocation_config);
+        
+        filc_resume_the_world();
+    }
+
     if (verbose >= VERBOSE_CYCLES)
         mark_end_time = pas_get_time_in_milliseconds();
 
@@ -962,6 +1092,7 @@ void fugc_initialize_heaps(void)
     scribble_concurrently = filc_get_bool_env("FUGC_SCRIBBLE_CONCURRENTLY", false);
     if (scribble_concurrently)
         should_scribble = true;
+    should_verify = filc_get_bool_env("FUGC_VERIFY", false);
     rage_mode = filc_get_bool_env("FUGC_RAGE_MODE", false);
 
     fugc_default_heap = verse_heap_create(1, 0, 0);
@@ -1125,6 +1256,7 @@ void fugc_dump_setup(void)
             should_scribble
             ? (scribble_concurrently ? "yes, concurrently" : "yes")
             : "no");
+    pas_log("    fugc verify: %s\n", should_verify ? "yes" : "no");
     pas_log("    fugc rage mode: %s\n", rage_mode ? "yes" : "no");
     pas_log("    fugc threads: ");
     if (threads_override)

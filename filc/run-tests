@@ -302,7 +302,7 @@ $testDirectory.each_entry {
           :justRunScript => justRunScript,
           :output => output},
          {:script => subRunScribbleScript,
-          :cmdPrefix => "FUGC_RAGE_MODE=1 FUGC_SCRIBBLE=1",
+          :cmdPrefix => "FUGC_RAGE_MODE=1 FUGC_SCRIBBLE=1 FUGC_VERIFY=1",
           :justRunScript => justRunScript,
           :output => outputScribble},
          {:script => subRunSTWScript,
