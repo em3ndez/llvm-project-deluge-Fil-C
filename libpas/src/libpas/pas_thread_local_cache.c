@@ -602,6 +602,7 @@ typedef struct {
     pas_thread_local_cache* thread_local_cache;
     pas_local_allocator* requesting_allocator;
     unsigned* should_stop_bitvector;
+    bool skipped_some;
 } stop_local_allocators_if_necessary_data;
 
 static unsigned stop_local_allocators_if_necessary_set_bit_source(
@@ -632,14 +633,25 @@ static bool stop_local_allocators_if_necessary_set_bit_callback(
 
     PAS_TESTING_ASSERT(pas_bitvector_get(data->should_stop_bitvector, allocator_index));
     
-    pas_bitvector_set(data->should_stop_bitvector, allocator_index, false);
-    
     scavenger_data = (pas_local_allocator_scavenger_data*)pas_thread_local_cache_get_local_allocator_direct(
         data->thread_local_cache, allocator_index);
 
+    /* The Verse heap allocator can go into is_stashing_alloc_bits mode and then call into bmalloc. Then bmalloc might
+       call pas_thread_local_cache_stop_local_allocators_if_necessary, which then finds this allocator.
+    
+       We make sure to avoid doing anything to this allocator. We avoid clearing its bit that indicates that it should
+       stop and we make sure that pas_thread_local_cache_stop_local_allocators_if_necessary runs again. */
+    if (pas_local_allocator_scavenger_data_kind(scavenger_data) == pas_local_allocator_allocator_kind
+        && ((pas_local_allocator*)scavenger_data)->is_stashing_alloc_bits) {
+        data->skipped_some = true;
+        return false;
+    }
+    
+    pas_bitvector_set(data->should_stop_bitvector, allocator_index, false);
+    
     if ((pas_local_allocator*)scavenger_data == data->requesting_allocator)
         return true;
-    
+
     if (!scavenger_data->should_stop_count)
         return true;
     
@@ -664,6 +676,7 @@ void pas_thread_local_cache_stop_local_allocators_if_necessary(
     data.thread_local_cache = thread_local_cache;
     data.requesting_allocator = requesting_allocator;
     data.should_stop_bitvector = thread_local_cache->should_stop_bitvector;
+    data.skipped_some = false;
 
     pas_bitvector_for_each_set_bit(
         stop_local_allocators_if_necessary_set_bit_source,
@@ -672,7 +685,8 @@ void pas_thread_local_cache_stop_local_allocators_if_necessary(
         stop_local_allocators_if_necessary_set_bit_callback,
         &data);
 
-    thread_local_cache->should_stop_some = false;
+    if (!data.skipped_some)
+        thread_local_cache->should_stop_some = false;
 
 	pas_lock_unlock(&thread_local_cache->node->scavenger_lock);
 }

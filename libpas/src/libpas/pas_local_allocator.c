@@ -232,6 +232,7 @@ bool pas_local_allocator_stop(
                     pas_local_allocator_scavenger_data_location(&allocator->scavenger_data)));
         pas_log("allocator->scavenger_data.is_in_use = %s\n",
                 allocator->scavenger_data.is_in_use ? "yes" : "no");
+        pas_log("allocator->is_stashing_alloc_bits = %s\n", allocator->is_stashing_alloc_bits ? "yes" : "no");
         pas_log("at time of assert: allocator->scavenger_data.is_in_use = %s\n",
                 is_in_use ? "yes" : "no");
         PAS_ASSERT(!"Should not be reached");
