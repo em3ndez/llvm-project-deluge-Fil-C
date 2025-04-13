@@ -14,3 +14,7 @@ libraries:
       - module.c
 output-excludes:
   - "foo()"
+
+# Skip it for now because the fact that it crashes pollutes the system's coredump directory.
+skip:
+  true
