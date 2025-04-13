@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -41,3 +41,7 @@ rm -f asm
 ln -s /usr/include/x86_64-linux-gnu/asm .
 rm -f asm-generic
 ln -s /usr/include/asm-generic .
+
+cd ../lib
+rm -f libyolom.a
+ar cr libyolom.a
