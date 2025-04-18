@@ -10162,18 +10162,6 @@ long double filc_native_zmath_scalbl(filc_thread* my_thread, long double value, 
 #endif
 }
 
-long double filc_native_zmath_fmaxl(filc_thread* my_thread, long double x, long double y)
-{
-    PAS_UNUSED_PARAM(my_thread);
-    return fmaxl(x, y);
-}
-
-long double filc_native_zmath_fminl(filc_thread* my_thread, long double x, long double y)
-{
-    PAS_UNUSED_PARAM(my_thread);
-    return fminl(x, y);
-}
-
 long double filc_native_zmath_exp10l(filc_thread* my_thread, long double value)
 {
     PAS_UNUSED_PARAM(my_thread);
@@ -10349,6 +10337,12 @@ long double filc_native_zmath_log1pl(filc_thread* my_thread, long double value)
 {
     PAS_UNUSED_PARAM(my_thread);
     return log1pl(value);
+}
+
+long double filc_native_zmath_nearbyintl(filc_thread* my_thread, long double value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return nearbyintl(value);
 }
 
 #endif /* PAS_ENABLE_FILC */
