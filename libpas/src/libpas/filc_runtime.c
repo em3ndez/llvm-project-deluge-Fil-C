@@ -5637,15 +5637,27 @@ long filc_native_zsys_lseek(filc_thread* my_thread, int fd, long offset, int whe
     return result;
 }
 
-void filc_native_zsys_exit(filc_thread* my_thread, int return_code)
+void filc_native_zsys_exit_soft(filc_thread* my_thread, int return_code)
 {
     static const bool verbose = false;
     if (verbose) {
-        pas_log("%d: Exiting!\n", getpid());
+        pas_log("%d: Soft exiting!\n", getpid());
         filc_thread_dump_stack(my_thread, pas_log_stream);
     }
     filc_exit(my_thread);
     exit(return_code);
+    PAS_ASSERT(!"Should not be reached");
+}
+
+void filc_native_zsys_exit_hard(filc_thread* my_thread, int return_code)
+{
+    static const bool verbose = false;
+    if (verbose) {
+        pas_log("%d: Hard exiting!\n", getpid());
+        filc_thread_dump_stack(my_thread, pas_log_stream);
+    }
+    filc_exit(my_thread);
+    _Exit(return_code);
     PAS_ASSERT(!"Should not be reached");
 }
 

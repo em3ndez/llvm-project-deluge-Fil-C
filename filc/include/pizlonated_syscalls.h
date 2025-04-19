@@ -51,7 +51,8 @@ long zsys_write(int fd, const void* buf, __SIZE_TYPE__ size);
 int zsys_close_impl(int fd);
 int zsys_close(int fd);
 long zsys_lseek(int fd, long offset, int whence);
-void zsys_exit(int return_code);
+void zsys_exit_soft(int return_code); /* Uses the yolo exit(3), so calls destructors. */
+void zsys_exit_hard(int return_code); /* Uses the yolo _Exit(2), so no destructors. */
 unsigned zsys_getuid(void);
 unsigned zsys_geteuid(void);
 unsigned zsys_getgid(void);
