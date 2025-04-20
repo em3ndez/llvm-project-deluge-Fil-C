@@ -26,6 +26,9 @@
 set -e
 set -x
 
+rm -rf pizfix
+
+./configure_llvm.sh
 ./build_clang.sh
 ./build_os_include.sh
 
@@ -46,6 +49,4 @@ else
 fi
     
 ./build_cxx.sh
-
-
 

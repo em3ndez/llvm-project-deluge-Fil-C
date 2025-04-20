@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,12 +28,31 @@
 set -e
 set -x
 
-mkdir -p build
-cd build
-cmake -S ../llvm -B . -G Ninja -DLLVM_ENABLE_PROJECTS=clang \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_ASSERTIONS=ON \
-    -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
-    -DLIBCXXABI_HAS_PTHREAD_API=ON -DLIBCXX_ENABLE_EXCEPTIONS=ON \
-    -DLIBCXXABI_ENABLE_EXCEPTIONS=ON -DLIBCXX_HAS_PTHREAD_API=ON \
-    -DLIBCXX_HAS_MUSL_LIBC=ON -DLLVM_ENABLE_ZSTD=OFF \
-    -DLIBCXX_FORCE_LIBCXXABI=ON -DLLVM_TARGETS_TO_BUILD=$LLVMARCH
+if test "x$ALTLLVMLIBCOPT" = "x"
+then
+    LLVMLIBCOPT="-DLIBCXX_HAS_MUSL_LIBC=ON"
+else
+    LLVMLIBCOPT=$ALTLLVMLIBCOPT
+fi
+
+CMAKEOPTIONS="-S ../llvm -B . -G Ninja -DLLVM_ENABLE_PROJECTS=clang
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_ASSERTIONS=ON
+    -DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi
+    -DLIBCXXABI_HAS_PTHREAD_API=ON -DLIBCXX_ENABLE_EXCEPTIONS=ON
+    -DLIBCXXABI_ENABLE_EXCEPTIONS=ON -DLIBCXX_HAS_PTHREAD_API=ON
+    $LLVMLIBCOPT -DLLVM_ENABLE_ZSTD=OFF
+    -DLIBCXX_FORCE_LIBCXXABI=ON -DLLVM_TARGETS_TO_BUILD=$LLVMARCH"
+
+COOKIECONTENTS=`cat build/filc_cookie.txt`
+
+if test "x$COOKIECONTENTS" != "x$CMAKEOPTIONS"
+then
+    rm -rf build
+    mkdir -p build
+
+    cd build
+    cmake $CMAKEOPTIONS
+    
+    echo "$CMAKEOPTIONS" > filc_cookie.txt
+fi
+
