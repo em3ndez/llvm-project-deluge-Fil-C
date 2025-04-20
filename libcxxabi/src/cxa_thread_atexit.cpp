@@ -17,6 +17,8 @@
 
 #include <stdlib.h>
 
+#undef HAVE___CXA_THREAD_ATEXIT_IMPL
+
 namespace __cxxabiv1 {
 
   using Dtor = void(*)(void*);
