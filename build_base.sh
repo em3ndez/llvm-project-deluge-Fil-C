@@ -27,6 +27,7 @@ set -e
 set -x
 
 ./build_clang.sh
+./build_os_include.sh
 
 if test "x$ALTYOLO" != "x"
 then
