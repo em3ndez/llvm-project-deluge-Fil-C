@@ -6491,6 +6491,7 @@ filc_ptr filc_native_zsys_mmap(filc_thread* my_thread, filc_ptr address, size_t 
         return mmap_error_result();
     }
     if ((prot & PROT_EXEC)) {
+        filc_set_errno(EINVAL);
         return mmap_error_result();
     }
     if (!(flags & MAP_SHARED) && !(flags & MAP_PRIVATE)) {
