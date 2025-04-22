@@ -355,6 +355,7 @@ int zsys_renameat(int oldfd, const char* old_path, int newfd, const char* new_pa
 int zsys_getcpu(unsigned* cpu, unsigned* node);
 int zsys_sched_getcpu(void);
 int zsys_msync(void* start, __SIZE_TYPE__ len, int flags);
+int zsys_waitid(int idtype, unsigned id, void* infop, int options);
 
 #ifdef __cplusplus
 }

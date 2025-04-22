@@ -9623,6 +9623,14 @@ int filc_native_zsys_msync(filc_thread* my_thread, filc_ptr start_ptr, size_t le
     return FILC_SYSCALL(my_thread, msync(filc_ptr_ptr(start_ptr), len, flags));
 }
 
+int filc_native_zsys_waitid(filc_thread* my_thread, int idtype, unsigned id, filc_ptr info_ptr,
+                            int options)
+{
+    if (filc_ptr_ptr(info_ptr))
+        filc_check_write(info_ptr, sizeof(siginfo_t));
+    return FILC_SYSCALL(my_thread, waitid(idtype, id, (siginfo_t*)filc_ptr_ptr(info_ptr), options));
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;
