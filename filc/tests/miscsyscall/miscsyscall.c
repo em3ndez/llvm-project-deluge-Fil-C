@@ -27,7 +27,7 @@
 #include "utils.h"
 
 #ifndef SA_RESTORER
-#define SA_RESTORER 0
+#define SA_RESTORER 0x4000000
 #endif
 
 int main(int argc, char** argv)
@@ -147,8 +147,10 @@ int main(int argc, char** argv)
     ZASSERT(oact.sa_handler == SIG_IGN);
     zprintf("oact.sa_flags = %x\n", oact.sa_flags);
     ZASSERT(oact.sa_flags == (SA_RESTART | SA_RESTORER));
+#ifndef __USE_GNU
     ZASSERT(!sigismember(&oact.sa_mask, SIGPIPE));
     ZASSERT(!sigismember(&oact.sa_mask, SIGTERM));
+#endif
 
     ZASSERT(sigaction(SIGPIPE, NULL, &oact) == 0);
     ZASSERT(oact.sa_handler == SIG_DFL);
