@@ -132,6 +132,8 @@ int main()
         close(fd);
     }
 
+    ZASSERT(succeeded);
+
     int value = 42;
     writeloop(fd, (char*)&value, sizeof(value));
     ZASSERT(readloop(fd, (char*)&value, sizeof(value)) == sizeof(value));
