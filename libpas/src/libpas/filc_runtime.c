@@ -8154,6 +8154,7 @@ int filc_native_zsys_sendfile(filc_thread* my_thread, int out_fd, int in_fd, fil
 
 void filc_native_zsys_futex_wake(filc_thread* my_thread, filc_ptr addr_ptr, int cnt, int priv)
 {
+    pas_log("[%d] futex_wake on %p, priv = %d\n", pas_getpid(), filc_ptr_ptr(addr_ptr), priv);
     filc_exit(my_thread);
     yolo_futex_wake((volatile int*)filc_ptr_ptr(addr_ptr), cnt, priv);
     filc_enter(my_thread);
@@ -8170,6 +8171,7 @@ void filc_native_zsys_futex_wait(filc_thread* my_thread, filc_ptr addr_ptr, int 
 int filc_native_zsys_futex_timedwait(filc_thread* my_thread, filc_ptr addr_ptr, int val, int clock_id,
                                      filc_ptr timeout_ptr, int priv)
 {
+    pas_log("[%d] futex_timedwait on %p, priv = %d\n", pas_getpid(), filc_ptr_ptr(addr_ptr), priv);
     filc_check_read(addr_ptr, sizeof(int));
     if (filc_ptr_ptr(timeout_ptr))
         filc_check_read(timeout_ptr, sizeof(struct timespec));
@@ -8177,6 +8179,7 @@ int filc_native_zsys_futex_timedwait(filc_thread* my_thread, filc_ptr addr_ptr, 
     int result = yolo_futex_timedwait((volatile int*)filc_ptr_ptr(addr_ptr), val, clock_id,
                                       (const struct timespec*)filc_ptr_ptr(timeout_ptr), priv);
     filc_enter(my_thread);
+    pas_log("[%d] returned: futex_timedwait on %p, priv = %d\n", pas_getpid(), filc_ptr_ptr(addr_ptr), priv);
     return result;
 }
 

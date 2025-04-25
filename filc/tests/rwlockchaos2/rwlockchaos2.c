@@ -27,7 +27,7 @@ int main()
 
     printf("lock is at %p\n", &lock);
     
-    pthread_mutex_init(&lock, NULL);
+    pthread_rwlock_init(&lock, NULL);
 
     for (i = NTHREADS; i--;)
         ZASSERT(!pthread_create(threads + i, NULL, thread_main, NULL));
