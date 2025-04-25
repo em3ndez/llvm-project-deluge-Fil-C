@@ -34,9 +34,6 @@ make distclean || echo whatever
 THE_OS=Linux THE_COMP="the Clang C++" CC=$PWD/../../../build/bin/clang CXX=$PWD/../../../build/bin/clang++ CFLAGS="-O3 -g" CXXFLAGS="-O3 -g" ./configure --enable-debug --prefix="$PWD/../../../pizfix"
 make -j $NCPU
 
-# These tests fail when run during daylight savings time transitions. And I don't remember them ever
-# catching a single regression. And, they take so freaking long to run. So, don't run them during
-# every build.
-# make -j $NCPU check
+make -j $NCPU check
 
 make install
