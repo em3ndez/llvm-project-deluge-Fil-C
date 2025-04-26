@@ -3126,6 +3126,18 @@ class Pizlonator {
         IAD.Ptr = II->getArgOperand(0);
         IAD.Alignment = 1;
         break;
+      case Intrinsic::x86_sse_stmxcsr:
+        IAD.AK = AccessKind::Write;
+        IAD.T = Int32Ty;
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_sse_ldmxcsr:
+        IAD.AK = AccessKind::Read;
+        IAD.T = Int32Ty;
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Alignment = 1;
+        break;
       default:
         break;
       }
