@@ -791,8 +791,11 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_r)) {
     if ((true)) {
-      if (!Args.hasArg(options::OPT_nodefaultlibs))
+      if (!Args.hasArg(options::OPT_nodefaultlibs)) {
         CmdArgs.push_back("-lc");
+        if (D.CCCIsCXX())
+          CmdArgs.push_back("-lm");
+      }
       CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("libgcc.a")));
       CmdArgs.push_back("-lyoloc");
       CmdArgs.push_back("-lyolom");
