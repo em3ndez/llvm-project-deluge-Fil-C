@@ -25,6 +25,7 @@
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
 #include <termios.h>
+#include <sys/auxv.h>
 #include "utils.h"
 
 #ifndef SA_RESTORER
@@ -241,6 +242,7 @@ int main(int argc, char** argv)
     ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", W_OK));
     ZASSERT(errno == EACCES);
     ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", X_OK));
+    ZASSERT(!faccessat(AT_FDCWD, "filc/test-output/miscsyscall/execonly.txt", X_OK, 0));
 
     ts.tv_sec = 0;
     ts.tv_nsec = 1;
@@ -351,9 +353,14 @@ int main(int argc, char** argv)
     ZASSERT(!sched_getaffinity(getpid(), sizeof(cpuset), &cpuset));
     ZASSERT(!sched_setaffinity(getpid(), sizeof(cpuset), &cpuset));
 
+    // I'm going to have to revisit how to test tcget/setattr, since it behaves differently depending
+    // on reasons.
     //struct termios tios;
     //ZASSERT(!tcgetattr(0, &tios));
     //ZASSERT(!tcsetattr(0, TCSANOW, &tios));
+    
+    ZASSERT(getauxval(AT_ENTRY));
+    ZASSERT(getauxval(AT_MINSIGSTKSZ));
 
     zprintf("No worries.\n");
     return 0;
