@@ -5154,7 +5154,9 @@ class Pizlonator {
         if (!IAD
             && !II->getCalledFunction()->doesNotAccessMemory()
             && !isa<ConstrainedFPIntrinsic>(II)
-            && II->getIntrinsicID() != Intrinsic::prefetch) {
+            && II->getIntrinsicID() != Intrinsic::prefetch
+            && II->getIntrinsicID() != Intrinsic::get_rounding
+            && II->getIntrinsicID() != Intrinsic::set_rounding) {
           if (verbose)
             llvm::errs() << "Unhandled intrinsic: " << *II << "\n";
           std::string str;
