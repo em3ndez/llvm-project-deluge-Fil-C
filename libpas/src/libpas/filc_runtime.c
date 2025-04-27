@@ -9665,6 +9665,11 @@ int filc_native_zsys_sigtimedwait(filc_thread* my_thread, filc_ptr set_ptr, filc
                                                 (const struct timespec*)filc_ptr_ptr(timeout_ptr)));
 }
 
+int filc_native_zsys_fdatasync(filc_thread* my_thread, int fd)
+{
+    return FILC_SYSCALL(my_thread, fdatasync(fd));
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;

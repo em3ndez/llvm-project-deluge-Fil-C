@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <pizlonated_syscalls.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -137,6 +139,12 @@ int main(int argc, char** argv)
     ZASSERT(poll(pollfds, 1, -1) == 1);
     ZASSERT(pollfds[0].revents == POLLIN);
 
+    bzero(pollfds, sizeof(pollfds));
+    pollfds[0].fd = fds[0];
+    pollfds[0].events = POLLIN;
+    ZASSERT(ppoll(pollfds, 1, NULL, NULL) == 1);
+    ZASSERT(pollfds[0].revents == POLLIN);
+
     int epfd = epoll_create1(0);
     ZASSERT(epfd > 2);
     struct epoll_event ev;
@@ -216,6 +224,8 @@ int main(int argc, char** argv)
     ZASSERT(fd > 2);
     const char* str = "This is a test. I repeat, this is a test.";
     ZASSERT(pwrite(fd, str, strlen(str), 0) == strlen(str));
+    ZASSERT(!fdatasync(fd));
+    ZASSERT(!fsync(fd));
     memset(buf, 0, sizeof(buf));
     ZASSERT(pread(fd, buf, 14, 10) == 14);
     ZASSERT(!strcmp(buf, "test. I repeat"));

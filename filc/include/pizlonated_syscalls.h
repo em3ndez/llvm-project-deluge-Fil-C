@@ -357,6 +357,7 @@ int zsys_sched_getcpu(void);
 int zsys_msync(void* start, __SIZE_TYPE__ len, int flags);
 int zsys_waitid(int idtype, unsigned id, void* infop, int options);
 int zsys_sigtimedwait(const void* set, void* info, const void* timeout);
+int zsys_fdatasync(int fd);
 
 #ifdef __cplusplus
 }
