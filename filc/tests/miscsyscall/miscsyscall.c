@@ -313,6 +313,8 @@ int main(int argc, char** argv)
     ZASSERT(miscsyscallfd > 2);
     unlinkat(miscsyscallfd, "dir1/test.txt", 0);
     unlinkat(miscsyscallfd, "dir2/test.txt", 0);
+    unlinkat(miscsyscallfd, "dir2/test2.txt", 0);
+    unlinkat(miscsyscallfd, "dir2/test3.txt", 0);
     unlinkat(miscsyscallfd, "dir1", AT_REMOVEDIR);
     unlinkat(miscsyscallfd, "dir2", AT_REMOVEDIR);
     ZASSERT(!mkdirat(miscsyscallfd, "dir1", 0700));
@@ -332,9 +334,19 @@ int main(int argc, char** argv)
     fd = openat(miscsyscallfd, "dir1/test.txt", O_RDONLY);
     ZASSERT(fd > 2);
     close(fd);
+    ZASSERT(!link("filc/test-output/miscsyscall/dir2/test.txt", "filc/test-output/miscsyscall/dir2/test2.txt"));
+    fd = openat(miscsyscallfd, "dir2/test2.txt", O_RDONLY);
+    ZASSERT(fd > 2);
+    close(fd);
+    ZASSERT(!linkat(miscsyscallfd, "dir2/test.txt", miscsyscallfd, "dir2/test3.txt", 0));
+    fd = openat(miscsyscallfd, "dir2/test3.txt", O_RDONLY);
+    ZASSERT(fd > 2);
+    close(fd);
 
     unlink("filc/test-output/miscsyscall/dir1/test.txt");
     unlink("filc/test-output/miscsyscall/dir2/test.txt");
+    unlink("filc/test-output/miscsyscall/dir2/test2.txt");
+    unlink("filc/test-output/miscsyscall/dir2/test3.txt");
     rmdir("filc/test-output/miscsyscall/dir1");
     rmdir("filc/test-output/miscsyscall/dir2");
     unlink("filc/test-output/miscsyscall/dir2-link");

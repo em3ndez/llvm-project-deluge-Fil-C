@@ -15,6 +15,8 @@
 #include <sys/epoll.h>
 #include <sys/stat.h>
 #include <sys/file.h>
+#include <time.h>
+#include <sys/time.h>
 
 struct foo {
     char* a;
@@ -264,6 +266,21 @@ int main(int argc, char** argv)
     struct stat s;
     ZASSERT(!fstat(fd, &s));
     ZASSERT(s.st_size == 666 + 42);
+
+    struct timeval tv[2];
+    ZASSERT(!gettimeofday(tv, NULL));
+    tv[1] = tv[0];
+    ZASSERT(!utimes("filc/test-output/fileio/allocatetest.txt", tv));
+    ZASSERT(!lutimes("filc/test-output/fileio/allocatetest.txt", tv));
+    result = futimes(fd, tv);
+    if (result)
+        zprintf("error = %s\n", strerror(errno));
+    ZASSERT(!result);
+    struct timespec ts[2];
+    ZASSERT(!clock_gettime(CLOCK_REALTIME, ts));
+    ZASSERT(!utimensat(AT_FDCWD, "filc/test-output/fileio/allocatetest.txt", ts, 0));
+    ZASSERT(!futimens(fd, ts));
+
     ZASSERT(!close(fd));
     ZASSERT(!unlink("filc/test-output/fileio/allocatetest.txt"));
 
