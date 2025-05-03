@@ -358,6 +358,8 @@ int zsys_msync(void* start, __SIZE_TYPE__ len, int flags);
 int zsys_waitid(int idtype, unsigned id, void* infop, int options);
 int zsys_sigtimedwait(const void* set, void* info, const void* timeout);
 int zsys_fdatasync(int fd);
+long zsys_copy_file_range(int fd_in, long* off_in, int fd_out, long* off_out, __SIZE_TYPE__ len,
+                          unsigned flags);
 
 #ifdef __cplusplus
 }

@@ -9670,6 +9670,18 @@ int filc_native_zsys_fdatasync(filc_thread* my_thread, int fd)
     return FILC_SYSCALL(my_thread, fdatasync(fd));
 }
 
+ssize_t filc_native_zsys_copy_file_range(filc_thread* my_thread, int fd_in, filc_ptr off_in_ptr,
+                                         int fd_out, filc_ptr off_out_ptr, size_t len, unsigned flags)
+{
+    if (filc_ptr_ptr(off_in_ptr))
+        filc_check_write(off_in_ptr, sizeof(loff_t));
+    if (filc_ptr_ptr(off_out_ptr))
+        filc_check_write(off_out_ptr, sizeof(loff_t));
+    return FILC_SYSCALL(my_thread, copy_file_range(fd_in, (loff_t*)filc_ptr_ptr(off_in_ptr),
+                                                   fd_out, (loff_t*)filc_ptr_ptr(off_out_ptr),
+                                                   len, flags));
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;
