@@ -28,7 +28,7 @@
 set -e
 set -x
 
-build_name=filc-0.668.4-$OS-$ARCH
+build_name=filc-0.668.5-$OS-$ARCH
 
 rm -rf $build_name
 
@@ -56,6 +56,7 @@ cp -R pizfix $build_name/
 rm -f $build_name/pizfix/etc/moduli
 rm -f $build_name/pizfix/etc/ssh_host*
 rm -rf $build_name/pizfix/yolo/lib-old
+rm -rf $build_name/pizfix/os-include
 
 sourcedir=$PWD
 
@@ -83,6 +84,14 @@ done
 rm pizfix/yolo/lib/ld-yolo-x86_64.so
 (cd pizfix/yolo/lib/ && ln -s libyoloc.so ld-yolo-x86_64.so)
 
+echo "cd pizfix" >> setup.sh
+echo "mkdir os-include" >> setup.sh
+echo "cd os-include" >> setup.sh
+echo "ln -s /usr/include/linux ." >> setup.sh
+echo "ln -s /usr/include/x86_64-linux-gnu/asm ." >> setup.sh
+echo "ln -s /usr/include/asm-generic ." >> setup.sh
+echo "cd ../.." >> setup.sh
+
 echo 'set +x' >> setup.sh
 echo 'echo' >> setup.sh
 echo 'echo "You are all set. Try compiling something with:"' >> setup.sh
@@ -95,6 +104,9 @@ echo "echo \"    build/bin/clang++ -o whatever whatever.cpp -O2 -g\"" >> setup.s
 echo 'echo' >> setup.sh
 echo "echo \"Take a look at pizfix/stdfil-include/stdfil.h for Fil-C-specific APIs. You can\"" >> setup.sh
 echo "echo \"optionally #include <stdfil.h> if you find those APIs useful.\"" >> setup.sh
+echo 'echo' >> setup.sh
+echo "echo \"New releases are at: https://github.com/pizlonator/llvm-project-deluge/releases\"" >> setup.sh
+echo "echo \"The Fil-C Manifesto: https://github.com/pizlonator/llvm-project-deluge/blob/deluge/Manifesto.md\"" >> setup.sh
 echo 'echo' >> setup.sh
 echo "echo \"Have fun and thank you for trying $build_name.\"" >> setup.sh
 

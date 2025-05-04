@@ -56,8 +56,13 @@ Fil-C introduces memory safety at the core of C and C++:
   possibly go on to escape out of the Fil-C type system. At worst, the program's execution will be
   thwarted at runtime by Fil-C.
 
-[This work-in-progress document describes Fil-C's GIMSO semantics](https://github.com/pizlonator/llvm-project-deluge/blob/deluge/gimso_semantics.md).
-[This document shows lots of examples of Fil-C catching memory safety issues](https://github.com/pizlonator/llvm-project-deluge/blob/deluge/invisicaps_by_example.md).
+Quick links:
+
+- [Work-in-progress document describing Fil-C's GIMSO semantics](https://github.com/pizlonator/llvm-project-deluge/blob/deluge/gimso_semantics.md).
+
+- [Examples of Fil-C catching memory safety issues](https://github.com/pizlonator/llvm-project-deluge/blob/deluge/invisicaps_by_example.md).
+
+- [Releases (Linux/X86_64 binaries)](https://github.com/pizlonator/llvm-project-deluge/releases).
 
 Fil-C is already powerful enough to run a [memory-safe curl](https://github.com/pizlonator/deluded-curl-8.5.0)
 and a [memory-safe OpenSSH (both client and server)](https://github.com/pizlonator/deluded-openssh-portable)
@@ -102,9 +107,19 @@ description of the FUGC and InvisiCap algorithms.
 
 ## Using Fil-C
 
-First I'll tell you how to build Fil-C and then I'll tell you how to use it.
+First I'll tell you how to download or build Fil-C and then I'll tell you how to use it.
 
-### Building Fil-C
+### Using a Fil-C Release
+
+You can download a Fil-C binary release from [https://github.com/pizlonator/llvm-project-deluge/releases](https://github.com/pizlonator/llvm-project-deluge/releases).
+
+Then, in the filc-0.668.5-linux-x86_64 directory, run:
+
+    ./setup.sh
+
+This gives you a simple Fil-C setup with compiler, runtime, a musl-based libc and libc++.
+
+### Building Fil-C From Source
 
 Fil-C currently only works on Linux/X86_64. Upon getting Fil-C from
 https://github.com/pizlonator/llvm-project-deluge.git, and making sure you're on the `deluge` branch,
@@ -113,8 +128,8 @@ simply do:
     ./setup_gits.sh
     ./build_all.sh
 
-This will build memory-safe musl, zlib, OpenSSL, curl, OpenSSH, and pcre. Now you can try to download
-something with the pizlonated curl, like maybe:
+This will build memory-safe musl, zlib, OpenSSL, curl, OpenSSH, pcre, and a bunch of other programs.
+Now you can try to download something with the pizlonated curl, like maybe:
 
     pizfix/bin/curl https://www.google.com/
 
@@ -125,8 +140,6 @@ Or fire up a memory-safe sshd:
 And then even connect to it:
 
     pizfix/bin/ssh -p 10022 localhost
-
-You'll probably encounter bugs.
 
 ### Using Fil-C
 

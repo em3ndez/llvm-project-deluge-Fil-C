@@ -1,4 +1,4 @@
-# Fil-C 0.668.4
+# Fil-C 0.668.5
 
 Fil-C is a fanatically compatible memory-safe implementation of C and C++. Lots
 of software compiles and runs with Fil-C with zero or minimal changes. All
@@ -84,6 +84,8 @@ and C++ exceptions.
 You can learn more about Fil-C by reading these docs:
 
 - [The Fil-C manifesto](https://github.com/pizlonator/llvm-project-deluge/blob/deluge/Manifesto.md).
+
+- [Releases (Linux/X86_64 binaries)](https://github.com/pizlonator/llvm-project-deluge/releases).
 
 - [Fil-C capabilities by example](https://github.com/pizlonator/llvm-project-deluge/blob/deluge/invisicaps_by_example.md).
 
