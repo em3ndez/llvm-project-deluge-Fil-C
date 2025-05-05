@@ -26,6 +26,7 @@
 #include <sys/statvfs.h>
 #include <termios.h>
 #include <sys/auxv.h>
+#include <sys/times.h>
 #include "utils.h"
 
 #ifndef SA_RESTORER
@@ -377,6 +378,11 @@ int main(int argc, char** argv)
     int prio = getpriority(PRIO_PROCESS, 0);
     ZASSERT(prio >= 0);
     ZASSERT(!setpriority(PRIO_PROCESS, 0, prio));
+
+    struct tms tms;
+    ZASSERT(times(&tms) != (clock_t)-1);
+    ZASSERT(!tms.tms_cutime);
+    ZASSERT(!tms.tms_cstime);
 
     zprintf("No worries.\n");
     return 0;

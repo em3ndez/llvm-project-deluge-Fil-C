@@ -7752,8 +7752,8 @@ int filc_native_zsys_flock(filc_thread* my_thread, int fd, int operation)
 long filc_native_zsys_times(filc_thread* my_thread, filc_ptr times_ptr)
 {
     if (filc_ptr_ptr(times_ptr))
-        filc_check_read(times_ptr, sizeof(struct tms));
-    return FILC_SYSCALL(my_thread, times((struct tms *)filc_ptr_ptr(times_ptr)));
+        filc_check_write(times_ptr, sizeof(struct tms));
+    return FILC_SYSCALL(my_thread, times((struct tms*)filc_ptr_ptr(times_ptr)));
 }
 
 static int utimes_impl(filc_thread* my_thread, filc_ptr path_ptr, filc_ptr times_ptr,
