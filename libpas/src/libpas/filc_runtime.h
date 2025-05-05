@@ -92,6 +92,7 @@ struct filc_signal_queue_chunk;
 struct filc_signal_queue_chunk_header;
 struct filc_thread;
 struct filc_uintptr_ptr_hash_map_entry;
+struct filc_weak;
 struct pas_basic_heap_runtime_config;
 struct pas_local_allocator;
 struct pas_stream;
@@ -138,6 +139,7 @@ typedef struct filc_signal_queue_chunk filc_signal_queue_chunk;
 typedef struct filc_signal_queue_chunk_header filc_signal_queue_chunk_header;
 typedef struct filc_thread filc_thread;
 typedef struct filc_uintptr_ptr_hash_map_entry filc_uintptr_ptr_hash_map_entry;
+typedef struct filc_weak filc_weak;
 typedef struct pas_basic_heap_runtime_config pas_basic_heap_runtime_config;
 typedef struct pas_local_allocator pas_local_allocator;
 typedef struct pas_stream pas_stream;
@@ -174,6 +176,7 @@ typedef uintptr_t filc_word;
 #define FILC_SPECIAL_TYPE_DL_HANDLE       ((filc_special_type)6)
 #define FILC_SPECIAL_TYPE_JMP_BUF         ((filc_special_type)7)
 #define FILC_SPECIAL_TYPE_EXACT_PTR_TABLE ((filc_special_type)8)
+#define FILC_SPECIAL_TYPE_WEAK            ((filc_special_type)9)
 #define FILC_SPECIAL_TYPE_MASK            ((filc_special_type)15)
 
 #define FILC_LOG_ALIGN_MASK               ((filc_log_align)31)
@@ -947,6 +950,10 @@ struct filc_exact_ptr_table {
     filc_uintptr_ptr_hash_map decode_map;
 };
 
+struct filc_weak {
+    filc_ptr ptr;
+};
+
 struct filc_exception_and_int {
     bool has_exception;
     int value;
@@ -1104,7 +1111,29 @@ PAS_API extern pas_system_condition filc_stop_the_world_cond;
 PAS_API extern filc_thread* filc_first_thread;
 PAS_API extern pthread_key_t filc_thread_key;
 
-PAS_API extern bool filc_is_marking;
+enum filc_marking_state {
+    filc_not_marking,
+    filc_marking,
+
+    /* This also means that we are marking. Most barriers can ignore this. For example, the store
+       barrier can ignore this.
+       
+       Weak read barriers have to worry about this, since they need to know whether loading something
+       that is unmarked means marking it, or means returning NULL. They should return NULL if we're
+       not marking, or mark if we're marking. If we're terminating - i.e. the GC thinks it's going to
+       possibly stop marking - then we need to act as if we are marking, but then we need to tell the
+       GC that we disapprove of termination before we actually mark the object.
+    
+       Only weak read barriers have to do these shenanigans because only weak read barriers observe
+       GC termination (they have to do something observably different when termination happens). */
+    filc_terminating
+};
+
+typedef enum filc_marking_state filc_marking_state;
+
+PAS_API extern filc_marking_state filc_current_marking_state;
+
+PAS_API extern bool filc_has_unfinished_census;
 
 PAS_API extern const filc_object filc_free_singleton;
 
@@ -2040,7 +2069,8 @@ static inline void filc_object_validate_special_with_payload(filc_object* object
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_PTR_TABLE ||
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_PTR_TABLE_ARRAY ||
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_JMP_BUF ||
-               filc_object_special_type(object) == FILC_SPECIAL_TYPE_EXACT_PTR_TABLE);
+               filc_object_special_type(object) == FILC_SPECIAL_TYPE_EXACT_PTR_TABLE ||
+               filc_object_special_type(object) == FILC_SPECIAL_TYPE_WEAK);
 }
 
 static inline void filc_object_testing_validate_special_with_payload(filc_object* object)
@@ -2368,19 +2398,19 @@ static inline filc_ptr filc_flight_ptr_load(filc_thread* my_thread, filc_ptr* pt
     return result;
 }
 
-PAS_API void filc_store_barrier_slow(filc_thread* my_thread, filc_object* target);
+PAS_API void filc_barrier_slow(filc_thread* my_thread, filc_object* target);
 
 static inline void filc_store_barrier(filc_thread* my_thread, filc_object* target)
 {
-    if (PAS_UNLIKELY(filc_is_marking) && target)
-        filc_store_barrier_slow(my_thread, target);
+    if (PAS_UNLIKELY(filc_current_marking_state) && target)
+        filc_barrier_slow(my_thread, target);
 }
 
 void filc_store_barrier_for_lower_slow(filc_thread* my_thread, void* lower);
 
 static inline void filc_store_barrier_for_lower(filc_thread* my_thread, void* lower)
 {
-    if (PAS_UNLIKELY(filc_is_marking) && lower)
+    if (PAS_UNLIKELY(filc_current_marking_state) && lower)
         filc_store_barrier_for_lower_slow(my_thread, lower);
 }
 
@@ -3071,6 +3101,7 @@ static inline bool filc_special_type_is_valid(filc_special_type special_type)
     case FILC_SPECIAL_TYPE_PTR_TABLE_ARRAY:
     case FILC_SPECIAL_TYPE_DL_HANDLE:
     case FILC_SPECIAL_TYPE_JMP_BUF:
+    case FILC_SPECIAL_TYPE_WEAK:
         return true;
     default:
         return false;
@@ -3089,6 +3120,7 @@ static inline bool filc_special_type_has_destructor(filc_special_type special_ty
     case FILC_SPECIAL_TYPE_PTR_TABLE_ARRAY:
     case FILC_SPECIAL_TYPE_DL_HANDLE:
     case FILC_SPECIAL_TYPE_JMP_BUF:
+    case FILC_SPECIAL_TYPE_WEAK:
         return false;
     default:
         PAS_ASSERT(!"Not a special type");
@@ -3286,6 +3318,57 @@ static PAS_ALWAYS_INLINE void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact
     ptr_table->decode_map = new_decode_map;
     
     pas_lock_unlock(&ptr_table->lock);
+}
+
+PAS_API filc_weak* filc_weak_create(filc_thread* my_thread, filc_ptr ptr);
+
+static PAS_ALWAYS_INLINE filc_ptr filc_weak_get_with_manual_tracking(filc_thread* my_thread,
+                                                                     filc_weak* weak)
+{
+    filc_ptr result = filc_flight_ptr_load_atomic_with_manual_tracking(&weak->ptr);
+    if (!filc_ptr_object(result))
+        return result;
+    for (;;) {
+        switch (filc_current_marking_state) {
+        case filc_not_marking:
+            if (filc_has_unfinished_census &&
+                !(filc_object_get_flags(filc_ptr_object(result)) & FILC_OBJECT_FLAG_GLOBAL) &&
+                !verse_heap_is_marked(filc_object_mark_base(filc_ptr_object(result))))
+                return filc_ptr_forge_null();
+            return result;
+        case filc_marking:
+            filc_barrier_slow(my_thread, filc_ptr_object(result));
+            return result;
+        case filc_terminating:
+            pas_compare_and_swap_uint32_weak(&filc_current_marking_state,
+                                             (unsigned)filc_terminating,
+                                             (unsigned)filc_marking);
+            break;
+        default:
+            PAS_ASSERT(!"Should not be reached");
+            break;
+        }
+    }
+}
+
+static PAS_ALWAYS_INLINE filc_ptr filc_weak_get(filc_thread* my_thread, filc_weak* weak)
+{
+    filc_ptr result = filc_weak_get_with_manual_tracking(my_thread, weak);
+    filc_thread_track_object(my_thread, filc_ptr_object(result));
+    return result;
+}
+
+static PAS_ALWAYS_INLINE void filc_weak_census(filc_weak* weak)
+{
+    /* We don't have to load atomic because the only thing that can mutate the ptr is the census,
+       and we are the census. */
+    filc_ptr ptr = weak->ptr;
+    if (!filc_ptr_object(ptr))
+        return;
+    if ((filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_GLOBAL))
+        return;
+    if (!verse_heap_is_marked(filc_object_mark_base(filc_ptr_object(ptr))))
+        filc_flight_ptr_store_atomic_unfenced_without_barrier(&weak->ptr, filc_ptr_forge_null());
 }
 
 static inline const char* filc_access_kind_get_string(filc_access_kind access_kind)
@@ -3934,6 +4017,7 @@ static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_special_ptrs(filc_object
     switch (special_type) {
     case FILC_SPECIAL_TYPE_FUNCTION:
     case FILC_SPECIAL_TYPE_DL_HANDLE:
+    case FILC_SPECIAL_TYPE_WEAK:
         break;
     case FILC_SPECIAL_TYPE_SIGNAL_HANDLER:
         filc_signal_handler_mark_outgoing_ptrs(

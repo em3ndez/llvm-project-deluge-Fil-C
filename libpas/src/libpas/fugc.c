@@ -68,9 +68,27 @@
    verse_heap that I wrote for the Verse VM, which in turn relies on the excellent libpas malloc,
    which I wrote for WebKit. */
 
+/* FIXME: Add the following things:
+   
+   - Weak maps. I have everything I need to do this.
+   
+   - Finalizers. They should work like so. You can create a finalizer queue. You can add objects to
+     it. When the GC runs, it has the finalizer queue put all of the objects that died onto a revival
+     queue. Objects that are on the revival queue are then revived, and there's another finalizer
+     queue API that lets you wait for available objects. Then, users can implement finalizers and have
+     the finalization happen on the thread of their choice.
+   
+   - Phantoms. This is a list of objects that we wait for death on. You can add objects to it. You
+     can wait for any of the objects to die.
+
+   FIXME: Not sure about the phantom feature. It seems useful for anyone with a data structure that
+   has weak references. But maybe this can be integrated into the weak references somehow? */
+
 pas_heap* fugc_default_heap;
 pas_heap* fugc_destructor_heap;
+pas_heap* fugc_weak_heap;
 verse_heap_object_set* fugc_destructor_set;
+verse_heap_object_set* fugc_census_set;
 verse_heap_object_set* fugc_scribble_set;
 
 static pas_system_mutex collector_thread_state_lock;
@@ -92,6 +110,9 @@ static pas_lock global_stack_lock;
 
 static size_t destruct_size = SIZE_MAX;
 static size_t destruct_index = SIZE_MAX;
+
+static size_t census_size = SIZE_MAX;
+static size_t census_index = SIZE_MAX;
 
 static size_t scribble_size = SIZE_MAX;
 static size_t scribble_index = SIZE_MAX;
@@ -128,6 +149,7 @@ enum collector_state {
     collector_waiting,
     collector_marking,
     collector_destructing,
+    collector_censusing,
     collector_scribbling,
     collector_sweeping
 };
@@ -439,6 +461,32 @@ static void destruct_object_callback(void* allocation, void* arg)
     }
 }
 
+static void census_object_callback(void* allocation, void* arg)
+{
+    PAS_ASSERT(!arg);
+    /* FIXME: We could just assert that the allocation starts with the object because we aren't going
+       to align anything that participates in census.
+       
+       But I'll leave those kinds of optimizations for later. */
+    filc_object* object = filc_allocation_get_object(allocation);
+    PAS_ASSERT(filc_object_is_special(object));
+    /* FIXME: Eventually, we'll deal with different type objects, but currently we're not set up well
+       to deal with the fact that within each view, the set of types is constrained.
+    
+       Basically there's an opportunity to maybe hoist this branch out even if there are more
+       types.
+    
+       It's just that this might not matter at all. */
+    switch (filc_object_special_type(object)) {
+    case FILC_SPECIAL_TYPE_WEAK:
+        filc_weak_census((filc_weak*)filc_object_special_payload_with_manual_tracking(object));
+        break;
+    default:
+        PAS_ASSERT(!"Encountered object in census set that should not have census.");
+        break;
+    }
+}
+
 static void scribble_object_callback(void* allocation, void* arg)
 {
     static const bool verbose = false;
@@ -456,7 +504,8 @@ static void scribble_object_callback(void* allocation, void* arg)
 
 static void wait_and_start_marking(void)
 {
-    PAS_ASSERT(!filc_is_marking);
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(!filc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_waiting);
     PAS_ASSERT(completed_cycle <= requested_cycle);
 
@@ -510,10 +559,11 @@ static void wait_and_start_marking(void)
     }
 
     verse_heap_mark_bits_page_commit_controller_lock();
-    filc_is_marking = true;
+    filc_current_marking_state = filc_marking;
     filc_soft_handshake(no_op_pollcheck_callback, NULL);
     
     verse_heap_start_allocating_black_before_handshake();
+    filc_has_unfinished_census = true;
     filc_soft_handshake(stop_allocators_to_allocate_black_pollcheck_callback, NULL);
 
     filc_mark_stack local_stack;
@@ -729,14 +779,24 @@ static void mark_and_start_destructing(void)
     if (verbose >= VERBOSE_PHASES)
         pas_log("[%d] fugc: marking\n", pas_getpid());
 
-    PAS_ASSERT(filc_is_marking);
+    PAS_ASSERT(filc_current_marking_state == filc_marking);
+    PAS_ASSERT(filc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_marking);
 
     for (;;) {
+        filc_current_marking_state = filc_terminating;
+
         filc_soft_handshake(marking_pollcheck_callback, NULL);
         
-        if (!filc_mark_stack_num_objects(&fugc_global_stack))
+        if (!filc_mark_stack_num_objects(&fugc_global_stack) &&
+            pas_compare_and_swap_uint32_strong((unsigned*)&filc_current_marking_state,
+                                               (unsigned)filc_terminating,
+                                               (unsigned)filc_not_marking)
+            == (unsigned)filc_terminating)
             break;
+
+        /* NOTE: this isn't strictly necessary, but it'll make things less confusing. */
+        filc_current_marking_state = filc_marking;
 
         PAS_ASSERT(!num_active_markers);
         DO_PARALLEL_WORK(mark_parallel_worker);
@@ -745,8 +805,6 @@ static void mark_and_start_destructing(void)
         if (collector_control_request)
             return;
     }
-    
-    filc_is_marking = false;
     
     if (should_verify) {
         /* This is a super slow verify GC that you can optionally enable to make sure that FUGC marked
@@ -861,14 +919,15 @@ static void destruct_parallel_worker(void)
     }
 }
 
-static void destruct_and_start_scribbling(void)
+static void destruct_and_start_censusing(void)
 {
     if (verbose >= VERBOSE_PHASES) {
         pas_log("[%d] fugc: marking took %lf ms; destructing\n",
                 pas_getpid(), mark_end_time - overall_start_time);
     }
 
-    PAS_ASSERT(!filc_is_marking);
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(filc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_destructing);
 
     DO_PARALLEL_WORK(destruct_parallel_worker);
@@ -879,6 +938,48 @@ static void destruct_and_start_scribbling(void)
     destruct_size = SIZE_MAX;
 
     verse_heap_object_set_end_iterate(fugc_destructor_set);
+
+    PAS_ASSERT(census_size == SIZE_MAX);
+    PAS_ASSERT(census_index == SIZE_MAX);
+    verse_heap_object_set_start_iterate_before_handshake(fugc_census_set);
+    filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+    census_size = verse_heap_object_set_start_iterate_after_handshake(fugc_census_set);
+    census_index = 0;
+
+    current_collector_state = collector_censusing;
+}
+
+static void census_parallel_worker(void)
+{
+    size_t begin_index;
+    size_t end_index;
+    size_t count = 0;
+    while (iterate_in_parallel(&census_index, census_size, &begin_index, &end_index, &count)) {
+        verse_heap_object_set_iterate_range_inline(
+            fugc_census_set, begin_index, end_index,
+            verse_heap_iterate_marked, census_object_callback, NULL);
+    }
+}
+
+static void census_and_start_scribbling(void)
+{
+    if (verbose >= VERBOSE_PHASES)
+        pas_log("[%d] fugc: censusing\n", pas_getpid());
+
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(filc_has_unfinished_census);
+    PAS_ASSERT(current_collector_state == collector_censusing);
+
+    DO_PARALLEL_WORK(census_parallel_worker);
+    if (collector_control_request)
+        return;
+
+    census_index = SIZE_MAX;
+    census_size = SIZE_MAX;
+
+    verse_heap_object_set_end_iterate(fugc_census_set);
+
+    filc_has_unfinished_census = false;
 
     if (should_scribble) {
         PAS_ASSERT(scribble_size == SIZE_MAX);
@@ -909,7 +1010,8 @@ static void scribble_and_start_sweeping(void)
     if (verbose >= VERBOSE_PHASES && should_scribble)
         pas_log("[%d] fugc: scribbling\n", pas_getpid());
         
-    PAS_ASSERT(!filc_is_marking);
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(!filc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_scribbling);
 
     /* Scribbling is a debug mode for catching GC bugs by overwriting dead objects with garbage. */
@@ -983,7 +1085,8 @@ static void sweep_and_end(void)
     if (verbose >= VERBOSE_PHASES)
         pas_log("[%d] fugc: sweeping\n", pas_getpid());
 
-    PAS_ASSERT(!filc_is_marking);
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(!filc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_sweeping);
 
     DO_PARALLEL_WORK(sweep_parallel_worker);
@@ -1083,7 +1186,10 @@ static pas_thread_return_type collector_thread(void* arg)
             mark_and_start_destructing();
             continue;
         case collector_destructing:
-            destruct_and_start_scribbling();
+            destruct_and_start_censusing();
+            continue;
+        case collector_censusing:
+            census_and_start_scribbling();
             continue;
         case collector_scribbling:
             scribble_and_start_sweeping();
@@ -1142,13 +1248,17 @@ void fugc_initialize_heaps(void)
 
     fugc_default_heap = verse_heap_create(1, 0, 0);
     fugc_destructor_heap = verse_heap_create(1, 0, 0);
+    fugc_weak_heap = verse_heap_create(1, 0, 0);
     fugc_destructor_set = verse_heap_object_set_create();
+    fugc_census_set = verse_heap_object_set_create();
     verse_heap_add_to_set(fugc_destructor_heap, fugc_destructor_set);
+    verse_heap_add_to_set(fugc_weak_heap, fugc_census_set);
 
     if (should_scribble) {
         fugc_scribble_set = verse_heap_object_set_create();
         verse_heap_add_to_set(fugc_default_heap, fugc_scribble_set);
         verse_heap_add_to_set(fugc_destructor_heap, fugc_scribble_set);
+        verse_heap_add_to_set(fugc_weak_heap, fugc_scribble_set);
     }
     
     verse_heap_did_become_ready_for_allocation();
@@ -1234,7 +1344,7 @@ static PAS_ALWAYS_INLINE bool donate_impl(filc_mark_stack* mark_stack, pas_lock_
         return true;
     if (!pas_lock_lock_with_mode(&global_stack_lock, mode))
         return false;
-    PAS_ASSERT(filc_is_marking);
+    PAS_ASSERT(filc_current_marking_state);
     bool do_notification = !filc_mark_stack_num_objects(&fugc_global_stack);
     filc_mark_stack_pop_all_from_and_push_to(mark_stack, &fugc_global_stack);
     pas_lock_unlock(&global_stack_lock);

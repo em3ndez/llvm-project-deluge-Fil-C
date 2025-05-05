@@ -1164,7 +1164,7 @@ class Pizlonator {
   FunctionCallee StackCheckAsm;
   FunctionCallee ThreadlocalAddress;
 
-  Constant* IsMarking;
+  Constant* CurrentMarkingState;
 
   std::unordered_set<CombinedDI> CombinedDIs;
   std::unordered_map<std::pair<const CombinedDI*, const CombinedDI*>,
@@ -1845,10 +1845,11 @@ class Pizlonator {
       InsertBefore, ICmpInst::ICMP_EQ, Lower, RawNull, "filc_barrier_null_object");
     NullObject->setDebugLoc(DL);
     Instruction* NotNullTerm = SplitBlockAndInsertIfElse(NullObject, InsertBefore, false);
-    LoadInst* IsMarkingByte = new LoadInst(Int8Ty, IsMarking, "filc_is_marking_byte", NotNullTerm);
-    IsMarkingByte->setDebugLoc(DL);
+    LoadInst* MarkingState = new LoadInst(Int32Ty, CurrentMarkingState, "filc_marking_state",
+                                          NotNullTerm);
+    MarkingState->setDebugLoc(DL);
     ICmpInst* IsNotMarking = new ICmpInst(
-      NotNullTerm, ICmpInst::ICMP_EQ, IsMarkingByte, ConstantInt::get(Int8Ty, 0),
+      NotNullTerm, ICmpInst::ICMP_EQ, MarkingState, ConstantInt::get(Int32Ty, 0),
       "filc_is_not_marking");
     IsNotMarking->setDebugLoc(DL);
     Instruction* IsMarkingTerm = SplitBlockAndInsertIfElse(
@@ -7545,7 +7546,7 @@ public:
     cast<Function>(OptimizedAlignmentContradiction.getCallee())->addFnAttr(Attribute::NoReturn);
     cast<Function>(OptimizedAccessCheckFail.getCallee())->addFnAttr(Attribute::NoReturn);
 
-    IsMarking = M.getOrInsertGlobal("filc_is_marking", Int8Ty);
+    CurrentMarkingState = M.getOrInsertGlobal("filc_current_marking_state", Int32Ty);
 
     std::vector<GlobalValue*> ToDelete;
     auto HandleGlobal = [&] (GlobalValue* G) {

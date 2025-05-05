@@ -305,6 +305,11 @@ zexact_ptrtable* zexact_ptrtable_new(void);
 __SIZE_TYPE__ zexact_ptrtable_encode(zexact_ptrtable* table, void* ptr);
 void* zexact_ptrtable_decode(zexact_ptrtable* table, __SIZE_TYPE__ encoded_ptr);
 
+struct zweak;
+typedef struct zweak zweak;
+zweak* zweak_new(void* ptr);
+void* zweak_get(zweak* weak);
+
 /* Low-level printing functions. These might die someday. They are useful for Fil-C's own tests. They
    print directly to stdout using write(). They are safe (passing an invalid ptr to zprint() will trap
    for sure, and it will never print out of bounds even if there is no null terminator). */

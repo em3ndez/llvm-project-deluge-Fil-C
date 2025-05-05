@@ -37,7 +37,9 @@
 
 PAS_API extern pas_heap* fugc_default_heap;
 PAS_API extern pas_heap* fugc_destructor_heap;
+PAS_API extern pas_heap* fugc_weak_heap;
 PAS_API extern verse_heap_object_set* fugc_destructor_set;
+PAS_API extern verse_heap_object_set* fugc_census_set;
 PAS_API extern verse_heap_object_set* fugc_scribble_set; /* Only used if FUGC_SCRIBBLE=1 */
 
 PAS_API extern filc_mark_stack fugc_global_stack;

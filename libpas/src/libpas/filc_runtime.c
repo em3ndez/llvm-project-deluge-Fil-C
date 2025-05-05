@@ -142,7 +142,8 @@ pas_system_condition filc_stop_the_world_cond;
 
 filc_thread* filc_first_thread;
 pthread_key_t filc_thread_key;
-bool filc_is_marking;
+filc_marking_state filc_current_marking_state;
+bool filc_has_unfinished_census;
 
 const filc_object filc_free_singleton = {
     .upper = (void*)(&filc_free_singleton + 1),
@@ -1841,8 +1842,7 @@ char* filc_cc_cursor_to_new_string(filc_cc_cursor cursor)
     return pas_string_stream_take_string(&stream);
 }
 
-static PAS_NEVER_INLINE void store_barrier_slowest_path_impl(filc_thread* my_thread,
-                                                             filc_object* object)
+static PAS_NEVER_INLINE void barrier_slowest_path_impl(filc_thread* my_thread, filc_object* object)
 {
     PAS_TESTING_ASSERT(my_thread == filc_get_my_thread());
     PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
@@ -1852,23 +1852,23 @@ static PAS_NEVER_INLINE void store_barrier_slowest_path_impl(filc_thread* my_thr
         fugc_try_donate(&my_thread->mark_stack);
 }
 
-static PAS_ALWAYS_INLINE void store_barrier_impl(filc_thread* my_thread, filc_object* object)
+static PAS_ALWAYS_INLINE void barrier_impl(filc_thread* my_thread, filc_object* object)
 {
     PAS_TESTING_ASSERT(my_thread == filc_get_my_thread());
     PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
     if (PAS_LIKELY(fugc_mark_fast(object) != fugc_mark_fast_marked_and_need_slow_path))
         return;
-    store_barrier_slowest_path_impl(my_thread, object);
+    barrier_slowest_path_impl(my_thread, object);
 }
 
-PAS_NEVER_INLINE void filc_store_barrier_slow(filc_thread* my_thread, filc_object* object)
+PAS_NEVER_INLINE void filc_barrier_slow(filc_thread* my_thread, filc_object* object)
 {
-    store_barrier_impl(my_thread, object);
+    barrier_impl(my_thread, object);
 }
 
 PAS_NEVER_INLINE void filc_store_barrier_for_lower_slow(filc_thread* my_thread, void* lower)
 {
-    store_barrier_impl(my_thread, filc_object_for_lower_not_null(lower));
+    barrier_impl(my_thread, filc_object_for_lower_not_null(lower));
 }
 
 PAS_NO_RETURN PAS_NEVER_INLINE void filc_check_native_access_fail(filc_ptr ptr,
@@ -2125,7 +2125,7 @@ char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread, filc_object* objec
         memset(aux_ptr, 0, size);
         filc_enter_with_allocation_root(my_thread, aux_ptr);
     }
-    if (PAS_UNLIKELY(filc_is_marking))
+    if (PAS_UNLIKELY(filc_current_marking_state))
         verse_heap_set_is_marked_relaxed(aux_ptr, true);
     for (;;) {
         uintptr_t aux = object->aux;
@@ -2169,7 +2169,7 @@ filc_atomic_box* filc_atomic_box_create_for_ptr_store(filc_thread* my_thread, fi
     filc_atomic_box* result = filc_thread_allocate(my_thread, sizeof(filc_atomic_box));
     /* We know that the ptr value is already barriered. */
     result->ptr = value;
-    if (PAS_UNLIKELY(filc_is_marking))
+    if (PAS_UNLIKELY(filc_current_marking_state))
         verse_heap_set_is_marked_relaxed(result, true);
     pas_store_store_fence();
     return result;
@@ -2188,6 +2188,8 @@ filc_object* filc_allocate_special_early(size_t size, size_t alignment,
     pas_heap* heap;
     if (filc_special_type_has_destructor(special_type))
         heap = fugc_destructor_heap;
+    else if (special_type == FILC_SPECIAL_TYPE_WEAK)
+        heap = fugc_weak_heap;
     else
         heap = fugc_default_heap;
 
@@ -2423,7 +2425,7 @@ static filc_object* finish_reallocate(
     char* new_aux_ptr = NULL;
     if (old_aux_ptr) {
         new_aux_ptr = filc_thread_allocate(my_thread, new_size);
-        if (PAS_UNLIKELY(filc_is_marking)) {
+        if (PAS_UNLIKELY(filc_current_marking_state)) {
             /* It's posssible that the allocation of the object observed that we're in black
                allocation mode, but the allocation of the aux didn't, because of how TLCs work. So,
                we need to mark the aux if marking is set, just like allocating the aux in
@@ -2767,6 +2769,17 @@ filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_tabl
     return result;
 }
 
+filc_weak* filc_weak_create(filc_thread* my_thread, filc_ptr ptr)
+{
+    /* FIXME: This should use a dedicated pas_local_allocator in filc_thread. */
+    filc_weak* weak = (filc_weak*)
+        filc_object_special_payload_with_manual_tracking(
+            filc_allocate_special(my_thread, sizeof(filc_weak), 1, FILC_SPECIAL_TYPE_WEAK));
+    filc_flight_ptr_store_without_barrier(&weak->ptr, ptr);
+    pas_store_store_fence();
+    return weak;
+}
+
 filc_ptr filc_native_zgc_alloc(filc_thread* my_thread, size_t size)
 {
     return filc_ptr_create_with_object_and_manual_tracking(filc_allocate(my_thread, size));
@@ -2905,6 +2918,17 @@ filc_ptr filc_native_zexact_ptrtable_decode(filc_thread* my_thread, filc_ptr tab
     filc_check_access_special(table_ptr, FILC_SPECIAL_TYPE_EXACT_PTR_TABLE);
     return filc_exact_ptr_table_decode_with_manual_tracking(
         (filc_exact_ptr_table*)filc_ptr_ptr(table_ptr), encoded_ptr);
+}
+
+filc_ptr filc_native_zweak_new(filc_thread* my_thread, filc_ptr ptr)
+{
+    return filc_ptr_for_special_payload_with_manual_tracking(filc_weak_create(my_thread, ptr));
+}
+
+filc_ptr filc_native_zweak_get(filc_thread* my_thread, filc_ptr weak_ptr)
+{
+    filc_check_access_special(weak_ptr, FILC_SPECIAL_TYPE_WEAK);
+    return filc_weak_get(my_thread, (filc_weak*)filc_ptr_ptr(weak_ptr));
 }
 
 size_t filc_native_ztesting_get_num_ptrtables(filc_thread* my_thread)
@@ -3575,7 +3599,7 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop(filc_thread* my_thread,
             PAS_TESTING_ASSERT(pas_is_aligned(current_dst_start_offset, FILC_WORD_SIZE));
             PAS_TESTING_ASSERT(pas_is_aligned(current_dst_end_offset, FILC_WORD_SIZE));
             PAS_TESTING_ASSERT(pas_is_aligned(current_src_start_offset, FILC_WORD_SIZE));
-            if (!has_dst_aux && PAS_UNLIKELY(filc_is_marking)) {
+            if (!has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)) {
                 bool do_barrier = true;
                 memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
                                       current_dst_start_offset, current_src_start_offset,
@@ -3782,7 +3806,7 @@ PAS_ALWAYS_INLINE static void memmove_impl_size_specialized(filc_thread* my_thre
                            size_mode);
             return;
         }
-        if (size_mode == filc_large_size || PAS_LIKELY(!filc_is_marking)) {
+        if (size_mode == filc_large_size || PAS_LIKELY(!filc_current_marking_state)) {
             /* NOTE: do_barrier is ignored if we're in large_size. */
             bool do_barrier = false;
             bool has_dst_aux = true;
