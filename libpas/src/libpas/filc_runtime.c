@@ -837,8 +837,13 @@ void filc_enter(filc_thread* my_thread)
 
 static void call_signal_handler(filc_thread* my_thread, filc_signal_handler* handler, siginfo_t* info)
 {
+    static const bool verbose = false;
+    
     PAS_ASSERT(handler);
     PAS_ASSERT(handler->user_signum == info->si_signo);
+
+    if (verbose)
+        pas_log("signal: %d\n", info->si_signo);
 
     /* It's likely that we have a top native frame and it's not locked. Lock it to prevent assertions
        in that case. */
@@ -1446,6 +1451,9 @@ static void signal_pizlonator(int signum, siginfo_t* info, void* context)
     PAS_UNUSED_PARAM(context);
     
     static const bool verbose = false;
+
+    if (verbose)
+        pas_log("received signal %d\n", signum);
 
     PAS_ASSERT(info);
     PAS_ASSERT((unsigned)signum <= FILC_MAX_USER_SIGNUM);
@@ -5867,12 +5875,19 @@ int filc_native_zsys_sigaction(
         filc_set_errno(ENOSYS);
         return -1;
     }
+    if (signum > FILC_MAX_USER_SIGNUM) {
+        if (verbose)
+            pas_log("bogus signum.\n");
+        filc_set_errno(EINVAL);
+        return -1;
+    }
     if (filc_ptr_ptr(act_ptr))
         check_user_sigaction(act_ptr, filc_read_access);
     struct sigaction* user_act = (struct sigaction*)filc_ptr_ptr(act_ptr);
     struct sigaction* user_oact = (struct sigaction*)filc_ptr_ptr(oact_ptr);
     struct sigaction act;
     struct sigaction oact;
+    filc_signal_handler* new_handler = NULL;
     if (user_act) {
         filc_from_user_sigset(&user_act->sa_mask, &act.sa_mask);
         if (!from_user_sa_flags(user_act->sa_flags, &act.sa_flags)) {
@@ -5884,20 +5899,22 @@ int filc_native_zsys_sigaction(
         if (verbose)
             pas_log("restart = %s\n", (act.sa_flags & SA_RESTART) ? "yes" : "no");
         filc_ptr user_handler = filc_load_ptr_at(my_thread, act_ptr, &user_act->sa_handler);
-        if (is_user_special_signal_handler(filc_ptr_ptr(user_handler)))
+        if (is_user_special_signal_handler(filc_ptr_ptr(user_handler))) {
+            if (verbose)
+                pas_log("setting special handler %p\n", filc_ptr_ptr(user_handler));
             act.sa_handler = from_user_special_signal_handler(filc_ptr_ptr(user_handler));
-        else {
+        } else {
+            if (verbose)
+                pas_log("setting user handler %p\n", filc_ptr_ptr(user_handler));
             filc_check_function_call(user_handler);
-            filc_signal_handler* handler = filc_object_special_payload(
+            new_handler = filc_object_special_payload(
                 my_thread, filc_allocate_special(
                     my_thread, sizeof(filc_signal_handler), 1, FILC_SPECIAL_TYPE_SIGNAL_HANDLER));
-            filc_flight_ptr_store(my_thread, &handler->function_ptr, user_handler);
-            handler->mask = act.sa_mask;
-            handler->user_signum = signum;
+            filc_flight_ptr_store(my_thread, &new_handler->function_ptr, user_handler);
+            new_handler->mask = act.sa_mask;
+            new_handler->user_signum = signum;
             pas_store_store_fence();
             PAS_ASSERT((unsigned)signum <= FILC_MAX_USER_SIGNUM);
-            filc_store_barrier(my_thread, filc_object_for_special_payload(handler));
-            filc_signal_table[signum] = handler;
             act.sa_sigaction = signal_pizlonator;
             act.sa_flags |= SA_SIGINFO; /* the signal_pizlonator always wants siginfo. FIXME: we could
                                            optimize this so that we use siginfo-less handler for those
@@ -5907,11 +5924,13 @@ int filc_native_zsys_sigaction(
     }
     if (user_oact)
         pas_zero_memory(&oact, sizeof(struct sigaction));
+    filc_increase_special_signal_deferral_depth(my_thread);
     filc_exit(my_thread);
     int result = sigaction(signum, user_act ? &act : NULL, user_oact ? &oact : NULL);
     int my_errno = errno;
     filc_enter(my_thread);
     if (result < 0) {
+        filc_decrease_special_signal_deferral_depth(my_thread);
         if (verbose)
             pas_log("Got an actual errno from sigaction.\n");
         filc_set_errno(my_errno);
@@ -5935,6 +5954,11 @@ int filc_native_zsys_sigaction(
         filc_to_user_sigset(&oact.sa_mask, &user_oact->sa_mask);
         user_oact->sa_flags = to_user_sa_flags(oact.sa_flags);
     }
+    if (user_act) {
+        filc_store_barrier(my_thread, filc_object_for_special_payload(new_handler));
+        filc_signal_table[signum] = new_handler;
+    }
+    filc_decrease_special_signal_deferral_depth(my_thread);
     return 0;
 }
 
