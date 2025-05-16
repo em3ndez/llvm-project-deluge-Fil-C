@@ -2298,6 +2298,12 @@ filc_object* filc_allocate_special_with_existing_payload(
 static PAS_ALWAYS_INLINE void prepare_allocate(
     size_t* size, size_t alignment, size_t* offset_to_payload, size_t* total_size)
 {
+    FILC_CHECK(
+        alignment < VERSE_HEAP_CHUNK_SIZE,
+        NULL,
+        "alignment %zu too big (max alignment is %zu).",
+        alignment, VERSE_HEAP_CHUNK_SIZE / 2);
+
     PAS_ASSERT(sizeof(filc_object) == FILC_MINALIGN);
     prepare_allocate_object(size);
     *offset_to_payload = pas_max_uintptr(alignment, sizeof(filc_object));
