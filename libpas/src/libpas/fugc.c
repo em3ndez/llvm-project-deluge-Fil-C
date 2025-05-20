@@ -1358,6 +1358,16 @@ bool fugc_try_donate(filc_mark_stack* mark_stack)
     return donate_impl(mark_stack, pas_lock_lock_mode_try_lock);
 }
 
+uint64_t fugc_completed_cycle(void)
+{
+    return completed_cycle;
+}
+
+uint64_t fugc_requested_cycle(void)
+{
+    return requested_cycle;
+}
+
 static uint64_t request_impl(uint64_t offset)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);

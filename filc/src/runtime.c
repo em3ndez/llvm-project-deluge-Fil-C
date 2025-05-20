@@ -571,3 +571,8 @@ int zsys_uselib(const char* library)
     zerror("uselib not supported.");
     return -1;
 }
+
+void zgc_request_and_wait(void)
+{
+    zgc_wait(zgc_request_fresh());
+}

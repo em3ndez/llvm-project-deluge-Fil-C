@@ -192,6 +192,9 @@ static PAS_ALWAYS_INLINE bool fugc_set_is_marked(void* mark_base)
 PAS_API void fugc_donate(filc_mark_stack* mark_stack);
 PAS_API bool fugc_try_donate(filc_mark_stack* mark_stack);
 
+PAS_API uint64_t fugc_completed_cycle(void);
+PAS_API uint64_t fugc_requested_cycle(void);
+
 /* Request that a collection cycle begins. If one is already running, then that's the one you get.
  
    Normally, GCs are requested by the verse_heap calling the verse_heap_live_bytes_trigger_callback(),

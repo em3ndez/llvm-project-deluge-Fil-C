@@ -5004,16 +5004,39 @@ void filc_native_zvalidate_ptr(filc_thread* my_thread, filc_ptr ptr)
     filc_validate_ptr(ptr, NULL);
 }
 
-void filc_native_zgc_request_and_wait(filc_thread* my_thread)
+unsigned long long filc_native_zgc_completed_cycle(filc_thread* my_thread)
 {
-    static const bool verbose = false;
-    if (verbose)
-        pas_log("Requesting GC and waiting.\n");
+    PAS_UNUSED_PARAM(my_thread);
+    return fugc_completed_cycle();
+}
+
+unsigned long long filc_native_zgc_requested_cycle(filc_thread* my_thread)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return fugc_requested_cycle();
+}
+
+unsigned long long filc_native_zgc_try_request(filc_thread* my_thread)
+{
     filc_exit(my_thread);
-    fugc_wait(fugc_request_fresh());
+    uint64_t result = fugc_request();
     filc_enter(my_thread);
-    if (verbose)
-        pas_log("Done with GC.\n");
+    return result;
+}
+
+unsigned long long filc_native_zgc_request_fresh(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    uint64_t result = fugc_request_fresh();
+    filc_enter(my_thread);
+    return result;
+}
+
+void filc_native_zgc_wait(filc_thread* my_thread, unsigned long long cycle)
+{
+    filc_exit(my_thread);
+    fugc_wait(cycle);
+    filc_enter(my_thread);
 }
 
 bool filc_native_zgc_is_stw(filc_thread* my_thread)

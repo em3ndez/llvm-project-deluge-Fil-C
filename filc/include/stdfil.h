@@ -567,8 +567,45 @@ static inline void* zget_jmp_buf_frame(void* jmp_buf)
    thread waits.
 
    If the GC is running in stop-the-world mode (not the default, also not recommended), then this will
-   stop all threads to do the GC. */
+   stop all threads to do the GC.
+
+   This is equivalent to zgc_wait(zgc_request_fresh()). */
 void zgc_request_and_wait(void);
+
+typedef unsigned long long zgc_cycle_number; /* 64 bits ought to be enough for anybody. */
+
+/* Get the last completed GC cycle number. If this number increments, it means that the GC
+   finished.
+
+   This function is useful for determining if it's a good time to remove dead weak references from
+   whatever data structures you have that hold onto them (like if you have an array of weak refs). If
+   this number is greater than the last time you swept weak references, then you should probably do it
+   again. */
+zgc_cycle_number zgc_completed_cycle(void);
+
+/* Get the last requested GC cycle number. If this number is greater than the last completed cycle,
+   then it means that the GC is either running right now or is about to be running. */
+zgc_cycle_number zgc_requested_cycle(void);
+
+/* Request that the GC starts if it hasn't already. Returns the requested cycle number.
+ 
+   If you know that you've created garbage and you want it cleaned up, then this function is probably
+   not what you want, since it does nothing during already running cycles, and already running cycles
+   will "float" (i.e. won't collect) garbage created during those cycles.
+
+   Usually you want zgc_request_fresh().
+
+   This returns immediately, since the GC is concurrent. */
+zgc_cycle_number zgc_try_request(void);
+
+/* Request a fresh GC cycle. If the GC is running right now, then this requests another cycle after
+   this one. Returns the requested cycle number.
+
+   Call this if you know you created garbage, and you want it cleaned up. */
+zgc_cycle_number zgc_request_fresh(void);
+
+/* Wait for the given GC cycle to finish. */
+void zgc_wait(zgc_cycle_number cycle);
 
 /* Request a synchronous scavenge. This decommits all memory that can be decommitted.
    
