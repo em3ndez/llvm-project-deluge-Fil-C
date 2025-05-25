@@ -4853,10 +4853,15 @@ static void run_global_ctor(filc_thread* my_thread, filc_ptr global_ctor)
 
 void filc_defer_or_run_global_ctor(filc_ptr global_ctor)
 {
-    filc_thread* my_thread = filc_get_my_thread();
+    filc_thread* my_thread;
+    if (is_initialized)
+        my_thread = filc_get_my_thread();
+    else
+        my_thread = NULL;
 
     pas_lock_lock(&filc_deferred_global_ctors_lock);
     if (filc_did_run_deferred_global_ctors) {
+        PAS_ASSERT(my_thread);
         pas_lock_unlock(&filc_deferred_global_ctors_lock);
         filc_enter(my_thread);
         run_global_ctor(my_thread, global_ctor);
