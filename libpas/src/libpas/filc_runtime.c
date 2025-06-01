@@ -2126,7 +2126,8 @@ filc_rest_ptr_pair filc_get_next_ptr_bytes_for_va_arg(filc_ptr ptr_ptr, size_t s
     return result;
 }
 
-char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread, filc_object* object)
+static PAS_ALWAYS_INLINE char* ensure_aux_ptr_slow_impl(filc_thread* my_thread, filc_object* object,
+                                                        filc_exit_allowed_mode exit_allowed_mode)
 {
     static const bool verbose = false;
     static const bool not_atomic_hack = false;
@@ -2154,7 +2155,7 @@ char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread, filc_object* objec
     char* aux_ptr = filc_thread_allocate(my_thread, size);
     if (verbose)
         pas_log("allocated aux at %p with size %zu, ending at %p\n", aux_ptr, size, aux_ptr + size);
-    if (PAS_LIKELY(size <= FILC_MAX_BYTES_BETWEEN_POLLCHECKS))
+    if (PAS_LIKELY(size <= FILC_MAX_BYTES_BETWEEN_POLLCHECKS) || !exit_allowed_mode)
         filc_memset_small_word(aux_ptr, 0, size);
     else {
         /* It's wild that we have to do this, but it's really necessary, and it means that anytime
@@ -2203,6 +2204,16 @@ char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread, filc_object* objec
             return aux_ptr;
         }
     }
+}
+
+char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread, filc_object* object)
+{
+    return ensure_aux_ptr_slow_impl(my_thread, object, filc_exit_allowed);
+}
+
+char* filc_object_ensure_aux_ptr_slow_without_exiting(filc_thread* my_thread, filc_object* object)
+{
+    return ensure_aux_ptr_slow_impl(my_thread, object, filc_exit_not_allowed);
 }
 
 char* filc_object_ensure_aux_ptr_outline(filc_thread* my_thread, filc_object* object)
@@ -2397,7 +2408,8 @@ static PAS_ALWAYS_INLINE filc_object* finish_allocate_small(filc_object* result,
 
 static PAS_ALWAYS_INLINE filc_object* finish_allocate(
     filc_thread* my_thread, void* allocation, size_t size, size_t alignment,
-    size_t offset_to_payload, filc_object_flags object_flags)
+    size_t offset_to_payload, filc_object_flags object_flags,
+    filc_exit_allowed_mode exit_allowed_mode)
 {
     static const bool verbose = false;
     if (verbose && (object_flags & FILC_OBJECT_FLAG_MMAP)) {
@@ -2410,13 +2422,14 @@ static PAS_ALWAYS_INLINE filc_object* finish_allocate(
     filc_thread_assert_allocation_color(my_thread, allocation);
     filc_object* result = initialize_object_header(
         allocation, size, alignment, offset_to_payload, object_flags, NULL);
-    if (PAS_UNLIKELY(size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS))
+    if (PAS_UNLIKELY(size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) && exit_allowed_mode)
         return finish_allocate_large(my_thread, result, size);
     return finish_allocate_small(result, size);
 }
 
 static PAS_ALWAYS_INLINE filc_object* allocate_impl(
-    filc_thread* my_thread, size_t size, filc_object_flags object_flags)
+    filc_thread* my_thread, size_t size, filc_object_flags object_flags,
+    filc_exit_allowed_mode exit_allowed_mode)
 {
     static const bool verbose = false;
     
@@ -2435,16 +2448,22 @@ static PAS_ALWAYS_INLINE filc_object* allocate_impl(
     prepare_allocate(&size, FILC_WORD_SIZE, &offset_to_payload, &total_size);
     return finish_allocate(
         my_thread, filc_thread_allocate(my_thread, total_size),
-        size, FILC_WORD_SIZE, offset_to_payload, object_flags);
+        size, FILC_WORD_SIZE, offset_to_payload, object_flags, exit_allowed_mode);
 }
 
 filc_object* filc_allocate(filc_thread* my_thread, size_t size)
 {
-    return allocate_impl(my_thread, size, 0);
+    return allocate_impl(my_thread, size, 0, filc_exit_allowed);
+}
+
+filc_object* filc_allocate_without_exiting(filc_thread* my_thread, size_t size)
+{
+    return allocate_impl(my_thread, size, 0, filc_exit_not_allowed);
 }
 
 static PAS_ALWAYS_INLINE filc_object* allocate_aligned_impl(
-    filc_thread* my_thread, size_t size, size_t alignment, filc_object_flags object_flags)
+    filc_thread* my_thread, size_t size, size_t alignment, filc_object_flags object_flags,
+    filc_exit_allowed_mode exit_allowed_mode)
 {
     static const bool verbose = false;
     
@@ -2470,12 +2489,18 @@ static PAS_ALWAYS_INLINE filc_object* allocate_aligned_impl(
     prepare_allocate(&size, alignment, &offset_to_payload, &total_size);
     return finish_allocate(
         my_thread, verse_heap_allocate_with_alignment(heap, total_size, alignment),
-        size, alignment, offset_to_payload, object_flags);
+        size, alignment, offset_to_payload, object_flags, exit_allowed_mode);
 }
 
 filc_object* filc_allocate_with_alignment(filc_thread* my_thread, size_t size, size_t alignment)
 {
-    return allocate_aligned_impl(my_thread, size, alignment, 0);
+    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_allowed);
+}
+
+filc_object* filc_allocate_with_alignment_without_exiting(filc_thread* my_thread,
+                                                          size_t size, size_t alignment)
+{
+    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_not_allowed);
 }
 
 static filc_object* finish_reallocate(
@@ -4176,6 +4201,113 @@ void filc_memmove(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t cou
     memmove_impl(my_thread, dst, src, count, passed_origin);
 }
 
+filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
+    filc_thread* my_thread, void* payload, void* aux, size_t size)
+{
+    if (!size)
+        return filc_ptr_forge_null();
+    
+    PAS_TESTING_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
+
+    filc_object* result_object = allocate_impl(my_thread, size, 0, filc_exit_not_allowed);
+
+    size_t offset;
+    for (offset = 0; offset < size; offset += FILC_WORD_SIZE) {
+        *(filc_word*)((char*)filc_object_lower(result_object) + offset) =
+            *(filc_word*)((char*)payload + offset);
+    }
+
+    for (offset = 0; offset < size; offset += FILC_WORD_SIZE) {
+        void* lower = filc_lower_or_box_get_lower(
+            filc_lower_or_box_load_unfenced((filc_lower_or_box*)((char*)aux + offset)));
+        if (lower) {
+            char* aux_ptr = filc_object_ensure_aux_ptr_without_exiting(my_thread, result_object);
+            filc_store_barrier(my_thread, filc_object_for_lower(lower));
+            filc_lower_or_box_store_unfenced_unbarriered(
+                (filc_lower_or_box*)(aux_ptr + offset),
+                filc_lower_or_box_create_lower(lower));
+        }
+    }
+
+    return filc_ptr_create_with_object_and_manual_tracking(result_object);
+}
+
+static void testing_check_access(filc_ptr ptr, size_t size)
+{
+    if (!size)
+        return;
+    
+    PAS_TESTING_ASSERT(filc_ptr_object(ptr));
+    PAS_TESTING_ASSERT(filc_ptr_ptr(ptr) >= filc_ptr_lower(ptr));
+    PAS_TESTING_ASSERT(filc_ptr_ptr(ptr) < filc_ptr_upper(ptr));
+    PAS_TESTING_ASSERT(size <= filc_ptr_available(ptr));
+}
+
+static PAS_ALWAYS_INLINE void demote_heap_to_stack_impl(
+    filc_ptr ptr, void* payload, void* aux, size_t size, bool word_aligned)
+{
+    if (!size)
+        return;
+
+    testing_check_access(ptr, size);
+
+    if (word_aligned) {
+        PAS_TESTING_ASSERT(pas_is_aligned((uintptr_t)filc_ptr_ptr(ptr), FILC_WORD_SIZE));
+        PAS_TESTING_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
+    }
+
+    if (word_aligned || pas_is_aligned((uintptr_t)filc_ptr_ptr(ptr), FILC_WORD_SIZE)) {
+        size_t aligned_size = pas_round_down_to_power_of_2(size, FILC_WORD_SIZE);
+        
+        size_t offset;
+        for (offset = 0; offset < aligned_size; offset += FILC_WORD_SIZE) {
+            *(filc_word*)((char*)payload + offset) =
+                *(filc_word*)((char*)filc_ptr_ptr(ptr) + offset);
+        }
+
+        char* aux_ptr = filc_ptr_aux_ptr(ptr);
+        for (offset = 0; offset < aligned_size; offset += FILC_WORD_SIZE) {
+            void* lower;
+            if (aux_ptr) {
+                lower = filc_lower_or_box_extract_lower(
+                    filc_lower_or_box_load_unfenced((filc_lower_or_box*)(
+                                                        aux_ptr + filc_ptr_offset(ptr) + offset)));
+            } else
+                lower = NULL;
+            filc_lower_or_box_store_unfenced_unbarriered(
+                (filc_lower_or_box*)((char*)aux + offset),
+                filc_lower_or_box_create_lower(lower));
+        }
+
+        ptr = filc_ptr_with_offset(ptr, aligned_size);
+        payload = (char*)payload + aligned_size;
+        aux = (char*)aux + aligned_size;
+        size -= aligned_size;
+    }
+
+    if (!size)
+        return;
+
+    testing_check_access(ptr, size);
+
+    filc_memcpy_small_up(payload, filc_ptr_ptr(ptr), size);
+    filc_memset_small(aux, 0, size);
+}
+
+void filc_demote_word_aligned_already_checked_heap_to_stack_without_exiting(
+    filc_ptr ptr, void* payload, void* aux, size_t size)
+{
+    bool word_aligned = true;
+    demote_heap_to_stack_impl(ptr, payload, aux, size, word_aligned);
+}
+
+void filc_demote_already_checked_heap_to_stack_without_exiting(
+    filc_ptr ptr, void* payload, void* aux, size_t size)
+{
+    bool word_aligned = false;
+    demote_heap_to_stack_impl(ptr, payload, aux, size, word_aligned);
+}
+
 static filc_ptr promote_cc_to_heap(filc_thread* my_thread, size_t size, bool do_tracking)
 {
     PAS_ASSERT(size <= filc_thread_cc_total_size(my_thread));
@@ -4186,7 +4318,8 @@ static filc_ptr promote_cc_to_heap(filc_thread* my_thread, size_t size, bool do_
     /* The calling convention requires that the CC size is always a multiple of word size. */
     PAS_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
 
-    filc_object* result_object = allocate_impl(my_thread, size, FILC_OBJECT_FLAG_READONLY);
+    filc_object* result_object = allocate_impl(
+        my_thread, size, FILC_OBJECT_FLAG_READONLY, filc_exit_allowed);
     filc_thread_track_object(my_thread, result_object);
 
     size_t offset;
@@ -6944,7 +7077,8 @@ filc_ptr filc_native_zsys_mmap(filc_thread* my_thread, filc_ptr address, size_t 
     if (!filc_ptr_ptr(address)) {
         address = filc_ptr_create_with_object(
             my_thread, allocate_aligned_impl(
-                my_thread, length, pas_page_malloc_alignment(), FILC_OBJECT_FLAG_MMAP));
+                my_thread, length, pas_page_malloc_alignment(), FILC_OBJECT_FLAG_MMAP,
+                filc_exit_allowed));
         flags |= MAP_FIXED;
     }
     if (verbose) {
@@ -8361,7 +8495,7 @@ filc_ptr filc_native_zsys_shmat(filc_thread* my_thread, int shmid, filc_ptr addr
     addr_ptr = filc_ptr_create_with_object(
         my_thread, allocate_aligned_impl(
             my_thread, length, pas_page_malloc_alignment(),
-            FILC_OBJECT_FLAG_MMAP));
+            FILC_OBJECT_FLAG_MMAP, filc_exit_allowed));
 
     void* raw_result = FILC_SYSCALL(
         my_thread, shmat(shmid, filc_ptr_ptr(addr_ptr), flag | SHM_REMAP));
@@ -8970,7 +9104,8 @@ filc_ptr filc_native_zsys_mremap(filc_thread* my_thread, filc_ptr old_address_pt
     } else if ((flags & MREMAP_MAYMOVE)) {
         new_address_ptr = filc_ptr_create_with_object(
             my_thread, allocate_aligned_impl(
-                my_thread, new_size, pas_page_malloc_alignment(), FILC_OBJECT_FLAG_MMAP));
+                my_thread, new_size, pas_page_malloc_alignment(), FILC_OBJECT_FLAG_MMAP,
+                filc_exit_allowed));
     } else {
         if (new_size > filc_ptr_available(old_address_ptr)) {
             filc_set_errno(ENOMEM);

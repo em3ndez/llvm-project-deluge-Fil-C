@@ -1079,6 +1079,21 @@ struct AsmConstraint {
   }
 };
 
+enum class ArgKind {
+  Direct,
+  ByVal
+};
+
+struct ArgInfo {
+  Type* T { nullptr };
+  ArgKind AK { ArgKind::Direct };
+
+  ArgInfo() = default;
+
+  ArgInfo(Type* T, ArgKind AK): T(T), AK(AK) {
+  }
+};
+
 class Pizlonator {
   static constexpr unsigned TargetAS = 0;
   
@@ -1153,6 +1168,9 @@ class Pizlonator {
   FunctionCallee LandingPad;
   FunctionCallee ResumeUnwind;
   FunctionCallee JmpBufCreate;
+  FunctionCallee PromoteAlreadyCheckedStackToHeapWithoutExiting;
+  FunctionCallee DemoteWordAlignedAlreadyCheckedHeapToStackWithoutExiting;
+  FunctionCallee DemoteAlreadyCheckedHeapToStackWithoutExiting;
   FunctionCallee PromoteArgsToHeap;
   FunctionCallee PrepareToReturnWithData;
   FunctionCallee CCArgsCheckFailure;
@@ -1955,8 +1973,10 @@ class Pizlonator {
     Instruction* InsertBefore) {
     A = std::min(DL.getABITypeAlign(T), A);
     
-    if (!hasPtrs(T))
-      return new LoadInst(T, P, "filc_load", isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
+    if (!hasPtrs(T)) {
+      return new LoadInst(
+        toFlightType(T), P, "filc_load", isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
+    }
     
     if (isa<FunctionType>(T)) {
       llvm_unreachable("shouldn't see function types in loadValueRecurseAfterCheck");
@@ -2187,6 +2207,10 @@ class Pizlonator {
     auto LiveCast = [&] (Value* V) -> Value* {
       if (isa<Instruction>(V))
         return V;
+      if (Argument* A = dyn_cast<Argument>(V)) {
+        if (A->hasByValAttr())
+          return A;
+      }
       if (!isa<Argument>(V) && !isa<Constant>(V) && !isa<MetadataAsValue>(V) && !isa<InlineAsm>(V)
           && !isa<BasicBlock>(V)) {
         errs() << "V = " << *V << "\n";
@@ -2235,6 +2259,7 @@ class Pizlonator {
             if (!isa<Argument>(V))
               errs() << "Unexpected live: " << *V << "\n";
             assert(isa<Argument>(V));
+            assert(cast<Argument>(V)->hasByValAttr());
           }
         }
 
@@ -3168,7 +3193,10 @@ class Pizlonator {
     if (verbose)
       errs() << "PAO = " << *PAO.HighP << ", offset = " << PAO.Offset << "\n";
 
-    if (analyzeIntrinsicLoadStore(I, AK).Mask) {
+    IntrinsicAccessDetails IAD = analyzeIntrinsicLoadStore(I, AK);
+    if (IAD.Mask) {
+      assert(IAD.Ptr == HighP); /* It's possible that this should eventually be turned into an extra
+                                   condition in the above `if`, rather than an assert. */
       Checks.push_back(
         AccessCheckWithDI(PAO.HighP, 0, 0, CheckKind::ValidObject, basicDI(I->getDebugLoc())));
       Checks.push_back(
@@ -3250,6 +3278,12 @@ class Pizlonator {
                AccessKind::Write);
           return;
         }
+      }
+      for (size_t Idx = 0; Idx < CI->arg_size(); ++Idx) {
+        if (!CI->isByValArgument(Idx))
+          continue;
+        Func(CI, CI->getParamByValType(Idx), CI->getArgOperand(Idx), Align(1),
+             AtomicOrdering::NotAtomic, AccessKind::Read);
       }
     }
   }
@@ -4217,7 +4251,7 @@ class Pizlonator {
     removeRedundantChecksUsingForwardAI(
       Blocks, BackEdgePreds, CanonicalPtrLiveAtTail, ForwardChecksAtHead, ForwardChecksAtTail);
   }
-
+  
   Type* argType(Type* T) {
     if (IntegerType* IT = dyn_cast<IntegerType>(T)) {
       if (IT->getBitWidth() < IntPtrTy->getBitWidth())
@@ -4229,18 +4263,77 @@ class Pizlonator {
     return T;
   }
 
-  StructType* argsType(ArrayRef<Type*> Elements) {
-    std::vector<Type*> NewElements;
-    for (Type* T : Elements)
-      NewElements.push_back(argType(T));
-    return StructType::get(C, NewElements);
+  Type* argType(ArgInfo AI) {
+    switch (AI.AK) {
+    case ArgKind::Direct:
+      return argType(AI.T);
+    case ArgKind::ByVal:
+      return AI.T;
+    }
+    llvm_unreachable("Bad AK");
+    return nullptr;
   }
-  
-  StructType* argsType(FunctionType* FT) {
-    return argsType(FT->params());
+
+  template<typename FuncTy>
+  size_t iterateArgs(const std::vector<ArgInfo>& Elements,
+                     const FuncTy& Func) {
+    size_t Offset = 0;
+    for (size_t Idx = 0; Idx < Elements.size(); ++Idx) {
+      Type* T = argType(Elements[Idx]);
+      size_t Alignment = std::max(WordSize, DL.getABITypeAlign(T).value());
+      Offset = (Offset + Alignment - 1) & -Alignment;
+      Func(Idx, Elements[Idx], Offset);
+      Offset += DL.getTypeAllocSize(T);
+    }
+    return (Offset + WordSize - 1) & -WordSize;
+  }
+
+  size_t argsSize(const std::vector<ArgInfo>& Elements) {
+    return iterateArgs(Elements, [] (size_t, ArgInfo, size_t) { });
+  }
+
+  size_t argsAlignment(const std::vector<ArgInfo>& Elements) {
+    size_t Alignment = WordSize;
+    iterateArgs(Elements, [&] (size_t Idx, ArgInfo AI, size_t Offset) {
+      Alignment = std::max(Alignment, DL.getABITypeAlign(argType(AI)).value());
+    });
+    return Alignment;
+  }
+
+  std::vector<ArgInfo> argInfosForFunction(Function* F) {
+    std::vector<ArgInfo> Elements;
+    for (Argument& A : F->args()) {
+      if (A.hasByValAttr())
+        Elements.push_back(ArgInfo(A.getParamByValType(), ArgKind::ByVal));
+      else {
+        assert(!A.hasPassPointeeByValueCopyAttr());
+        Elements.push_back(ArgInfo(A.getType(), ArgKind::Direct));
+      }
+    }
+    return Elements;
+  }
+
+  std::vector<ArgInfo> argInfosForCall(CallBase* CB) {
+    std::vector<ArgInfo> Elements;
+    assert(InstTypeVectors.count(CB));
+    std::vector<Type*> ArgTypes = InstTypeVectors[CB];
+    assert(ArgTypes.size() == CB->arg_size());
+    for (size_t Idx = 0; Idx < CB->arg_size(); ++Idx) {
+      if (CB->isByValArgument(Idx))
+        Elements.push_back(ArgInfo(CB->getParamByValType(Idx), ArgKind::ByVal));
+      else {
+        assert(!CB->isPassPointeeByValueArgument(Idx));
+        Elements.push_back(ArgInfo(ArgTypes[Idx], ArgKind::Direct));
+      }
+    }
+    return Elements;
   }
 
   Value* castToArg(Value* V, Type* OriginalArgT, Type* CanonicalArgT, Instruction* InsertBefore) {
+    if (ultraVerbose) {
+      errs() << "OriginalArgT = " << *OriginalArgT << ", CanonicalArgT = " << *CanonicalArgT << "\n";
+      errs() << "V = " << *V << "\n";
+    }
     if (OriginalArgT == CanonicalArgT)
       return V;
     if (IntegerType* VIT = dyn_cast<IntegerType>(OriginalArgT)) {
@@ -4258,6 +4351,10 @@ class Pizlonator {
   }
 
   Value* castFromArg(Value* V, Type* OriginalArgT, Instruction* InsertBefore) {
+    if (ultraVerbose) {
+      errs() << "OriginalArgT = " << *OriginalArgT << "\n";
+      errs() << "V = " << *V << "\n";
+    }
     if (V->getType() == OriginalArgT)
       return V;
     if (IntegerType* VIT = dyn_cast<IntegerType>(V->getType())) {
@@ -4274,51 +4371,53 @@ class Pizlonator {
     return FPTrunc;
   }
 
-  Value* loadCC(Type* T, Value* PassedSize, FunctionCallee CCCheckFailure, Instruction* InsertBefore,
-                DebugLoc DI) {
-    size_t TypeSize = (DL.getTypeStoreSize(T) + WordSize - 1) / WordSize * WordSize;
-    assert(TypeSize);
+  std::vector<Value*> loadCC(const std::vector<ArgInfo>& AIs, Value* PassedSize,
+                             FunctionCallee CCCheckFailure, Instruction* InsertBefore,
+                             DebugLoc DI) {
+    size_t TotalSize = argsSize(AIs);
+    size_t Alignment = argsAlignment(AIs);
+    assert(TotalSize);
     Instruction* PassedEnough = new ICmpInst(
-      InsertBefore, ICmpInst::ICMP_ULE, ConstantInt::get(IntPtrTy, TypeSize), PassedSize,
+      InsertBefore, ICmpInst::ICMP_ULE, ConstantInt::get(IntPtrTy, TotalSize), PassedSize,
       "filc_cc_passed_enough");
     PassedEnough->setDebugLoc(DI);
     Instruction* FailTerm = SplitBlockAndInsertIfElse(
       expectTrue(PassedEnough, InsertBefore), InsertBefore, true);
     CallInst::Create(
-      CCCheckFailure, { PassedSize, ConstantInt::get(IntPtrTy, TypeSize), getOrigin(DI) }, "",
+      CCCheckFailure, { PassedSize, ConstantInt::get(IntPtrTy, TotalSize), getOrigin(DI) }, "",
       FailTerm)->setDebugLoc(DI);
     AllocaInst* PayloadAlloca = new AllocaInst(
-      Int8Ty, 0, ConstantInt::get(IntPtrTy, TypeSize), DL.getABITypeAlign(T), "filc_payload_alloca",
+      Int8Ty, 0, ConstantInt::get(IntPtrTy, TotalSize), Align(Alignment), "filc_payload_alloca",
       &NewF->getEntryBlock().front());
     AllocaInst* AuxAlloca = new AllocaInst(
-      Int8Ty, 0, ConstantInt::get(IntPtrTy, TypeSize), Align(WordSize),
+      Int8Ty, 0, ConstantInt::get(IntPtrTy, TotalSize), Align(WordSize),
       "filc_payload_alloca", &NewF->getEntryBlock().front());
     PayloadAlloca->setDebugLoc(DI);
     AuxAlloca->setDebugLoc(DI);
-    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TypeSize), PayloadAlloca }, "",
+    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TotalSize), PayloadAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
-    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TypeSize), AuxAlloca }, "",
+    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TotalSize), AuxAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
     Value* InlineBuffer = threadCCInlineBufferPtr(MyThread, InsertBefore);
     CallInst* Call = CallInst::Create(
       RealMemcpy,
-      { PayloadAlloca, InlineBuffer, ConstantInt::get(IntPtrTy, std::min(TypeSize, CCInlineSize)),
+      { PayloadAlloca, InlineBuffer, ConstantInt::get(IntPtrTy, std::min(TotalSize, CCInlineSize)),
         ConstantInt::getBool(Int1Ty, false) },
       "", InsertBefore);
     Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(WordSize)));
     Call->addParamAttr(
-      1, Attribute::getWithAlignment(C, Align(MinAlign(CCAlignment, DL.getABITypeAlign(T).value()))));
+      1, Attribute::getWithAlignment(C, Align(MinAlign(CCAlignment, Alignment))));
     Call->setDebugLoc(DI);
     Value* InlineAuxBuffer = threadCCInlineAuxBufferPtr(MyThread, InsertBefore);
     Call = CallInst::Create(
       RealMemcpy,
-      { AuxAlloca, InlineAuxBuffer, ConstantInt::get(IntPtrTy, std::min(TypeSize, CCInlineSize)),
+      { AuxAlloca, InlineAuxBuffer, ConstantInt::get(IntPtrTy, std::min(TotalSize, CCInlineSize)),
         ConstantInt::getBool(Int1Ty, false) },
       "", InsertBefore);
     Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(WordSize)));
     Call->addParamAttr(1, Attribute::getWithAlignment(C, Align(CCAlignment)));
     Call->setDebugLoc(DI);
-    if (TypeSize > CCInlineSize) {
+    if (TotalSize > CCInlineSize) {
       Instruction* PayloadAtOutlineOffset = GetElementPtrInst::Create(
         Int8Ty, PayloadAlloca, { ConstantInt::get(IntPtrTy, CCInlineSize) },
         "filc_payload_at_outline_offset", InsertBefore);
@@ -4329,13 +4428,12 @@ class Pizlonator {
       OutlineBuffer->setDebugLoc(DI);
       Call = CallInst::Create(
         RealMemcpy,
-        { PayloadAtOutlineOffset, OutlineBuffer, ConstantInt::get(IntPtrTy, TypeSize - CCInlineSize),
+        { PayloadAtOutlineOffset, OutlineBuffer, ConstantInt::get(IntPtrTy, TotalSize - CCInlineSize),
           ConstantInt::getBool(Int1Ty, false) },
         "", InsertBefore);
       Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(WordSize)));
       Call->addParamAttr(
-        1, Attribute::getWithAlignment(
-          C, Align(MinAlign(CCAlignment, DL.getABITypeAlign(T).value()))));
+        1, Attribute::getWithAlignment(C, Align(MinAlign(CCAlignment, Alignment))));
       Call->setDebugLoc(DI);
       Instruction* AuxAtOutlineOffset = GetElementPtrInst::Create(
         Int8Ty, AuxAlloca, { ConstantInt::get(IntPtrTy, CCInlineSize) },
@@ -4347,30 +4445,68 @@ class Pizlonator {
       OutlineAuxBuffer->setDebugLoc(DI);
       Call = CallInst::Create(
         RealMemcpy,
-        { AuxAtOutlineOffset, OutlineAuxBuffer, ConstantInt::get(IntPtrTy, TypeSize - CCInlineSize),
+        { AuxAtOutlineOffset, OutlineAuxBuffer, ConstantInt::get(IntPtrTy, TotalSize - CCInlineSize),
           ConstantInt::getBool(Int1Ty, false) },
         "", InsertBefore);
       Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(WordSize)));
       Call->addParamAttr(1, Attribute::getWithAlignment(C, Align(CCAlignment)));
       Call->setDebugLoc(DI);
     }
-    Value* Result = loadValueRecurseAfterCheck(
-      T, PayloadAlloca, AuxAlloca, AuxAlloca, false, DL.getABITypeAlign(T), AtomicOrdering::NotAtomic,
-      SyncScope::System, MemoryKind::CC, InsertBefore);
-    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TypeSize), PayloadAlloca }, "",
+    std::vector<Value*> Results;
+    iterateArgs(AIs, [&] (size_t Index, ArgInfo AI, size_t Offset) {
+      Value* PayloadPtr = GetElementPtrInst::Create(
+        Int8Ty, PayloadAlloca, { ConstantInt::get(IntPtrTy, Offset) }, "filc_offset_payload",
+        InsertBefore);
+      Value* AuxPtr = GetElementPtrInst::Create(
+        Int8Ty, AuxAlloca, { ConstantInt::get(IntPtrTy, Offset) }, "filc_offset_aux",
+        InsertBefore);
+      Type* ArgT = argType(AI);
+      Value* Result;
+
+      switch (AI.AK) {
+      case ArgKind::Direct:
+        Result = castFromArg(
+          loadValueRecurseAfterCheck(
+            ArgT, PayloadPtr, AuxAlloca, AuxPtr, false, DL.getABITypeAlign(ArgT),
+            AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::CC, InsertBefore),
+          toFlightType(AI.T), InsertBefore);
+        break;
+      case ArgKind::ByVal:
+        Result = CallInst::Create(
+          PromoteAlreadyCheckedStackToHeapWithoutExiting,
+          { MyThread, PayloadPtr, AuxPtr,
+            ConstantInt::get(IntPtrTy, (DL.getTypeAllocSize(ArgT) + WordSize - 1) & -WordSize) },
+          "filc_promote_stack", InsertBefore);
+        break;
+      }
+      
+      Results.push_back(Result);
+    });
+    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TotalSize), PayloadAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
-    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TypeSize), AuxAlloca }, "",
+    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TotalSize), AuxAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
-    return Result;
+    return Results;
+  }
+
+  Value* loadCC(Type* T, Value* PassedSize, FunctionCallee CCCheckFailure, Instruction* InsertBefore,
+                DebugLoc DI) {
+    std::vector<ArgInfo> AIs;
+    AIs.push_back(ArgInfo(T, ArgKind::Direct));
+    std::vector<Value*> Vs = loadCC(AIs, PassedSize, CCCheckFailure, InsertBefore, DI);
+    assert(Vs.size() == 1);
+    return Vs[0];
   }
 
   // Returns the passed CC size. That's just for convenience, since you could calculate it yourself
   // from the type.
-  Value* storeCC(Type* T, Value* V, Instruction* InsertBefore, DebugLoc DI) {
-    size_t TypeSize = (DL.getTypeStoreSize(T) + WordSize - 1) / WordSize * WordSize;
-    assert(TypeSize);
-    if (TypeSize > CCInlineSize) {
-      size_t DesiredOutlineSize = TypeSize - CCInlineSize;
+  Value* storeCC(const std::vector<ArgInfo>& AIs, const std::vector<Value*>& Vs,
+                 Instruction* InsertBefore, DebugLoc DI) {
+    size_t TotalSize = argsSize(AIs);
+    size_t Alignment = argsAlignment(AIs);
+    assert(TotalSize);
+    if (TotalSize > CCInlineSize) {
+      size_t DesiredOutlineSize = TotalSize - CCInlineSize;
       Instruction* ActualOutlineSize = new LoadInst(
         IntPtrTy, threadCCOutlineSizePtr(MyThread, InsertBefore), "filc_thread_cc_outline_size",
         InsertBefore);
@@ -4386,52 +4522,79 @@ class Pizlonator {
         { MyThread, ConstantInt::get(IntPtrTy, DesiredOutlineSize) }, "", SlowTerm)->setDebugLoc(DI);
     }
     AllocaInst* PayloadAlloca = new AllocaInst(
-      Int8Ty, 0, ConstantInt::get(IntPtrTy, TypeSize), DL.getABITypeAlign(T), "filc_payload_alloca",
+      Int8Ty, 0, ConstantInt::get(IntPtrTy, TotalSize), Align(Alignment), "filc_payload_alloca",
       &NewF->getEntryBlock().front());
     AllocaInst* AuxAlloca = new AllocaInst(
-      Int8Ty, 0, ConstantInt::get(IntPtrTy, TypeSize), Align(WordSize),
+      Int8Ty, 0, ConstantInt::get(IntPtrTy, TotalSize), Align(Alignment),
       "filc_payload_alloca", &NewF->getEntryBlock().front());
     PayloadAlloca->setDebugLoc(DI);
     AuxAlloca->setDebugLoc(DI);
-    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TypeSize), PayloadAlloca }, "",
+    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TotalSize), PayloadAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
-    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TypeSize), AuxAlloca }, "",
+    CallInst::Create(LifetimeStart, { ConstantInt::get(IntPtrTy, TotalSize), AuxAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
     CallInst* Call = CallInst::Create(
       RealMemset,
-      { PayloadAlloca, ConstantInt::get(Int8Ty, 0), ConstantInt::get(IntPtrTy, TypeSize),
+      { PayloadAlloca, ConstantInt::get(Int8Ty, 0), ConstantInt::get(IntPtrTy, TotalSize),
         ConstantInt::getBool(Int1Ty, false) }, "", InsertBefore);
-    Call->addParamAttr(0, Attribute::getWithAlignment(C, DL.getABITypeAlign(T)));
+    Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(Alignment)));
     Call->setDebugLoc(DI);
     Call = CallInst::Create(
       RealMemset,
-      { AuxAlloca, ConstantInt::get(Int8Ty, 0), ConstantInt::get(IntPtrTy, TypeSize),
+      { AuxAlloca, ConstantInt::get(Int8Ty, 0), ConstantInt::get(IntPtrTy, TotalSize),
         ConstantInt::getBool(Int1Ty, false) }, "", InsertBefore);
     Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(WordSize)));
     Call->setDebugLoc(DI);
-    storeValueRecurseAfterCheck(
-      T, V, PayloadAlloca, AuxAlloca, false, DL.getABITypeAlign(T), AtomicOrdering::NotAtomic,
-      SyncScope::System, MemoryKind::CC, InsertBefore);
+    iterateArgs(AIs, [&] (size_t Index, ArgInfo AI, size_t Offset) {
+      Value* PayloadPtr = GetElementPtrInst::Create(
+        Int8Ty, PayloadAlloca, { ConstantInt::get(IntPtrTy, Offset) }, "filc_offset_payload",
+        InsertBefore);
+      Value* AuxPtr = GetElementPtrInst::Create(
+        Int8Ty, AuxAlloca, { ConstantInt::get(IntPtrTy, Offset) }, "filc_offset_aux",
+        InsertBefore);
+      Type* ArgT = argType(AI);
+      switch (AI.AK) {
+      case ArgKind::Direct: {
+        storeValueRecurseAfterCheck(
+          ArgT, castToArg(Vs[Index], toFlightType(AI.T), toFlightType(ArgT), InsertBefore),
+          PayloadPtr, AuxPtr, false, DL.getABITypeAlign(ArgT), AtomicOrdering::NotAtomic,
+          SyncScope::System, MemoryKind::CC, InsertBefore);
+        break;
+      }
+      case ArgKind::ByVal: {
+        FunctionCallee DemoteFunc;
+        if (DL.getABITypeAlign(AI.T).value() >= WordSize) {
+          assert(!(DL.getTypeAllocSize(AI.T) & (WordSize - 1)));
+          DemoteFunc = DemoteWordAlignedAlreadyCheckedHeapToStackWithoutExiting;
+        } else
+          DemoteFunc = DemoteAlreadyCheckedHeapToStackWithoutExiting;
+        CallInst::Create(
+          DemoteFunc,
+          { Vs[Index], PayloadPtr, AuxPtr, ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(AI.T)) },
+          "", InsertBefore);
+        break;
+      } }
+    });
     Call = CallInst::Create(
       RealMemcpy,
       { threadCCInlineBufferPtr(MyThread, InsertBefore), PayloadAlloca,
-        ConstantInt::get(IntPtrTy, std::min(TypeSize, CCInlineSize)),
+        ConstantInt::get(IntPtrTy, std::min(TotalSize, CCInlineSize)),
         ConstantInt::getBool(Int1Ty, false) },
       "", InsertBefore);
     Call->addParamAttr(
-      0, Attribute::getWithAlignment(C, Align(MinAlign(CCAlignment, DL.getABITypeAlign(T).value()))));
+      0, Attribute::getWithAlignment(C, Align(MinAlign(CCAlignment, Alignment))));
     Call->addParamAttr(1, Attribute::getWithAlignment(C, Align(WordSize)));
     Call->setDebugLoc(DI);
     Call = CallInst::Create(
       RealMemcpy,
       { threadCCInlineAuxBufferPtr(MyThread, InsertBefore), AuxAlloca,
-        ConstantInt::get(IntPtrTy, std::min(TypeSize, CCInlineSize)),
+        ConstantInt::get(IntPtrTy, std::min(TotalSize, CCInlineSize)),
         ConstantInt::getBool(Int1Ty, false) },
       "", InsertBefore);
     Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(CCAlignment)));
     Call->addParamAttr(1, Attribute::getWithAlignment(C, Align(WordSize)));
     Call->setDebugLoc(DI);
-    if (TypeSize > CCInlineSize) {
+    if (TotalSize > CCInlineSize) {
       Instruction* PayloadAtOutlineOffset = GetElementPtrInst::Create(
         Int8Ty, PayloadAlloca, { ConstantInt::get(IntPtrTy, CCInlineSize) },
         "filc_payload_at_outline_offset", InsertBefore);
@@ -4442,12 +4605,11 @@ class Pizlonator {
       OutlineBuffer->setDebugLoc(DI);
       Call = CallInst::Create(
         RealMemcpy,
-        { OutlineBuffer, PayloadAtOutlineOffset, ConstantInt::get(IntPtrTy, TypeSize - CCInlineSize),
+        { OutlineBuffer, PayloadAtOutlineOffset, ConstantInt::get(IntPtrTy, TotalSize - CCInlineSize),
           ConstantInt::getBool(Int1Ty, false) },
         "", InsertBefore);
       Call->addParamAttr(
-        0, Attribute::getWithAlignment(
-          C, Align(MinAlign(CCAlignment, DL.getABITypeAlign(T).value()))));
+        0, Attribute::getWithAlignment(C, Align(MinAlign(CCAlignment, Alignment))));
       Call->addParamAttr(1, Attribute::getWithAlignment(C, Align(WordSize)));
       Call->setDebugLoc(DI);
       Instruction* AuxAtOutlineOffset = GetElementPtrInst::Create(
@@ -4460,18 +4622,26 @@ class Pizlonator {
       OutlineAuxBuffer->setDebugLoc(DI);
       Call = CallInst::Create(
         RealMemcpy,
-        { OutlineAuxBuffer, AuxAtOutlineOffset, ConstantInt::get(IntPtrTy, TypeSize - CCInlineSize),
+        { OutlineAuxBuffer, AuxAtOutlineOffset, ConstantInt::get(IntPtrTy, TotalSize - CCInlineSize),
           ConstantInt::getBool(Int1Ty, false) },
         "", InsertBefore);
       Call->addParamAttr(0, Attribute::getWithAlignment(C, Align(CCAlignment)));
       Call->addParamAttr(1, Attribute::getWithAlignment(C, Align(WordSize)));
       Call->setDebugLoc(DI);
     }
-    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TypeSize), PayloadAlloca }, "",
+    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TotalSize), PayloadAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
-    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TypeSize), AuxAlloca }, "",
+    CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TotalSize), AuxAlloca }, "",
                      InsertBefore)->setDebugLoc(DI);
-    return ConstantInt::get(IntPtrTy, TypeSize);
+    return ConstantInt::get(IntPtrTy, TotalSize);
+  }
+
+  Value* storeCC(Type* T, Value* V, Instruction* InsertBefore, DebugLoc DI) {
+    std::vector<ArgInfo> AIs;
+    AIs.push_back(ArgInfo(T, ArgKind::Direct));
+    std::vector<Value*> Vs;
+    Vs.push_back(V);
+    return storeCC(AIs, Vs, InsertBefore, DI);
   }
 
   bool hasNonNullPtrs(Constant* C) {
@@ -6047,20 +6217,11 @@ class Pizlonator {
       Value* ArgSize;
       if (CI->arg_size()) {
         assert(InstTypeVectors.count(CI));
-        std::vector<Type*> ArgTypes = InstTypeVectors[CI];
-        StructType* ArgsType = argsType(ArgTypes);
-        Value* Args = UndefValue::get(toFlightType(ArgsType));
-        for (size_t Index = CI->arg_size(); Index--;) {
-          Type* OriginalT = ArgTypes[Index];
-          Type* CanonicalT = ArgsType->getElementType(Index);
-          Instruction* Insert = InsertValueInst::Create(
-            Args, castToArg(CI->getArgOperand(Index), toFlightType(OriginalT),
-                            toFlightType(CanonicalT), CI),
-            static_cast<unsigned>(Index), "filc_insert_arg", CI);
-          Insert->setDebugLoc(CI->getDebugLoc());
-          Args = Insert;
-        }
-        ArgSize = storeCC(ArgsType, Args, CI, CI->getDebugLoc());
+        std::vector<ArgInfo> AIs = argInfosForCall(CI);
+        std::vector<Value*> Vs;
+        for (size_t Index = 0; Index < CI->arg_size(); Index++)
+          Vs.push_back(CI->getArgOperand(Index));
+        ArgSize = storeCC(AIs, Vs, CI, CI->getDebugLoc());
       } else
         ArgSize = ConstantInt::get(IntPtrTy, 0);
 
@@ -7563,6 +7724,15 @@ public:
       "filc_resume_unwind", VoidTy, RawPtrTy, RawPtrTy);
     JmpBufCreate = M.getOrInsertFunction(
       "filc_jmp_buf_create", RawPtrTy, RawPtrTy, Int32Ty, Int32Ty);
+    PromoteAlreadyCheckedStackToHeapWithoutExiting = M.getOrInsertFunction(
+      "filc_promote_already_checked_stack_to_heap_without_exiting",
+      FlightPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
+    DemoteWordAlignedAlreadyCheckedHeapToStackWithoutExiting = M.getOrInsertFunction(
+      "filc_demote_word_aligned_already_checked_heap_to_stack_without_exiting",
+      VoidTy, FlightPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
+    DemoteAlreadyCheckedHeapToStackWithoutExiting = M.getOrInsertFunction(
+      "filc_demote_already_checked_heap_to_stack_without_exiting",
+      VoidTy, FlightPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
     PromoteArgsToHeap = M.getOrInsertFunction(
       "filc_promote_args_to_heap", FlightPtrTy, RawPtrTy, IntPtrTy);
     PrepareToReturnWithData = M.getOrInsertFunction(
@@ -8099,16 +8269,17 @@ public:
 
         size_t LastOffset = 0;
         if (F->getFunctionType()->getNumParams()) {
-          StructType* ArgsTy = argsType(F->getFunctionType());
-          const StructLayout* SL = DL.getStructLayout(ArgsTy);
-          Value* ArgsV = loadCC(ArgsTy, NewF->getArg(2), CCArgsCheckFailure, InsertionPoint, DebugLoc());
+          std::vector<ArgInfo> AIs = argInfosForFunction(F);
+          LastOffset = argsSize(AIs);
+          std::vector<Value*> Vs = loadCC(
+            AIs, NewF->getArg(2), CCArgsCheckFailure, InsertionPoint, DebugLoc());
           for (unsigned Index = 0; Index < F->getFunctionType()->getNumParams(); ++Index) {
-            Type* CanonicalT = ArgsTy->getElementType(Index);
-            Type* OriginalT = F->getFunctionType()->getParamType(Index);
-            Instruction* Extract = ExtractValueInst::Create(
-              toFlightType(CanonicalT), ArgsV, Index, "filc_extract_arg", InsertionPoint);
-            Args.push_back(castFromArg(Extract, toFlightType(OriginalT), InsertionPoint));
-            LastOffset = SL->getElementOffset(Index) + DL.getTypeAllocSize(CanonicalT);
+            Value* V = Vs[Index];
+            if (AIs[Index].AK == ArgKind::ByVal) {
+              recordLowers(F->getArg(Index), F->getArg(Index)->getType(), V, InsertionPoint);
+              Args.push_back(V);
+            } else
+              Args.push_back(V);
           }
         }
         if (UsesVastartOrZargs) {

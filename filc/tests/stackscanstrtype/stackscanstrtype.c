@@ -2,10 +2,10 @@
 #include <stdbool.h>
 #include <string.h>
 
-static bool callback(zstack_frame_description description,
+static bool callback(const zstack_frame_description* description,
                      void* arg)
 {
-    *(char**)description.function_name = "hello";
+    *(char**)description->function_name = "hello";
     return true;
 }
 

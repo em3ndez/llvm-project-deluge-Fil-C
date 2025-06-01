@@ -8,7 +8,7 @@ static void callback(void)
 
 int main()
 {
-    zstack_scan((bool (*)(zstack_frame_description, void*))callback, NULL);
+    zstack_scan((bool (*)(const zstack_frame_description*, void*))callback, NULL);
     return 0;
 }
 

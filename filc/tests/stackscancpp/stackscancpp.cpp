@@ -6,36 +6,36 @@ extern "C" void __gxx_personality_v0();
 
 extern "C" void* opaque(void*);
 
-static bool callback(zstack_frame_description description,
+static bool callback(const zstack_frame_description* description,
                      void* arg)
 {
     ZASSERT(arg == (void*)666);
-    ZASSERT(description.is_inline ||
-            description.can_throw ||
-            !strcmp(description.function_name, "__libc_start_main") ||
-            !strcmp(description.function_name, "__libc_start_call_main"));
-    if ((!strcmp(description.filename, "<runtime>") &&
-         !strcmp(description.function_name, "start_program")) ||
-        !strcmp(description.function_name, "__libc_start_main") ||
-        !strcmp(description.function_name, "__libc_start_call_main")) {
-        ZASSERT(description.can_catch);
-        ZASSERT(!description.personality_function);
-        ZASSERT(!description.eh_data);
-        ZASSERT(!description.is_inline);
+    ZASSERT(description->is_inline ||
+            description->can_throw ||
+            !strcmp(description->function_name, "__libc_start_main") ||
+            !strcmp(description->function_name, "__libc_start_call_main"));
+    if ((!strcmp(description->filename, "<runtime>") &&
+         !strcmp(description->function_name, "start_program")) ||
+        !strcmp(description->function_name, "__libc_start_main") ||
+        !strcmp(description->function_name, "__libc_start_call_main")) {
+        ZASSERT(description->can_catch);
+        ZASSERT(!description->personality_function);
+        ZASSERT(!description->eh_data);
+        ZASSERT(!description->is_inline);
     } else {
-        if (!strcmp(description.function_name, "main"))
-            ZASSERT(!description.is_inline);
-        if (description.is_inline) {
-            ZASSERT(!description.can_catch);
-            ZASSERT(!description.personality_function);
-            ZASSERT(!description.eh_data);
+        if (!strcmp(description->function_name, "main"))
+            ZASSERT(!description->is_inline);
+        if (description->is_inline) {
+            ZASSERT(!description->can_catch);
+            ZASSERT(!description->personality_function);
+            ZASSERT(!description->eh_data);
         } else {
-            ZASSERT(description.can_catch);
-            ZASSERT(description.personality_function == __gxx_personality_v0);
+            ZASSERT(description->can_catch);
+            ZASSERT(description->personality_function == __gxx_personality_v0);
         }
     }
     zprintf("%s,%s,%u,%u;",
-            description.function_name, description.filename, description.line, description.column);
+            description->function_name, description->filename, description->line, description->column);
     return true;
 }
 

@@ -766,6 +766,13 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
     char* guard_page;
 };
 
+enum filc_exit_allowed_mode {
+    filc_exit_not_allowed,
+    filc_exit_allowed
+};
+
+typedef enum filc_exit_allowed_mode filc_exit_allowed_mode;
+
 struct filc_global_initialization_work_item {
     filc_ptr* pizlonated_gptr;
     
@@ -2076,6 +2083,11 @@ static inline char* filc_object_aux_ptr(filc_object* object)
 PAS_API PAS_NEVER_INLINE char* filc_object_ensure_aux_ptr_slow(filc_thread* my_thread,
                                                                filc_object* object);
 
+/* This is a version that doesn't exit; basically any use of it is suboptimal but sometimes we have
+   to call this in a place where exiting is wrong. */
+PAS_NEVER_INLINE char* filc_object_ensure_aux_ptr_slow_without_exiting(filc_thread* my_thread,
+                                                                       filc_object* object);
+
 /* This may exit! */
 static inline char* filc_object_ensure_aux_ptr(filc_thread* my_thread, filc_object* object)
 {
@@ -2083,6 +2095,15 @@ static inline char* filc_object_ensure_aux_ptr(filc_thread* my_thread, filc_obje
     if (PAS_LIKELY(result))
         return result;
     return filc_object_ensure_aux_ptr_slow(my_thread, object);
+}
+
+static inline char* filc_object_ensure_aux_ptr_without_exiting(filc_thread* my_thread,
+                                                               filc_object* object)
+{
+    char* result = filc_object_aux_ptr(object);
+    if (PAS_LIKELY(result))
+        return result;
+    return filc_object_ensure_aux_ptr_slow_without_exiting(my_thread, object);
 }
 
 char* filc_object_ensure_aux_ptr_outline(filc_thread* my_thread, filc_object* object);
@@ -3457,9 +3478,14 @@ filc_object* filc_allocate_special_with_existing_payload(
    object's lower/upper are set accordingly. */
 filc_object* filc_allocate(filc_thread* my_thread, size_t size);
 
+filc_object* filc_allocate_without_exiting(filc_thread* my_thread, size_t size);
+
 /* Allocates an object with a payload of the given size and alignment. The object itself may or may not
    have that alignment. Word types start out unset and the object's lower/upper are set accordingly. */
 filc_object* filc_allocate_with_alignment(filc_thread* my_thread, size_t size, size_t alignment);
+
+filc_object* filc_allocate_with_alignment_without_exit(filc_thread* my_thread,
+                                                       size_t size, size_t alignment);
 
 /* Allocates an object that is page aligned and has a destructor that will munmap it. */
 filc_object* filc_allocate_for_mmap(filc_thread* my_thread, size_t size);
@@ -3909,6 +3935,45 @@ void filc_memset(filc_thread* my_thread, filc_ptr ptr, unsigned value, size_t co
    never be worth it. */
 void filc_memmove(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t count,
                   const filc_origin* origin);
+
+/* There are multiple reasons for these promote/demote things not exiting:
+   
+   - It so happens that the way that the compiler emits calls to these means that it could do:
+   
+         p1 = filc_promote_stack_to_heap_without_exiting(...);
+         p2 = filc_promote_stack_to_heap_without_exiting(...);
+         track(p1);
+         track(p2);
+     
+     In which case it would be wrong if the second call to promote exited. This is sort of dumb; I
+     could fix the compiler to correctly interleave the tracking.
+
+   - Unless the program is doing something crazy, the size will not be big enough for exiting to make
+     sense.
+
+   - Even if the size is large, the calling convention path has other places where we'll do O(size)
+     work without exiting. So making this exit doesn't gain us anything asymptotically.
+
+   - These functions are called on hot-enough paths that not exiting is likely to be significantly
+     more performant. */
+
+/* Allocates a new object and copies the contents of stack-allocated data to it. Requires that the
+   size is word aligned. Caller assumes responsibility for ensuring that the stack buffer is big
+   enough for the size to make sense. */
+filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
+    filc_thread* my_thread, void* payload, void* aux, size_t size);
+
+/* Takes a known-to-be-word-aligned pointer and a known-to-be-word-aligned size, with all checks
+   necessary to do the access to the pointer with that size already having been performed, and copies
+   to the given stack buffer, which is also known to be big enough. */
+void filc_demote_word_aligned_already_checked_heap_to_stack_without_exiting(
+    filc_ptr ptr, void* payload, void* aux, size_t size);
+
+/* Takes a pointer that may or may not be word aligned and a size that may or may not be word aligned
+   and copies the contents to the given stack buffer. Assumes that the caller already checked that
+   accessing `size` bytes in the pointer and stack buffer is safe. */
+void filc_demote_already_checked_heap_to_stack_without_exiting(
+    filc_ptr ptr, void* payload, void* aux, size_t size);
 
 filc_ptr filc_promote_args_to_heap(filc_thread* my_thread, size_t size);
 size_t filc_prepare_to_return_with_data(filc_thread* my_thread, filc_ptr rets,

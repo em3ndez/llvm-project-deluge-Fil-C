@@ -708,7 +708,7 @@ struct zstack_frame_description {
 /* Walks the Fil-C stack and calls callback for every frame found. Continues walking so long as the
    callback returns true. Guaranteed to skip the zstack_scan frame. */
 void zstack_scan(filc_bool (*callback)(
-                     zstack_frame_description description,
+                     const zstack_frame_description* description,
                      void* arg),
                  void* arg);
 
