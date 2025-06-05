@@ -3313,64 +3313,75 @@ filc_ptr filc_native_zptr_contents_to_new_string(filc_thread* my_thread, filc_pt
 }
 
 PAS_NEVER_INLINE PAS_NO_RETURN void filc_check_aligned_access_fail(
-    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind)
+    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind, const char* ptr_name)
 {
     filc_validate_ptr(ptr, NULL);
 
     PAS_ASSERT(bytes);
 
+    if (!ptr_name)
+        ptr_name = "";
+    else {
+        pas_allocation_config allocation_config;
+        bmalloc_initialize_allocation_config(&allocation_config);
+        pas_string_stream stream;
+        pas_string_stream_construct(&stream, &allocation_config);
+        pas_string_stream_printf(&stream, "%s ", ptr_name);
+        ptr_name = pas_string_stream_take_string(&stream);
+    }
+
     FILC_CHECK(
         pas_is_aligned((uintptr_t)filc_ptr_ptr(ptr), alignment),
         NULL,
-        "alignment requirement of %zu bytes not met during %s; in this case ptr %% %zu = %zu "
-        "(ptr = %s).",
-        filc_access_kind_get_string(kind), alignment, alignment,
-        (size_t)filc_ptr_ptr(ptr) % alignment, filc_ptr_to_new_string(ptr));
+        "alignment requirement of %zu bytes not met during %s; in this case %sptr %% %zu = %zu "
+        "(%sptr = %s).",
+        alignment, filc_access_kind_get_string(kind), ptr_name, alignment,
+        (size_t)filc_ptr_ptr(ptr) % alignment, ptr_name, filc_ptr_to_new_string(ptr));
 
     FILC_CHECK(
         filc_ptr_object(ptr),
         NULL,
-        "cannot %s pointer with null object (ptr = %s).",
-        filc_access_kind_get_string(kind), filc_ptr_to_new_string(ptr));
+        "cannot %s %spointer with null object (%sptr = %s).",
+        filc_access_kind_get_string(kind), ptr_name, ptr_name, filc_ptr_to_new_string(ptr));
 
     FILC_CHECK(
         !(filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE),
         NULL,
-        "cannot %s pointer to free object (ptr = %s).",
-        filc_access_kind_get_string(kind), filc_ptr_to_new_string(ptr));
+        "cannot %s %spointer to free object (%sptr = %s).",
+        filc_access_kind_get_string(kind), ptr_name, ptr_name, filc_ptr_to_new_string(ptr));
     
     FILC_CHECK(
         !(filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAGS_SPECIAL_MASK),
         NULL,
-        "cannot %s pointer to special object (ptr = %s).",
-        filc_access_kind_get_string(kind), filc_ptr_to_new_string(ptr));
+        "cannot %s %spointer to special object (%sptr = %s).",
+        filc_access_kind_get_string(kind), ptr_name, ptr_name, filc_ptr_to_new_string(ptr));
     
     FILC_CHECK(
         filc_ptr_ptr(ptr) >= filc_ptr_lower(ptr),
         NULL,
-        "cannot %s pointer with ptr < lower (ptr = %s).", 
-        filc_access_kind_get_string(kind), filc_ptr_to_new_string(ptr));
+        "cannot %s %spointer with ptr < lower (%sptr = %s).", 
+        filc_access_kind_get_string(kind), ptr_name, ptr_name, filc_ptr_to_new_string(ptr));
 
     FILC_CHECK(
         filc_ptr_ptr(ptr) < filc_ptr_upper(ptr),
         NULL,
-        "cannot %s pointer with ptr >= upper (ptr = %s).",
-        filc_access_kind_get_string(kind), filc_ptr_to_new_string(ptr));
+        "cannot %s %spointer with ptr >= upper (%sptr = %s).",
+        filc_access_kind_get_string(kind), ptr_name, ptr_name, filc_ptr_to_new_string(ptr));
 
     FILC_CHECK(
         bytes <= (uintptr_t)((char*)filc_ptr_upper(ptr) - (char*)filc_ptr_ptr(ptr)),
         NULL,
-        "cannot %s %zu bytes when upper - ptr = %zu (ptr = %s).",
+        "cannot %s %zu bytes when upper - ptr = %zu (%sptr = %s).",
         filc_access_kind_get_string(kind), bytes,
         (size_t)((char*)filc_ptr_upper(ptr) - (char*)filc_ptr_ptr(ptr)),
-        filc_ptr_to_new_string(ptr));
+        ptr_name, filc_ptr_to_new_string(ptr));
 
     if (kind == filc_write_access) {
         FILC_CHECK(
             !(filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_READONLY),
             NULL,
-            "cannot write to read-only object (ptr = %s).",
-            filc_ptr_to_new_string(ptr));
+            "cannot write to read-only object (%sptr = %s).",
+            ptr_name, filc_ptr_to_new_string(ptr));
     }
     
     PAS_UNREACHABLE();
@@ -3736,8 +3747,8 @@ PAS_NO_RETURN PAS_NEVER_INLINE void memmove_fail(filc_ptr dst, filc_ptr src, siz
     FILC_DEFINE_FRAME("memmove");
     filc_push_frame(my_thread, frame);
 
-    filc_check_access(dst, count, filc_write_access);
-    filc_check_access(src, count, filc_read_access);
+    filc_check_access_with_name(dst, count, filc_write_access, "destination");
+    filc_check_access_with_name(src, count, filc_read_access, "source");
     PAS_UNREACHABLE();
 }
 

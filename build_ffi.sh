@@ -30,11 +30,9 @@ set -x
 
 cd libffi-3.4.6
 make distclean || echo whatever
-CC=$PWD/../build/bin/clang CXX=$PWD/../build/bin/clang++ ./configure --prefix=$PWD/../pizfix --disable-exec-static-tramp
+CC="$PWD/../build/bin/clang -g" CXX="$PWD/../build/bin/clang++ -g" ./configure --prefix=$PWD/../pizfix --disable-exec-static-tramp
 make -j $NCPU
-
-# FIXME: Run the tests!
-
+make check
 make install
 
 # Do a cheesy test for now.

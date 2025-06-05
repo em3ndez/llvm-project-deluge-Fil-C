@@ -3745,10 +3745,10 @@ static inline const char* filc_access_kind_get_string(filc_access_kind access_ki
 }
 
 PAS_NEVER_INLINE PAS_NO_RETURN void filc_check_aligned_access_fail(
-    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind);
+    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind, const char* ptr_name);
  
-static PAS_ALWAYS_INLINE void filc_check_aligned_access(
-    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind)
+static PAS_ALWAYS_INLINE void filc_check_aligned_access_with_name(
+    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind, const char* ptr_name)
 {
     static const bool extreme_assert = false;
     
@@ -3765,7 +3765,19 @@ static PAS_ALWAYS_INLINE void filc_check_aligned_access(
         || PAS_UNLIKELY(bytes > (uintptr_t)((char*)filc_ptr_upper(ptr) - (char*)filc_ptr_ptr(ptr)))
         || (kind == filc_write_access
             && PAS_UNLIKELY(filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_READONLY)))
-        filc_check_aligned_access_fail(ptr, bytes, alignment, kind);
+        filc_check_aligned_access_fail(ptr, bytes, alignment, kind, ptr_name);
+}
+
+static PAS_ALWAYS_INLINE void filc_check_aligned_access(
+    filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind)
+{
+    filc_check_aligned_access_with_name(ptr, bytes, alignment, kind, NULL);
+}
+    
+static PAS_ALWAYS_INLINE void filc_check_access_with_name(
+    filc_ptr ptr, size_t bytes, filc_access_kind kind, const char* ptr_name)
+{
+    filc_check_aligned_access_with_name(ptr, bytes, 1, kind, ptr_name);
 }
 
 static PAS_ALWAYS_INLINE void filc_check_access(
