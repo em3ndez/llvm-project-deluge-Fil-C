@@ -4252,34 +4252,12 @@ class Pizlonator {
       Blocks, BackEdgePreds, CanonicalPtrLiveAtTail, ForwardChecksAtHead, ForwardChecksAtTail);
   }
   
-  Type* argType(Type* T) {
-    if (IntegerType* IT = dyn_cast<IntegerType>(T)) {
-      if (IT->getBitWidth() < IntPtrTy->getBitWidth())
-        return IntPtrTy;
-      return IT;
-    }
-    if (T == FloatTy)
-      return DoubleTy;
-    return T;
-  }
-
-  Type* argType(ArgInfo AI) {
-    switch (AI.AK) {
-    case ArgKind::Direct:
-      return argType(AI.T);
-    case ArgKind::ByVal:
-      return AI.T;
-    }
-    llvm_unreachable("Bad AK");
-    return nullptr;
-  }
-
   template<typename FuncTy>
   size_t iterateArgs(const std::vector<ArgInfo>& Elements,
                      const FuncTy& Func) {
     size_t Offset = 0;
     for (size_t Idx = 0; Idx < Elements.size(); ++Idx) {
-      Type* T = argType(Elements[Idx]);
+      Type* T = Elements[Idx].T;
       size_t Alignment = std::max(WordSize, DL.getABITypeAlign(T).value());
       Offset = (Offset + Alignment - 1) & -Alignment;
       Func(Idx, Elements[Idx], Offset);
@@ -4295,7 +4273,7 @@ class Pizlonator {
   size_t argsAlignment(const std::vector<ArgInfo>& Elements) {
     size_t Alignment = WordSize;
     iterateArgs(Elements, [&] (size_t Idx, ArgInfo AI, size_t Offset) {
-      Alignment = std::max(Alignment, DL.getABITypeAlign(argType(AI)).value());
+      Alignment = std::max(Alignment, DL.getABITypeAlign(AI.T).value());
     });
     return Alignment;
   }
@@ -4327,48 +4305,6 @@ class Pizlonator {
       }
     }
     return Elements;
-  }
-
-  Value* castToArg(Value* V, Type* OriginalArgT, Type* CanonicalArgT, Instruction* InsertBefore) {
-    if (ultraVerbose) {
-      errs() << "OriginalArgT = " << *OriginalArgT << ", CanonicalArgT = " << *CanonicalArgT << "\n";
-      errs() << "V = " << *V << "\n";
-    }
-    if (OriginalArgT == CanonicalArgT)
-      return V;
-    if (IntegerType* VIT = dyn_cast<IntegerType>(OriginalArgT)) {
-      IntegerType* CanonicalArgIT = cast<IntegerType>(CanonicalArgT);
-      assert(VIT->getBitWidth() < CanonicalArgIT->getBitWidth());
-      Instruction *ZExt = new ZExtInst(V, CanonicalArgT, "filc_cast_to_arg_int", InsertBefore);
-      ZExt->setDebugLoc(InsertBefore->getDebugLoc());
-      return ZExt;
-    }
-    assert(OriginalArgT == FloatTy);
-    assert(CanonicalArgT == DoubleTy);
-    Instruction* FPExt = new FPExtInst(V, DoubleTy, "filc_cast_to_arg_double", InsertBefore);
-    FPExt->setDebugLoc(InsertBefore->getDebugLoc());
-    return FPExt;
-  }
-
-  Value* castFromArg(Value* V, Type* OriginalArgT, Instruction* InsertBefore) {
-    if (ultraVerbose) {
-      errs() << "OriginalArgT = " << *OriginalArgT << "\n";
-      errs() << "V = " << *V << "\n";
-    }
-    if (V->getType() == OriginalArgT)
-      return V;
-    if (IntegerType* VIT = dyn_cast<IntegerType>(V->getType())) {
-      IntegerType* OriginalArgIT = cast<IntegerType>(OriginalArgT);
-      assert(VIT->getBitWidth() > OriginalArgIT->getBitWidth());
-      Instruction* Trunc = new TruncInst(V, OriginalArgT, "filc_cast_from_arg_int", InsertBefore);
-      Trunc->setDebugLoc(InsertBefore->getDebugLoc());
-      return Trunc;
-    }
-    assert(V->getType() == DoubleTy);
-    assert(OriginalArgT == FloatTy);
-    Instruction* FPTrunc = new FPTruncInst(V, FloatTy, "filc_cast_from_arg_double", InsertBefore);
-    FPTrunc->setDebugLoc(InsertBefore->getDebugLoc());
-    return FPTrunc;
   }
 
   std::vector<Value*> loadCC(const std::vector<ArgInfo>& AIs, Value* PassedSize,
@@ -4460,16 +4396,14 @@ class Pizlonator {
       Value* AuxPtr = GetElementPtrInst::Create(
         Int8Ty, AuxAlloca, { ConstantInt::get(IntPtrTy, Offset) }, "filc_offset_aux",
         InsertBefore);
-      Type* ArgT = argType(AI);
+      Type* ArgT = AI.T;
       Value* Result;
 
       switch (AI.AK) {
       case ArgKind::Direct:
-        Result = castFromArg(
-          loadValueRecurseAfterCheck(
-            ArgT, PayloadPtr, AuxAlloca, AuxPtr, false, DL.getABITypeAlign(ArgT),
-            AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::CC, InsertBefore),
-          toFlightType(AI.T), InsertBefore);
+        Result = loadValueRecurseAfterCheck(
+          ArgT, PayloadPtr, AuxAlloca, AuxPtr, false, DL.getABITypeAlign(ArgT),
+          AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::CC, InsertBefore);
         break;
       case ArgKind::ByVal:
         Result = CallInst::Create(
@@ -4552,13 +4486,12 @@ class Pizlonator {
       Value* AuxPtr = GetElementPtrInst::Create(
         Int8Ty, AuxAlloca, { ConstantInt::get(IntPtrTy, Offset) }, "filc_offset_aux",
         InsertBefore);
-      Type* ArgT = argType(AI);
+      Type* ArgT = AI.T;
       switch (AI.AK) {
       case ArgKind::Direct: {
         storeValueRecurseAfterCheck(
-          ArgT, castToArg(Vs[Index], toFlightType(AI.T), toFlightType(ArgT), InsertBefore),
-          PayloadPtr, AuxPtr, false, DL.getABITypeAlign(ArgT), AtomicOrdering::NotAtomic,
-          SyncScope::System, MemoryKind::CC, InsertBefore);
+          ArgT, Vs[Index], PayloadPtr, AuxPtr, false, DL.getABITypeAlign(ArgT),
+          AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::CC, InsertBefore);
         break;
       }
       case ArgKind::ByVal: {
@@ -6308,7 +6241,7 @@ class Pizlonator {
 
     if (VAArgInst* VI = dyn_cast<VAArgInst>(I)) {
       Type* T = VI->getType();
-      Type* CanonicalT = argType(T);
+      Type* CanonicalT = T;
       size_t Size = DL.getTypeAllocSize(CanonicalT);
       size_t Alignment = DL.getABITypeAlign(CanonicalT).value();
       storeOrigin(getOrigin(VI->getDebugLoc()), VI);
@@ -6328,7 +6261,7 @@ class Pizlonator {
       Value* Load = loadValueRecurseAfterCheck(
         CanonicalT, P, AuxP, AuxP, false, DL.getABITypeAlign(CanonicalT),
         AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::Heap, VI);
-      VI->replaceAllUsesWith(castFromArg(Load, toFlightType(T), VI));
+      VI->replaceAllUsesWith(Load);
       VI->eraseFromParent();
       return;
     }

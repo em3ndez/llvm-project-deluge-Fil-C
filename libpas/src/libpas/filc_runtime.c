@@ -2071,6 +2071,8 @@ static PAS_ALWAYS_INLINE filc_ptr get_next_bytes_for_va_arg_impl(
     filc_ptr ptr_value;
     uintptr_t ptr_as_int;
 
+    alignment = pas_max_uintptr(alignment, FILC_WORD_SIZE);
+
     /* In a perfect world, we'd track this pointer because logically we're doing a ptr store later on,
        and the ptr store may exit.
        

@@ -41,16 +41,6 @@ static void test2(int64_t x, ...)
         zerror("assertion failed"); \
     } while (false)
 
-static void test3(char* x, ...)
-{
-    va_list args;
-    va_start(args, x);
-    ZASSERT(!strcmp(x, "hello"));
-    CMPFLOAT(va_arg(args, float), 1.5);
-    CMPFLOAT(va_arg(args, float), 5.25);
-    CMPFLOAT(va_arg(args, float), 4.75);
-}
-
 static void test4(char* x, ...)
 {
     va_list args;
@@ -69,8 +59,6 @@ int main()
     test2(666, (uint64_t)'h', (uint64_t)'e', (uint64_t)'l', (uint64_t)'l', (uint64_t)'o');
     test1(666, (unsigned)'h', (unsigned)'e', (unsigned)'l', (unsigned)'l', (unsigned)'o');
     test2(666, (unsigned)'h', (unsigned)'e', (unsigned)'l', (unsigned)'l', (unsigned)'o');
-    test3("hello", (double)1.5, (double)5.25, (double)4.75);
-    test3("hello", (float)1.5, (float)5.25, (float)4.75);
     test4("hello", (double)1.5, (double)5.25, (double)4.75);
     test4("hello", (float)1.5, (float)5.25, (float)4.75);
     return 0;

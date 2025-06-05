@@ -3107,8 +3107,8 @@ PAS_API char* filc_cc_cursor_to_new_string(filc_cc_cursor cursor);
 static inline bool filc_cc_cursor_has_next(filc_cc_cursor* cursor, size_t size_and_alignment)
 {
     PAS_TESTING_ASSERT(size_and_alignment);
-    PAS_TESTING_ASSERT(size_and_alignment <= FILC_WORD_SIZE);
     PAS_TESTING_ASSERT(pas_is_power_of_2(size_and_alignment));
+    size_and_alignment = pas_max_uintptr(size_and_alignment, FILC_WORD_SIZE);
     uintptr_t original_cursor_offset = cursor->offset;
     uintptr_t cursor_offset = original_cursor_offset;
     cursor_offset = pas_round_up_to_power_of_2(cursor_offset, size_and_alignment);
@@ -3120,8 +3120,8 @@ static PAS_ALWAYS_INLINE size_t filc_cc_cursor_get_next_arg_offset(filc_cc_curso
                                                                    size_t size_and_alignment)
 {
     PAS_TESTING_ASSERT(size_and_alignment);
-    PAS_TESTING_ASSERT(size_and_alignment <= FILC_WORD_SIZE);
     PAS_TESTING_ASSERT(pas_is_power_of_2(size_and_alignment));
+    size_and_alignment = pas_max_uintptr(size_and_alignment, FILC_WORD_SIZE);
     uintptr_t original_cursor_offset = cursor->offset;
     uintptr_t cursor_offset = original_cursor_offset;
     cursor_offset = pas_round_up_to_power_of_2(cursor_offset, size_and_alignment);
@@ -3140,8 +3140,8 @@ static PAS_ALWAYS_INLINE void filc_cc_sizer_add_arg(filc_cc_sizer* sizer,
                                                     size_t size_and_alignment)
 {
     PAS_TESTING_ASSERT(size_and_alignment);
-    PAS_TESTING_ASSERT(size_and_alignment <= FILC_WORD_SIZE);
     PAS_TESTING_ASSERT(pas_is_power_of_2(size_and_alignment));
+    size_and_alignment = pas_max_uintptr(size_and_alignment, FILC_WORD_SIZE);
     uintptr_t original_sizer_size = sizer->size;
     uintptr_t sizer_size = original_sizer_size;
     sizer_size = pas_round_up_to_power_of_2(sizer_size, size_and_alignment);
@@ -3151,7 +3151,6 @@ static PAS_ALWAYS_INLINE void filc_cc_sizer_add_arg(filc_cc_sizer* sizer,
 
 static inline size_t filc_thread_cc_total_size(filc_thread* my_thread)
 {
-
     return FILC_CC_INLINE_SIZE + my_thread->cc_outline_size;
 }
 
@@ -3214,85 +3213,84 @@ static inline filc_ptr filc_cc_cursor_get_next_ptr_and_track(filc_thread* my_thr
 
 static inline int filc_cc_cursor_get_next_int(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
-    return (int)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, int);
 }
 
 static inline void filc_cc_cursor_set_next_int(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                int value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)(unsigned)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, int) = value;
 }
 
 static inline void filc_cc_sizer_add_int(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(int));
 }
 
 static inline unsigned filc_cc_cursor_get_next_unsigned(filc_thread* my_thread,
                                                         filc_cc_cursor* cursor)
 {
-    return (unsigned)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, unsigned);
 }
 
 static inline void filc_cc_cursor_set_next_unsigned(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                     unsigned value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, unsigned) = value;
 }
 
 static inline void filc_cc_sizer_add_unsigned(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(unsigned));
 }
 
 static inline long filc_cc_cursor_get_next_long(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
-    return (long)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, long);
 }
 
 static inline void filc_cc_cursor_set_next_long(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                 long value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) =
-        (uint64_t)(unsigned long)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, long) = value;
 }
 
 static inline void filc_cc_sizer_add_long(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(long));
 }
 
 static inline unsigned long filc_cc_cursor_get_next_unsigned_long(filc_thread* my_thread,
                                                                   filc_cc_cursor* cursor)
 {
-    return (unsigned long)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, unsigned long);
 }
 
 static inline void filc_cc_cursor_set_next_unsigned_long(filc_thread* my_thread,
                                                          filc_cc_cursor* cursor, unsigned long value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, unsigned long) = value;
 }
 
 static inline void filc_cc_sizer_add_unsigned_long(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(unsigned long));
 }
 
 static inline size_t filc_cc_cursor_get_next_size_t(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
-    return (size_t)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, size_t);
 }
 
 static inline void filc_cc_cursor_set_next_size_t(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                   size_t value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, size_t) = value;
 }
 
 static inline void filc_cc_sizer_add_size_t(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(size_t));
 }
 
 static inline double filc_cc_cursor_get_next_double(filc_thread* my_thread, filc_cc_cursor* cursor)
@@ -3313,18 +3311,18 @@ static inline void filc_cc_sizer_add_double(filc_cc_sizer* sizer)
 
 static inline float filc_cc_cursor_get_next_float(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
-    return (float)filc_cc_cursor_get_next_int_impl(my_thread, cursor, double);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, float);
 }
 
 static inline void filc_cc_cursor_set_next_float(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                  float value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, double) = (double)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, float) = value;
 }
 
 static inline void filc_cc_sizer_add_float(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(double));
+    filc_cc_sizer_add_arg(sizer, sizeof(float));
 }
 
 static inline long double filc_cc_cursor_get_next_long_double(filc_thread* my_thread,
@@ -3346,88 +3344,87 @@ static inline void filc_cc_sizer_add_long_double(filc_cc_sizer* sizer)
 
 static inline bool filc_cc_cursor_get_next_bool(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
-    return (bool)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, bool);
 }
 
 static inline void filc_cc_cursor_set_next_bool(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                 bool value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, bool) = value;
 }
 
 static inline void filc_cc_sizer_add_bool(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(bool));
 }
 
 static inline ssize_t filc_cc_cursor_get_next_ssize_t(filc_thread* my_thread, filc_cc_cursor* cursor)
 {
-    return (ssize_t)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, ssize_t);
 }
 
 static inline void filc_cc_cursor_set_next_ssize_t(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                    ssize_t value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)(size_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, ssize_t) = value;
 }
 
 static inline void filc_cc_sizer_add_ssize_t(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(ssize_t));
 }
 
 static inline unsigned short filc_cc_cursor_get_next_unsigned_short(filc_thread* my_thread,
                                                                     filc_cc_cursor* cursor)
 {
-    return (unsigned short)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, unsigned short);
 }
 
 static inline void filc_cc_cursor_set_next_unsigned_short(filc_thread* my_thread,
                                                           filc_cc_cursor* cursor,
                                                           unsigned short value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, unsigned short) = value;
 }
 
 static inline void filc_cc_sizer_add_unsigned_short(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(unsigned short));
 }
 
 static inline unsigned long long filc_cc_cursor_get_next_unsigned_long_long(filc_thread* my_thread,
                                                                             filc_cc_cursor* cursor)
 {
-    return (unsigned long long)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, unsigned long long);
 }
 
 static inline void filc_cc_cursor_set_next_unsigned_long_long(filc_thread* my_thread,
                                                               filc_cc_cursor* cursor,
                                                               unsigned long long value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) = (uint64_t)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, unsigned long long) = value;
 }
 
 static inline void filc_cc_sizer_add_unsigned_long_long(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(unsigned long long));
 }
 
 static inline long long filc_cc_cursor_get_next_long_long(filc_thread* my_thread,
                                                           filc_cc_cursor* cursor)
 {
-    return (long long)filc_cc_cursor_get_next_int_impl(my_thread, cursor, uint64_t);
+    return filc_cc_cursor_get_next_int_impl(my_thread, cursor, long long);
 }
 
 static inline void filc_cc_cursor_set_next_long_long(filc_thread* my_thread, filc_cc_cursor* cursor,
                                                      long long value)
 {
-    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, uint64_t) =
-        (uint64_t)(unsigned long long)value;
+    *filc_cc_cursor_get_next_int_ptr_impl(my_thread, cursor, long long) = value;
 }
 
 static inline void filc_cc_sizer_add_long_long(filc_cc_sizer* sizer)
 {
-    filc_cc_sizer_add_arg(sizer, sizeof(uint64_t));
+    filc_cc_sizer_add_arg(sizer, sizeof(long long));
 }
 
 static inline bool filc_special_type_is_valid(filc_special_type special_type)
