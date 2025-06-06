@@ -2,4 +2,4 @@ return:
   failure
 output-includes:
   - "filc safety error"
-  - "cannot write pointer with ptr >= upper (ptr ="
+  - "cannot write to read-only object (ptr ="
