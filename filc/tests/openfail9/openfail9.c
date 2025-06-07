@@ -5,9 +5,9 @@
 
 int main()
 {
-    char* p = malloc(16);
+    char* p = malloc(64);
+    strcpy(p, "filc/tests/openfail9/test.txt");
     free(p);
-    strcpy(p, "filc/tests/openfail9/test.txt");  // Use after free
-    open(p, O_RDONLY);
+    open(p, O_RDONLY);  // Use after free
     return 0;
 }
