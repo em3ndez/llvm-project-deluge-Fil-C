@@ -1013,6 +1013,14 @@ static PAS_ALWAYS_INLINE void pas_store_store_fence(void)
         pas_compiler_fence();
 }
 
+static PAS_ALWAYS_INLINE void pas_load_load_fence(void)
+{
+    if (PAS_ARM)
+        pas_fence();
+    else
+        pas_compiler_fence();
+}
+
 #if PAS_COMPILER(CLANG) || PAS_COMPILER(MSVC) || PAS_X86_64
 
 struct pas_pair;

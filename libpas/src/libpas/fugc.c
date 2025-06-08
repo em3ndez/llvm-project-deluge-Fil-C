@@ -27,6 +27,7 @@
 
 #if LIBPAS_ENABLED
 
+#include "filc_runtime_inlines.h"
 #include "fugc.h"
 #include "pas_fd_stream.h"
 #include "pas_ptr_hash_set.h"
@@ -61,9 +62,11 @@ pas_heap* fugc_default_heap;
 pas_heap* fugc_destructor_heap;
 pas_heap* fugc_census_heap;
 pas_heap* fugc_census_and_destructor_heap;
+pas_heap* fugc_finalizer_heap;
 verse_heap_object_set* fugc_destructor_set;
 verse_heap_object_set* fugc_census_set;
 verse_heap_object_set* fugc_scribble_set;
+verse_heap_object_set* fugc_finalizer_set;
 
 static pas_system_mutex collector_thread_state_lock;
 static pas_system_condition collector_thread_state_cond;
@@ -122,8 +125,8 @@ static bool rage_mode;
 enum collector_state {
     collector_waiting,
     collector_marking,
-    collector_destructing,
     collector_censusing,
+    collector_destructing,
     collector_scribbling,
     collector_sweeping
 };
@@ -762,7 +765,7 @@ static void verify_mark_or_free_lower_or_box(filc_mark_stack* mark_stack,
         .set_is_marked = verify_set_is_marked \
     })
 
-static void mark_and_start_destructing(void)
+static void mark_and_start_censusing(void)
 {
     if (verbose >= VERBOSE_PHASES)
         pas_log("[%d] fugc: marking\n", pas_getpid());
@@ -854,14 +857,14 @@ static void mark_and_start_destructing(void)
     if (verbose >= VERBOSE_CYCLES)
         mark_end_time = pas_get_time_in_milliseconds();
 
-    PAS_ASSERT(destruct_size == SIZE_MAX);
-    PAS_ASSERT(destruct_index == SIZE_MAX);
-    verse_heap_object_set_start_iterate_before_handshake(fugc_destructor_set);
+    PAS_ASSERT(census_size == SIZE_MAX);
+    PAS_ASSERT(census_index == SIZE_MAX);
+    verse_heap_object_set_start_iterate_before_handshake(fugc_census_set);
     filc_soft_handshake(after_marking_pollcheck_callback, NULL);
-    destruct_size = verse_heap_object_set_start_iterate_after_handshake(fugc_destructor_set);
-    destruct_index = 0;
+    census_size = verse_heap_object_set_start_iterate_after_handshake(fugc_census_set);
+    census_index = 0;
 
-    current_collector_state = collector_destructing;
+    current_collector_state = collector_censusing;
 }
 
 static bool iterate_in_parallel(size_t* global_index, size_t global_size,
@@ -895,48 +898,6 @@ static bool iterate_in_parallel(size_t* global_index, size_t global_size,
     }
 }
 
-static void destruct_parallel_worker(void)
-{
-    size_t begin_index;
-    size_t end_index;
-    size_t count = 0;
-    while (iterate_in_parallel(&destruct_index, destruct_size, &begin_index, &end_index, &count)) {
-        verse_heap_object_set_iterate_range_inline(
-            fugc_destructor_set, begin_index, end_index,
-            verse_heap_iterate_unmarked, destruct_object_callback, NULL);
-    }
-}
-
-static void destruct_and_start_censusing(void)
-{
-    if (verbose >= VERBOSE_PHASES) {
-        pas_log("[%d] fugc: marking took %lf ms; destructing\n",
-                pas_getpid(), mark_end_time - overall_start_time);
-    }
-
-    PAS_ASSERT(!filc_current_marking_state);
-    PAS_ASSERT(filc_has_unfinished_census);
-    PAS_ASSERT(current_collector_state == collector_destructing);
-
-    DO_PARALLEL_WORK(destruct_parallel_worker);
-    if (collector_control_request)
-        return;
-
-    destruct_index = SIZE_MAX;
-    destruct_size = SIZE_MAX;
-
-    verse_heap_object_set_end_iterate(fugc_destructor_set);
-
-    PAS_ASSERT(census_size == SIZE_MAX);
-    PAS_ASSERT(census_index == SIZE_MAX);
-    verse_heap_object_set_start_iterate_before_handshake(fugc_census_set);
-    filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
-    census_size = verse_heap_object_set_start_iterate_after_handshake(fugc_census_set);
-    census_index = 0;
-
-    current_collector_state = collector_censusing;
-}
-
 static void census_parallel_worker(void)
 {
     size_t begin_index;
@@ -949,10 +910,12 @@ static void census_parallel_worker(void)
     }
 }
 
-static void census_and_start_scribbling(void)
+static void census_and_start_destructing(void)
 {
-    if (verbose >= VERBOSE_PHASES)
-        pas_log("[%d] fugc: censusing\n", pas_getpid());
+    if (verbose >= VERBOSE_PHASES) {
+        pas_log("[%d] fugc: marking took %lf ms; censusing\n",
+                pas_getpid(), mark_end_time - overall_start_time);
+    }
 
     PAS_ASSERT(!filc_current_marking_state);
     PAS_ASSERT(filc_has_unfinished_census);
@@ -968,6 +931,46 @@ static void census_and_start_scribbling(void)
     verse_heap_object_set_end_iterate(fugc_census_set);
 
     filc_has_unfinished_census = false;
+
+    PAS_ASSERT(destruct_size == SIZE_MAX);
+    PAS_ASSERT(destruct_index == SIZE_MAX);
+    verse_heap_object_set_start_iterate_before_handshake(fugc_destructor_set);
+    filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+    destruct_size = verse_heap_object_set_start_iterate_after_handshake(fugc_destructor_set);
+    destruct_index = 0;
+
+    current_collector_state = collector_destructing;
+}
+
+static void destruct_parallel_worker(void)
+{
+    size_t begin_index;
+    size_t end_index;
+    size_t count = 0;
+    while (iterate_in_parallel(&destruct_index, destruct_size, &begin_index, &end_index, &count)) {
+        verse_heap_object_set_iterate_range_inline(
+            fugc_destructor_set, begin_index, end_index,
+            verse_heap_iterate_unmarked, destruct_object_callback, NULL);
+    }
+}
+
+static void destruct_and_start_scribbling(void)
+{
+    if (verbose >= VERBOSE_PHASES)
+        pas_log("[%d] fugc: destructing\n", pas_getpid());
+
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(!filc_has_unfinished_census);
+    PAS_ASSERT(current_collector_state == collector_destructing);
+
+    DO_PARALLEL_WORK(destruct_parallel_worker);
+    if (collector_control_request)
+        return;
+
+    destruct_index = SIZE_MAX;
+    destruct_size = SIZE_MAX;
+
+    verse_heap_object_set_end_iterate(fugc_destructor_set);
 
     if (should_scribble) {
         PAS_ASSERT(scribble_size == SIZE_MAX);
@@ -1171,13 +1174,13 @@ static pas_thread_return_type collector_thread(void* arg)
             wait_and_start_marking();
             continue;
         case collector_marking:
-            mark_and_start_destructing();
-            continue;
-        case collector_destructing:
-            destruct_and_start_censusing();
+            mark_and_start_censusing();
             continue;
         case collector_censusing:
-            census_and_start_scribbling();
+            census_and_start_destructing();
+            continue;
+        case collector_destructing:
+            destruct_and_start_scribbling();
             continue;
         case collector_scribbling:
             scribble_and_start_sweeping();
@@ -1238,12 +1241,15 @@ void fugc_initialize_heaps(void)
     fugc_destructor_heap = verse_heap_create(1, 0, 0);
     fugc_census_heap = verse_heap_create(1, 0, 0);
     fugc_census_and_destructor_heap = verse_heap_create(1, 0, 0);
+    fugc_finalizer_heap = verse_heap_create(1, 0, 0);
     fugc_destructor_set = verse_heap_object_set_create();
     fugc_census_set = verse_heap_object_set_create();
+    fugc_finalizer_set = verse_heap_object_set_create();
     verse_heap_add_to_set(fugc_destructor_heap, fugc_destructor_set);
     verse_heap_add_to_set(fugc_census_and_destructor_heap, fugc_destructor_set);
     verse_heap_add_to_set(fugc_census_heap, fugc_census_set);
     verse_heap_add_to_set(fugc_census_and_destructor_heap, fugc_census_set);
+    verse_heap_add_to_set(fugc_finalizer_heap, fugc_finalizer_set);
 
     if (should_scribble) {
         fugc_scribble_set = verse_heap_object_set_create();

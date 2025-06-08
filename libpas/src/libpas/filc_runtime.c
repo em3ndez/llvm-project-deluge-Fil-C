@@ -34,6 +34,7 @@
 #include "bmalloc_heap.h"
 #include "bmalloc_heap_config.h"
 #include "filc_native.h"
+#include "filc_runtime_inlines.h"
 #include "fugc.h"
 #include "pas_hashtable.h"
 #include "pas_scavenger.h"
@@ -2283,7 +2284,7 @@ filc_object* filc_allocate_special_early(size_t size, size_t alignment,
     filc_log_align log_align;
     filc_object* result;
     if (alignment > FILC_MINALIGN) {
-        filc_alignment_header_construct((filc_alignment_header*)allocation, alignment);
+        filc_alignment_header_construct(NULL, (filc_alignment_header*)allocation, alignment, NULL);
         result = (filc_object*)((char*)allocation + alignment) - 1;
         log_align = pas_log2(alignment);
     } else {
@@ -2360,8 +2361,8 @@ static PAS_ALWAYS_INLINE void prepare_allocate(
 }
 
 static PAS_ALWAYS_INLINE filc_object* initialize_object_header(
-    void* allocation, size_t size, size_t alignment, size_t offset_to_payload,
-    filc_object_flags object_flags, char* aux_ptr)
+    filc_thread* my_thread, void* allocation, size_t size, size_t alignment, size_t offset_to_payload,
+    filc_object_flags object_flags, char* aux_ptr, filc_finalizer_queue* finalizer_queue)
 {
     static const bool verbose = false;
     if (verbose) {
@@ -2372,10 +2373,14 @@ static PAS_ALWAYS_INLINE filc_object* initialize_object_header(
     PAS_TESTING_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
     PAS_TESTING_ASSERT(!filc_object_flags_is_special(object_flags));
     PAS_TESTING_ASSERT(!filc_object_flags_is_aligned(object_flags));
+    if (finalizer_queue)
+        PAS_TESTING_ASSERT(alignment >= sizeof(filc_object) + sizeof(filc_alignment_header));
     if (alignment > sizeof(filc_object)) {
         PAS_TESTING_ASSERT(offset_to_payload > sizeof(filc_object));
+        PAS_TESTING_ASSERT(offset_to_payload >= sizeof(filc_object) + sizeof(filc_alignment_header));
         PAS_TESTING_ASSERT(offset_to_payload == alignment);
-        filc_alignment_header_construct((filc_alignment_header*)allocation, alignment);
+        filc_alignment_header_construct(
+            my_thread, (filc_alignment_header*)allocation, alignment, finalizer_queue);
     }
     filc_object* result = filc_object_for_lower_not_null((char*)allocation + offset_to_payload);
     result->upper = (char*)(result + 1) + size;
@@ -2411,7 +2416,7 @@ static PAS_ALWAYS_INLINE filc_object* finish_allocate_small(filc_object* result,
 static PAS_ALWAYS_INLINE filc_object* finish_allocate(
     filc_thread* my_thread, void* allocation, size_t size, size_t alignment,
     size_t offset_to_payload, filc_object_flags object_flags,
-    filc_exit_allowed_mode exit_allowed_mode)
+    filc_exit_allowed_mode exit_allowed_mode, filc_finalizer_queue* finalizer_queue)
 {
     static const bool verbose = false;
     if (verbose && (object_flags & FILC_OBJECT_FLAG_MMAP)) {
@@ -2423,7 +2428,8 @@ static PAS_ALWAYS_INLINE filc_object* finish_allocate(
     }
     filc_thread_assert_allocation_color(my_thread, allocation);
     filc_object* result = initialize_object_header(
-        allocation, size, alignment, offset_to_payload, object_flags, NULL);
+        my_thread, allocation, size, alignment, offset_to_payload, object_flags, NULL,
+        finalizer_queue);
     if (PAS_UNLIKELY(size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) && exit_allowed_mode)
         return finish_allocate_large(my_thread, result, size);
     return finish_allocate_small(result, size);
@@ -2450,7 +2456,7 @@ static PAS_ALWAYS_INLINE filc_object* allocate_impl(
     prepare_allocate(&size, FILC_WORD_SIZE, &offset_to_payload, &total_size);
     return finish_allocate(
         my_thread, filc_thread_allocate(my_thread, total_size),
-        size, FILC_WORD_SIZE, offset_to_payload, object_flags, exit_allowed_mode);
+        size, FILC_WORD_SIZE, offset_to_payload, object_flags, exit_allowed_mode, NULL);
 }
 
 filc_object* filc_allocate(filc_thread* my_thread, size_t size)
@@ -2465,7 +2471,7 @@ filc_object* filc_allocate_without_exiting(filc_thread* my_thread, size_t size)
 
 static PAS_ALWAYS_INLINE filc_object* allocate_aligned_impl(
     filc_thread* my_thread, size_t size, size_t alignment, filc_object_flags object_flags,
-    filc_exit_allowed_mode exit_allowed_mode)
+    filc_exit_allowed_mode exit_allowed_mode, filc_finalizer_queue* finalizer_queue)
 {
     static const bool verbose = false;
     
@@ -2479,9 +2485,12 @@ static PAS_ALWAYS_INLINE filc_object* allocate_aligned_impl(
 
     pas_heap* heap;
     if ((object_flags & FILC_OBJECT_FLAG_MMAP)) {
+        PAS_ASSERT(!finalizer_queue);
         PAS_TESTING_ASSERT(alignment == pas_page_malloc_alignment());
         heap = fugc_destructor_heap;
-    } else
+    } else if (finalizer_queue)
+        heap = fugc_finalizer_heap;
+    else
         heap = fugc_default_heap;
 
     alignment = pas_max_uintptr(alignment, FILC_WORD_SIZE);
@@ -2491,18 +2500,28 @@ static PAS_ALWAYS_INLINE filc_object* allocate_aligned_impl(
     prepare_allocate(&size, alignment, &offset_to_payload, &total_size);
     return finish_allocate(
         my_thread, verse_heap_allocate_with_alignment(heap, total_size, alignment),
-        size, alignment, offset_to_payload, object_flags, exit_allowed_mode);
+        size, alignment, offset_to_payload, object_flags, exit_allowed_mode, finalizer_queue);
 }
 
 filc_object* filc_allocate_with_alignment(filc_thread* my_thread, size_t size, size_t alignment)
 {
-    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_allowed);
+    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_allowed, NULL);
 }
 
 filc_object* filc_allocate_with_alignment_without_exiting(filc_thread* my_thread,
                                                           size_t size, size_t alignment)
 {
-    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_not_allowed);
+    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_not_allowed, NULL);
+}
+
+filc_object* filc_allocate_finalizable_with_alignment(filc_thread* my_thread,
+                                                      size_t size, size_t alignment,
+                                                      filc_finalizer_queue* finalizer_queue)
+{
+    size_t finalizable_alignment = sizeof(filc_object) + sizeof(filc_alignment_header);
+    PAS_ASSERT(pas_is_power_of_2(finalizable_alignment));
+    alignment = pas_max_uintptr(finalizable_alignment, alignment);
+    return allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_allowed, finalizer_queue);
 }
 
 static filc_object* finish_reallocate(
@@ -2535,7 +2554,7 @@ static filc_object* finish_reallocate(
     }
 
     filc_object* result = initialize_object_header(
-        allocation, new_size, alignment, offset_to_payload, 0, new_aux_ptr);
+        my_thread, allocation, new_size, alignment, offset_to_payload, 0, new_aux_ptr, NULL);
     if (verbose)
         pas_log("old_object = %p, result = %p\n", old_object, result);
     if (new_size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) {
@@ -3019,8 +3038,7 @@ void filc_weak_map_census(filc_weak_map* map)
         filc_ptr_hash_map_entry entry = map->map.table[index];
         if (filc_ptr_hash_map_entry_is_empty_or_deleted(entry))
             continue;
-        if (!filc_ptr_is_markable(entry.key)
-            || verse_heap_is_marked(filc_ptr_mark_base(entry.key)))
+        if (filc_object_is_live_for_weak(filc_ptr_object(entry.key), FUGC_MARKER))
             filc_ptr_hash_map_add_new(&new_map, entry, NULL, &allocation_config);
         else if (filc_ptr_is_markable(entry.key) && filc_ptr_is_markable(entry.value)) {
             remove_inverse_weak_mapping(
@@ -3069,6 +3087,155 @@ void filc_inverse_weak_map_map_destroy(filc_inverse_weak_map_map* map)
     bmalloc_initialize_allocation_config(&allocation_config);
     filc_inverse_weak_map_map_destruct(map, &allocation_config);
     bmalloc_deallocate(map);
+}
+
+filc_finalizer_queue* filc_finalizer_queue_create(filc_thread* my_thread)
+{
+    filc_finalizer_queue* finalizer_queue = (filc_finalizer_queue*)
+        filc_object_special_payload_with_manual_tracking(
+            filc_allocate_special(
+                my_thread, sizeof(filc_finalizer_queue), 1, FILC_SPECIAL_TYPE_FINALIZER_QUEUE));
+    pas_system_mutex_construct(&finalizer_queue->lock);
+    pas_system_condition_construct(&finalizer_queue->cond);
+    filc_object_array_construct(&finalizer_queue->finalizable_objects);
+    return finalizer_queue;
+}
+
+void filc_finalizer_queue_destruct(filc_finalizer_queue* finalizer_queue)
+{
+    pas_system_mutex_destruct(&finalizer_queue->lock);
+    pas_system_condition_destruct(&finalizer_queue->cond);
+    filc_object_array_destruct(&finalizer_queue->finalizable_objects);
+}
+
+void filc_finalizer_queue_enqueue_if_necessary(filc_object* object,
+                                               filc_mark_stack* stack)
+{
+    filc_alignment_header* alignment_header = filc_object_get_alignment_header(object);
+    PAS_ASSERT(alignment_header);
+    filc_finalizer_queue* finalizer_queue = alignment_header->finalizer_queue;
+    if (finalizer_queue == FILC_FINALIZER_ENQUEUED)
+        return;
+    /* FIXME: It's possible that upon enqueueing this object, it's dequeued, which then causes another
+       finalizable object that this one points to to be marked, which then causes it to not be
+       finalized.
+    
+       That would almost be OK. After all, such a case could be explained as the object being
+       legitimately live for this GC cycle. But the problem is that it could happen in parallel to
+       the GC picking up that object during the revival phase. And because of how the race is
+       constructed, there's no way to make that right.
+    
+       Also, the current design of the finalizer queue means that it's not even a queue. I think that
+       a linked list would be the path of least resistance instead of an array.
+    
+       So the right solution is for the finalizer_queue field of the alignment_header to be an
+       encoded pointer with the following states:
+    
+       - NULL, meaning this isn't even a finalizable object and never was.
+    
+       - finalizable but live with a pointer to a finalizer queue.
+    
+       - finalizable, picked for revival. we know we will put this object on a finalizer queue and
+         we know we will mark it and put it on a mark stack, but we haven't don't all of those things
+         yet. still has a pointer to the same finalizer queue as before.
+    
+       - finalizable, revived (has been marked and placed on a mark stack), and enqueued on the
+         finalizer queue. has a `next` pointer for the finalizer queue that it's on. 
+    
+       - finalizable and no longer on any finalizer queue. maybe this could be represented as NULL,
+         since nobody cares about the difference between this state and the other NULL state. 
+       
+       In this solution, we'd have two revival phases. The first phase picks objects for revival. The
+       second phase actually revives them.
+    
+       Need to think carefully about whether this is really necessary.
+    
+       Say that we didn't have the two phases. Worst case, we'd have object A and object B where:
+    
+       - Both objects are finalizable and dead.
+    
+       - A points at B and A's finalizer will store B somewhere, causing the barrier to mark it. Or,
+         A's finalizer will have B in a root that is captured by a stack scan.
+    
+       - A gets revived and placed on the finalizer queue.
+    
+       - Some user thread dequeues A, leading to B being marked.
+    
+       - At the same time, we try to revive B. 
+    
+       Then the two OK outcomes are:
+    
+       - B ends up on the finalizer queue and is viewed as dead from the standpoint of all weak
+         references for the whole time that this is happening. 
+    
+       - B gets marked during the run of A's finalizer, doesn't get revived, and no weak reference
+         ever thought it was dead.
+    
+       If we don't have two phases, then we might get the following additional bad outcomes:
+    
+       - B ends up on the finalizer queue but there was a brief period of time during which weak
+         references thought it was live (because it was marked in a way that made is_live_for_weak
+         think that it was live).
+    
+       - B doesn't end up on the finalizer queue, survives the GC to be finalized again in the future,
+         but some weak reference observed it to be dead for some period of time. 
+    
+       So, we need two phases to ensure that these two bad outcomes don't happen.
+    
+       FIXME: But there's a deeper problem! The revival will mark other objects, including ones that
+       had been thought to be dead from the standpoint of weak references!
+    
+       Options:
+    
+       - We could have the second phase of marking mark the objects in a way that makes them seem dead
+         for the purpose of weak references.
+    
+       - We could have the first phase of marking allow arbitrary revival of weak references. Weak
+         references just continue to be live.
+    
+       - We could abandon precise weak reference semantics in the presence of finalizable objects.
+    
+       All of these options suck.
+    
+       What does JSC want? From JSC's standpoint, objects referenced by destructors are dead in the
+       sense that the JS heap can't reach them. So, if we kept them alive for the purpose of weak
+       references then that would be fine. It would just seem like we had delayed their collection.
+       JSC would also be fine with those objects all seemed dead for the purpose of weak references.
+       But JSC would not be OK if weak references observed revival. It's not OK for one weak reference
+       to an object to disagree with another one about whether an object is live, and it's not OK for
+       the same weak reference to report something as dead and then later say it's alive.
+    
+       It feels like continuing to let weak references seem to be live is the best, since it's OK for
+       JSC and the easiest to justify to other users. The problem with that is that you could have a
+       weak reference report an object live and then the object gets finalized anyway! But one easy
+       way around that is to say that if a weak reference returns an object and marks it then this
+       prevents the object from being finalized. Is that enough?
+    
+       The Java semantics are that any objects that would have been revived by finalizers have their
+       weak references nulled, but new weak references created to those revived objects end up being
+       able to reference them normally. Those are some subtle semantics!
+    
+       One approach for implementing Java semantics:
+    
+       - Use the two phase finalization approach outlined above.
+    
+       - After recording objects for finalization but not yet letting finalizers run, perform the
+         census phase. This means running census before destruction, but we can do that. That's OK.
+         
+       - Indicate to weak references that they should no longer look at finalization state for
+         deciding whether the object is live or not.
+    
+       - Then run finalizer revival. At this point new weak references might get created.
+    
+       This should work. */
+    alignment_header->finalizer_queue = FILC_FINALIZER_ENQUEUED;
+    pas_store_store_fence();
+    fugc_mark(stack, object);
+    pas_system_mutex_lock(&finalizer_queue->lock);
+    filc_object_array_push(&finalizer_queue->finalizable_objects, object);
+    if (filc_object_array_num_objects(&finalizer_queue->finalizable_objects) == 1)
+        pas_system_condition_broadcast(&finalizer_queue->cond);
+    pas_system_mutex_unlock(&finalizer_queue->lock);
 }
 
 filc_ptr filc_native_zgc_alloc(filc_thread* my_thread, size_t size)
@@ -7091,7 +7258,7 @@ filc_ptr filc_native_zsys_mmap(filc_thread* my_thread, filc_ptr address, size_t 
         address = filc_ptr_create_with_object(
             my_thread, allocate_aligned_impl(
                 my_thread, length, pas_page_malloc_alignment(), FILC_OBJECT_FLAG_MMAP,
-                filc_exit_allowed));
+                filc_exit_allowed, NULL));
         flags |= MAP_FIXED;
     }
     if (verbose) {
@@ -8508,7 +8675,7 @@ filc_ptr filc_native_zsys_shmat(filc_thread* my_thread, int shmid, filc_ptr addr
     addr_ptr = filc_ptr_create_with_object(
         my_thread, allocate_aligned_impl(
             my_thread, length, pas_page_malloc_alignment(),
-            FILC_OBJECT_FLAG_MMAP, filc_exit_allowed));
+            FILC_OBJECT_FLAG_MMAP, filc_exit_allowed, NULL));
 
     void* raw_result = FILC_SYSCALL(
         my_thread, shmat(shmid, filc_ptr_ptr(addr_ptr), flag | SHM_REMAP));
@@ -9118,7 +9285,7 @@ filc_ptr filc_native_zsys_mremap(filc_thread* my_thread, filc_ptr old_address_pt
         new_address_ptr = filc_ptr_create_with_object(
             my_thread, allocate_aligned_impl(
                 my_thread, new_size, pas_page_malloc_alignment(), FILC_OBJECT_FLAG_MMAP,
-                filc_exit_allowed));
+                filc_exit_allowed, NULL));
     } else {
         if (new_size > filc_ptr_available(old_address_ptr)) {
             filc_set_errno(ENOMEM);
