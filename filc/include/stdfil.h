@@ -140,6 +140,25 @@ void* zgc_realloc_preserving_alignment(void* old_ptr, __SIZE_TYPE__ count);
    libc's free just forwards to this. There is no difference between calling `free` and `zgc_free`. */
 void zgc_free(void* ptr);
 
+struct zgc_finq;
+typedef struct zgc_finq zgc_finq;
+
+/* Create a finalizer queue. */
+zgc_finq* zgc_finq_new(void);
+
+/* Poll the finalizer queue for objects to finalize. Returns NULL if the queue is empty. Does not
+   block. */
+void* zgc_finq_poll(zgc_finq* finq);
+
+/* Wait for the finalizer queue to have an object to finalize and then return it. */
+void* zgc_finq_wait(zgc_finq* finq);
+
+/* Allocate a finalizable object with the given finalization queue. */
+void* zgc_finq_alloc(zgc_finq* finq, __SIZE_TYPE__ size);
+
+/* Allocate an aligned finalizable object with the given finalization queue. */
+void* zgc_finq_aligned_alloc(zgc_finq* finq, __SIZE_TYPE__ alignment, __SIZE_TYPE__ size);
+
 /* Accessors for the bounds.
  
    The lower and upper bounds have the same capability as the incoming ptr. So, if you know that a

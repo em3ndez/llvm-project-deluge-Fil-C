@@ -68,6 +68,8 @@ verse_heap_object_set* fugc_census_set;
 verse_heap_object_set* fugc_scribble_set;
 verse_heap_object_set* fugc_finalizer_set;
 
+bool fugc_has_unfinished_census;
+
 static pas_system_mutex collector_thread_state_lock;
 static pas_system_condition collector_thread_state_cond;
 static bool collector_thread_is_running = false;
@@ -90,6 +92,9 @@ static size_t destruct_index = SIZE_MAX;
 
 static size_t census_size = SIZE_MAX;
 static size_t census_index = SIZE_MAX;
+
+static size_t finalizer_size = SIZE_MAX;
+static size_t finalizer_index = SIZE_MAX;
 
 static size_t scribble_size = SIZE_MAX;
 static size_t scribble_index = SIZE_MAX;
@@ -120,12 +125,16 @@ static bool should_stop_the_world;
 static bool should_scribble;
 static bool scribble_concurrently;
 static bool should_verify;
+static bool should_verify_early;
 static bool rage_mode;
 
 enum collector_state {
     collector_waiting,
     collector_marking,
     collector_censusing,
+    collector_reviving,
+    collector_remarking,
+    collector_recensusing,
     collector_destructing,
     collector_scribbling,
     collector_sweeping
@@ -400,6 +409,34 @@ static void after_marking_pollcheck_callback(filc_thread* thread, void* arg)
     filc_thread_sweep_mark_stack(thread);
 }
 
+static PAS_ALWAYS_INLINE bool donate_impl(filc_mark_stack* mark_stack, pas_lock_lock_mode mode,
+                                          bool from_inside_gc)
+{
+    if (!filc_mark_stack_num_objects(mark_stack))
+        return true;
+    if (!pas_lock_lock_with_mode(&global_stack_lock, mode))
+        return false;
+    PAS_ASSERT(filc_current_marking_state ||
+               (from_inside_gc &&
+                (current_collector_state == collector_reviving ||
+                 current_collector_state == collector_remarking)));
+    bool do_notification = !filc_mark_stack_num_objects(&fugc_global_stack);
+    filc_mark_stack_pop_all_from_and_push_to(mark_stack, &fugc_global_stack);
+    pas_lock_unlock(&global_stack_lock);
+    if (do_notification) {
+        pas_system_mutex_lock(&collector_thread_state_lock);
+        pas_system_condition_broadcast(&collector_thread_state_cond);
+        pas_system_mutex_unlock(&collector_thread_state_lock);
+    }
+    return true;
+}
+
+static void donate(filc_mark_stack* mark_stack)
+{
+    bool from_inside_gc = true;
+    PAS_ASSERT(donate_impl(mark_stack, pas_lock_lock_mode_lock, from_inside_gc));
+}
+
 static void destruct_object_callback(void* allocation, void* arg)
 {
     static const bool verbose = false;
@@ -436,6 +473,10 @@ static void destruct_object_callback(void* allocation, void* arg)
         filc_weak_map_destruct(
             (filc_weak_map*)filc_object_special_payload_with_manual_tracking(object));
         break;
+    case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
+        filc_finalizer_queue_destruct(
+            (filc_finalizer_queue*)filc_object_special_payload_with_manual_tracking(object));
+        break;
     default:
         PAS_ASSERT(!"Encountered object in destructor space that should not have destructor.");
         break;
@@ -445,19 +486,8 @@ static void destruct_object_callback(void* allocation, void* arg)
 static void census_object_callback(void* allocation, void* arg)
 {
     PAS_ASSERT(!arg);
-    /* FIXME: We could just assert that the allocation starts with the object because we aren't going
-       to align anything that participates in census.
-       
-       But I'll leave those kinds of optimizations for later. */
     filc_object* object = filc_allocation_get_object(allocation);
     PAS_ASSERT(filc_object_is_special(object));
-    /* FIXME: Eventually, we'll deal with different type objects, but currently we're not set up well
-       to deal with the fact that within each view, the set of types is constrained.
-    
-       Basically there's an opportunity to maybe hoist this branch out even if there are more
-       types.
-    
-       It's just that this might not matter at all. */
     switch (filc_object_special_type(object)) {
     case FILC_SPECIAL_TYPE_WEAK:
         filc_weak_census((filc_weak*)filc_object_special_payload_with_manual_tracking(object));
@@ -470,6 +500,21 @@ static void census_object_callback(void* allocation, void* arg)
         PAS_ASSERT(!"Encountered object in census set that should not have census.");
         break;
     }
+}
+
+static void revive_object_callback(void* allocation, void* arg)
+{
+    PAS_ASSERT(arg);
+    filc_mark_stack* local_stack = (filc_mark_stack*)arg;
+    filc_object* object = filc_allocation_get_object(allocation);
+    filc_finalizable_object_revive(object, local_stack);
+}
+
+static void recensus_object_callback(void* allocation, void* arg)
+{
+    PAS_ASSERT(!arg);
+    filc_object* object = filc_allocation_get_object(allocation);
+    filc_finalizable_object_census(object);
 }
 
 static void scribble_object_callback(void* allocation, void* arg)
@@ -490,7 +535,7 @@ static void scribble_object_callback(void* allocation, void* arg)
 static void wait_and_start_marking(void)
 {
     PAS_ASSERT(!filc_current_marking_state);
-    PAS_ASSERT(!filc_has_unfinished_census);
+    PAS_ASSERT(!fugc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_waiting);
     PAS_ASSERT(completed_cycle <= requested_cycle);
 
@@ -548,14 +593,14 @@ static void wait_and_start_marking(void)
     filc_soft_handshake(no_op_pollcheck_callback, NULL);
     
     verse_heap_start_allocating_black_before_handshake();
-    filc_has_unfinished_census = true;
+    fugc_has_unfinished_census = true;
     filc_soft_handshake(stop_allocators_to_allocate_black_pollcheck_callback, NULL);
 
     filc_mark_stack local_stack;
     filc_mark_stack_construct(&local_stack);
     /* FIXME: You could imagine this being a place we can suspend. */
     filc_mark_global_roots(FUGC_MARKER, &local_stack);
-    fugc_donate(&local_stack);
+    donate(&local_stack);
     filc_mark_stack_destruct(&local_stack);
 
     current_collector_state = collector_marking;
@@ -684,7 +729,7 @@ static void mark_parallel_worker(void)
     pas_system_mutex_unlock(&collector_thread_state_lock);
 
 done:
-    fugc_donate(&local_stack);
+    donate(&local_stack);
     filc_mark_stack_destruct(&local_stack);
 }
 
@@ -765,18 +810,76 @@ static void verify_mark_or_free_lower_or_box(filc_mark_stack* mark_stack,
         .set_is_marked = verify_set_is_marked \
     })
 
+static void verify_marking(void)
+{
+    /* This is a super slow verify GC that you can optionally enable to make sure that FUGC marked
+       everything it was supposed to mark. Only useful for debugging FUGC itself. */
+    
+    if (verbose >= VERBOSE_PHASES)
+        pas_log("[%d] fugc: verifying mark\n", pas_getpid());
+    filc_stop_the_world();
+    
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
+    pas_ptr_hash_set_construct(&verify_set);
+    
+    filc_thread** threads;
+    size_t num_threads;
+    filc_snapshot_threads(&threads, &num_threads);
+    
+    size_t index;
+    for (index = num_threads; index--;) {
+        if (filc_thread_participates_in_pollchecks(threads[index]))
+            filc_thread_stop_allocators(threads[index]);
+    }
+    
+    filc_mark_stack verify_stack;
+    filc_mark_stack_construct(&verify_stack);
+    
+    source_explanation = "global roots";
+    source_object = NULL;
+    source_thread = NULL;
+    filc_mark_global_roots(VERIFY_MARKER, &verify_stack);
+    
+    for (index = num_threads; index--;) {
+        if (filc_thread_participates_in_pollchecks(threads[index])) {
+            source_explanation = "thread roots";
+            source_object = NULL;
+            source_thread = threads[index];
+            filc_thread_mark_roots(threads[index], VERIFY_MARKER, &verify_stack);
+        }
+    }
+    
+    bmalloc_deallocate(threads);
+    
+    source_explanation = "object";
+    source_thread = NULL;
+    filc_object* object;
+    while ((object = filc_mark_stack_pop(&verify_stack))) {
+        source_object = object;
+        filc_object_mark_outgoing_ptrs(object, VERIFY_MARKER, &verify_stack);
+    }
+    
+    PAS_ASSERT(!verify_failed);
+    
+    filc_mark_stack_destruct(&verify_stack);
+    pas_ptr_hash_set_destruct(&verify_set, &allocation_config);
+    
+    filc_resume_the_world();
+}
+
 static void mark_and_start_censusing(void)
 {
     if (verbose >= VERBOSE_PHASES)
         pas_log("[%d] fugc: marking\n", pas_getpid());
 
-    PAS_ASSERT(filc_current_marking_state == filc_marking);
-    PAS_ASSERT(filc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_marking);
+    PAS_ASSERT(filc_current_marking_state == filc_marking);
+    PAS_ASSERT(fugc_has_unfinished_census);
 
     for (;;) {
         filc_current_marking_state = filc_terminating;
-
+        
         filc_soft_handshake(marking_pollcheck_callback, NULL);
         
         if (!filc_mark_stack_num_objects(&fugc_global_stack) &&
@@ -796,74 +899,22 @@ static void mark_and_start_censusing(void)
         if (collector_control_request)
             return;
     }
-    
-    if (should_verify) {
-        /* This is a super slow verify GC that you can optionally enable to make sure that FUGC marked
-           everything it was supposed to mark. Only useful for debugging FUGC itself. */
-        
-        if (verbose >= VERBOSE_PHASES)
-            pas_log("[%d] fugc: verifying mark\n", pas_getpid());
-        filc_stop_the_world();
 
-        pas_allocation_config allocation_config;
-        bmalloc_initialize_allocation_config(&allocation_config);
-        pas_ptr_hash_set_construct(&verify_set);
-
-        filc_thread** threads;
-        size_t num_threads;
-        filc_snapshot_threads(&threads, &num_threads);
-
-        size_t index;
-        for (index = num_threads; index--;) {
-            if (filc_thread_participates_in_pollchecks(threads[index]))
-                filc_thread_stop_allocators(threads[index]);
-        }
-        
-        filc_mark_stack verify_stack;
-        filc_mark_stack_construct(&verify_stack);
-
-        source_explanation = "global roots";
-        source_object = NULL;
-        source_thread = NULL;
-        filc_mark_global_roots(VERIFY_MARKER, &verify_stack);
-        
-        for (index = num_threads; index--;) {
-            if (filc_thread_participates_in_pollchecks(threads[index])) {
-                source_explanation = "thread roots";
-                source_object = NULL;
-                source_thread = threads[index];
-                filc_thread_mark_roots(threads[index], VERIFY_MARKER, &verify_stack);
-            }
-        }
-        
-        bmalloc_deallocate(threads);
-
-        source_explanation = "object";
-        source_thread = NULL;
-        filc_object* object;
-        while ((object = filc_mark_stack_pop(&verify_stack))) {
-            source_object = object;
-            filc_object_mark_outgoing_ptrs(object, VERIFY_MARKER, &verify_stack);
-        }
-
-        PAS_ASSERT(!verify_failed);
-
-        filc_mark_stack_destruct(&verify_stack);
-        pas_ptr_hash_set_destruct(&verify_set, &allocation_config);
-        
-        filc_resume_the_world();
-    }
+    if (should_verify_early)
+        verify_marking();
 
     if (verbose >= VERBOSE_CYCLES)
         mark_end_time = pas_get_time_in_milliseconds();
 
+    /* We need the after_marking_pollcheck_callback to execute after marking no matter what, so that's
+       why we don't do the set size based optimization to avoid it. */
     PAS_ASSERT(census_size == SIZE_MAX);
     PAS_ASSERT(census_index == SIZE_MAX);
     verse_heap_object_set_start_iterate_before_handshake(fugc_census_set);
     filc_soft_handshake(after_marking_pollcheck_callback, NULL);
     census_size = verse_heap_object_set_start_iterate_after_handshake(fugc_census_set);
     census_index = 0;
-
+    
     current_collector_state = collector_censusing;
 }
 
@@ -910,7 +961,7 @@ static void census_parallel_worker(void)
     }
 }
 
-static void census_and_start_destructing(void)
+static void census_and_start_reviving(void)
 {
     if (verbose >= VERBOSE_PHASES) {
         pas_log("[%d] fugc: marking took %lf ms; censusing\n",
@@ -918,19 +969,153 @@ static void census_and_start_destructing(void)
     }
 
     PAS_ASSERT(!filc_current_marking_state);
-    PAS_ASSERT(filc_has_unfinished_census);
+    PAS_ASSERT(fugc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_censusing);
 
     DO_PARALLEL_WORK(census_parallel_worker);
     if (collector_control_request)
         return;
+    
+    verse_heap_object_set_end_iterate(fugc_census_set);
 
     census_index = SIZE_MAX;
     census_size = SIZE_MAX;
 
-    verse_heap_object_set_end_iterate(fugc_census_set);
+    fugc_has_unfinished_census = false;
 
-    filc_has_unfinished_census = false;
+    PAS_ASSERT(finalizer_size == SIZE_MAX);
+    PAS_ASSERT(finalizer_index == SIZE_MAX);
+    if (verse_heap_object_set_is_empty(fugc_finalizer_set))
+        finalizer_size = 0;
+    else {
+        verse_heap_object_set_start_iterate_before_handshake(fugc_finalizer_set);
+        filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+        finalizer_size = verse_heap_object_set_start_iterate_after_handshake(fugc_finalizer_set);
+    }
+    finalizer_index = 0;
+    
+    current_collector_state = collector_reviving;
+}
+
+static void revive_parallel_worker(void)
+{
+    static const bool verbose = false;
+    
+    size_t begin_index;
+    size_t end_index;
+    size_t count = 0;
+    filc_mark_stack local_stack;
+    filc_mark_stack_construct(&local_stack);
+    while (iterate_in_parallel(&finalizer_index, finalizer_size, &begin_index, &end_index, &count)) {
+        verse_heap_object_set_iterate_range_inline(
+            fugc_finalizer_set, begin_index, end_index,
+            verse_heap_iterate_unmarked, revive_object_callback, &local_stack);
+    }
+    if (verbose)
+        pas_log("local_stack size: %zu\n", filc_mark_stack_num_objects(&local_stack));
+    donate(&local_stack);
+    filc_mark_stack_destruct(&local_stack);
+}
+
+static void revive_and_start_remarking(void)
+{
+    if (verbose >= VERBOSE_PHASES)
+        pas_log("[%d] fugc: reviving\n", pas_getpid());
+
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(!fugc_has_unfinished_census);
+    PAS_ASSERT(current_collector_state == collector_reviving);
+
+    if (finalizer_size) {
+        DO_PARALLEL_WORK(revive_parallel_worker);
+        if (collector_control_request)
+            return;
+        
+        verse_heap_object_set_end_iterate(fugc_finalizer_set);
+    }
+
+    finalizer_index = SIZE_MAX;
+    finalizer_size = SIZE_MAX;
+
+    current_collector_state = collector_remarking;
+}
+
+static void remark_and_start_recensusing(void)
+{
+    if (verbose >= VERBOSE_PHASES)
+        pas_log("[%d] fugc: remarking\n", pas_getpid());
+
+    PAS_ASSERT(current_collector_state == collector_remarking);
+    PAS_ASSERT(filc_current_marking_state == filc_not_marking);
+    PAS_ASSERT(!fugc_has_unfinished_census);
+
+    /* This is super weird. It feels wrong but it's so right!
+       
+       When we remark, we're only marking objects that were revived by finalizer handling. These
+       objects are not yet visible to the mutator. The objects being marked are fully quarantined
+       from the mutator!!
+       
+       Hence, it's possible to run marking without any soft handshakes or barriers.
+    
+       Bizarre! */
+    
+    if (filc_mark_stack_num_objects(&fugc_global_stack)) {
+        PAS_ASSERT(!num_active_markers);
+        DO_PARALLEL_WORK(mark_parallel_worker);
+        PAS_ASSERT(!num_active_markers);
+        
+        if (collector_control_request)
+            return;
+    }
+
+    if (should_verify)
+        verify_marking();
+
+    PAS_ASSERT(finalizer_size == SIZE_MAX);
+    PAS_ASSERT(finalizer_index == SIZE_MAX);
+    if (verse_heap_object_set_is_empty(fugc_finalizer_set))
+        finalizer_size = 0;
+    else {
+        verse_heap_object_set_start_iterate_before_handshake(fugc_finalizer_set);
+        filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+        finalizer_size = verse_heap_object_set_start_iterate_after_handshake(fugc_finalizer_set);
+    }
+    finalizer_index = 0;
+    
+    current_collector_state = collector_recensusing;
+}
+
+static void recensus_parallel_worker(void)
+{
+    size_t begin_index;
+    size_t end_index;
+    size_t count = 0;
+    while (iterate_in_parallel(&finalizer_index, finalizer_size, &begin_index, &end_index, &count)) {
+        verse_heap_object_set_iterate_range_inline(
+            fugc_finalizer_set, begin_index, end_index,
+            verse_heap_iterate_marked, recensus_object_callback, NULL);
+    }
+}
+
+static void recensus_and_start_destructing(void)
+{
+    if (verbose >= VERBOSE_PHASES)
+        pas_log("[%d] fugc: recensusing\n", pas_getpid());
+
+    PAS_ASSERT(!filc_current_marking_state);
+    PAS_ASSERT(!fugc_has_unfinished_census);
+    PAS_ASSERT(current_collector_state == collector_recensusing);
+
+    if (finalizer_size) {
+        DO_PARALLEL_WORK(recensus_parallel_worker);
+        if (collector_control_request)
+            return;
+        
+        verse_heap_object_set_end_iterate(fugc_finalizer_set);
+    }
+    
+    finalizer_index = SIZE_MAX;
+    finalizer_size = SIZE_MAX;
 
     PAS_ASSERT(destruct_size == SIZE_MAX);
     PAS_ASSERT(destruct_index == SIZE_MAX);
@@ -938,7 +1123,7 @@ static void census_and_start_destructing(void)
     filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
     destruct_size = verse_heap_object_set_start_iterate_after_handshake(fugc_destructor_set);
     destruct_index = 0;
-
+    
     current_collector_state = collector_destructing;
 }
 
@@ -960,7 +1145,7 @@ static void destruct_and_start_scribbling(void)
         pas_log("[%d] fugc: destructing\n", pas_getpid());
 
     PAS_ASSERT(!filc_current_marking_state);
-    PAS_ASSERT(!filc_has_unfinished_census);
+    PAS_ASSERT(!fugc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_destructing);
 
     DO_PARALLEL_WORK(destruct_parallel_worker);
@@ -1002,7 +1187,7 @@ static void scribble_and_start_sweeping(void)
         pas_log("[%d] fugc: scribbling\n", pas_getpid());
         
     PAS_ASSERT(!filc_current_marking_state);
-    PAS_ASSERT(!filc_has_unfinished_census);
+    PAS_ASSERT(!fugc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_scribbling);
 
     /* Scribbling is a debug mode for catching GC bugs by overwriting dead objects with garbage. */
@@ -1077,7 +1262,7 @@ static void sweep_and_end(void)
         pas_log("[%d] fugc: sweeping\n", pas_getpid());
 
     PAS_ASSERT(!filc_current_marking_state);
-    PAS_ASSERT(!filc_has_unfinished_census);
+    PAS_ASSERT(!fugc_has_unfinished_census);
     PAS_ASSERT(current_collector_state == collector_sweeping);
 
     DO_PARALLEL_WORK(sweep_parallel_worker);
@@ -1177,7 +1362,16 @@ static pas_thread_return_type collector_thread(void* arg)
             mark_and_start_censusing();
             continue;
         case collector_censusing:
-            census_and_start_destructing();
+            census_and_start_reviving();
+            continue;
+        case collector_reviving:
+            revive_and_start_remarking();
+            continue;
+        case collector_remarking:
+            remark_and_start_recensusing();
+            continue;
+        case collector_recensusing:
+            recensus_and_start_destructing();
             continue;
         case collector_destructing:
             destruct_and_start_scribbling();
@@ -1235,6 +1429,9 @@ void fugc_initialize_heaps(void)
     if (scribble_concurrently)
         should_scribble = true;
     should_verify = filc_get_bool_env("FUGC_VERIFY", false);
+    should_verify_early = filc_get_bool_env("FUGC_VERIFY_EARLY", false);
+    if (should_verify_early)
+        should_verify = true;
     rage_mode = filc_get_bool_env("FUGC_RAGE_MODE", false);
 
     fugc_default_heap = verse_heap_create(1, 0, 0);
@@ -1257,6 +1454,7 @@ void fugc_initialize_heaps(void)
         verse_heap_add_to_set(fugc_destructor_heap, fugc_scribble_set);
         verse_heap_add_to_set(fugc_census_heap, fugc_scribble_set);
         verse_heap_add_to_set(fugc_census_and_destructor_heap, fugc_scribble_set);
+        verse_heap_add_to_set(fugc_finalizer_heap, fugc_scribble_set);
     }
     
     verse_heap_did_become_ready_for_allocation();
@@ -1336,32 +1534,16 @@ void fugc_handshake(void)
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }
 
-static PAS_ALWAYS_INLINE bool donate_impl(filc_mark_stack* mark_stack, pas_lock_lock_mode mode)
-{
-    if (!filc_mark_stack_num_objects(mark_stack))
-        return true;
-    if (!pas_lock_lock_with_mode(&global_stack_lock, mode))
-        return false;
-    PAS_ASSERT(filc_current_marking_state);
-    bool do_notification = !filc_mark_stack_num_objects(&fugc_global_stack);
-    filc_mark_stack_pop_all_from_and_push_to(mark_stack, &fugc_global_stack);
-    pas_lock_unlock(&global_stack_lock);
-    if (do_notification) {
-        pas_system_mutex_lock(&collector_thread_state_lock);
-        pas_system_condition_broadcast(&collector_thread_state_cond);
-        pas_system_mutex_unlock(&collector_thread_state_lock);
-    }
-    return true;
-}
-
 void fugc_donate(filc_mark_stack* mark_stack)
 {
-    PAS_ASSERT(donate_impl(mark_stack, pas_lock_lock_mode_lock));
+    bool from_inside_gc = false;
+    PAS_ASSERT(donate_impl(mark_stack, pas_lock_lock_mode_lock, from_inside_gc));
 }
 
 bool fugc_try_donate(filc_mark_stack* mark_stack)
 {
-    return donate_impl(mark_stack, pas_lock_lock_mode_try_lock);
+    bool from_inside_gc = false;
+    return donate_impl(mark_stack, pas_lock_lock_mode_try_lock, from_inside_gc);
 }
 
 uint64_t fugc_completed_cycle(void)

@@ -45,6 +45,8 @@ PAS_API extern verse_heap_object_set* fugc_census_set;
 PAS_API extern verse_heap_object_set* fugc_finalizer_set;
 PAS_API extern verse_heap_object_set* fugc_scribble_set; /* Only used if FUGC_SCRIBBLE=1 */
 
+PAS_API extern bool fugc_has_unfinished_census;
+
 PAS_API extern filc_mark_stack fugc_global_stack;
 
 PAS_API void fugc_initialize_heaps(void); /* Called first. */

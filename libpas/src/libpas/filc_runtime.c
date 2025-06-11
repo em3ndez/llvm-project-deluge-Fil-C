@@ -144,7 +144,6 @@ pas_system_condition filc_stop_the_world_cond;
 filc_thread* filc_first_thread;
 pthread_key_t filc_thread_key;
 filc_marking_state filc_current_marking_state;
-bool filc_has_unfinished_census;
 
 const filc_object filc_free_singleton = {
     .upper = (void*)(&filc_free_singleton + 1),
@@ -1630,6 +1629,9 @@ void filc_special_type_dump(filc_special_type type, pas_stream* stream)
     case FILC_SPECIAL_TYPE_WEAK_MAP:
         pas_stream_printf(stream, "weak_map");
         return;
+    case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
+        pas_stream_printf(stream, "finalizer_queue");
+        return;
     default:
         pas_stream_printf(stream, "?%u", (unsigned)type);
         return;
@@ -2257,6 +2259,7 @@ filc_object* filc_allocate_special_early(size_t size, size_t alignment,
     case FILC_SPECIAL_TYPE_THREAD:
     case FILC_SPECIAL_TYPE_PTR_TABLE:
     case FILC_SPECIAL_TYPE_EXACT_PTR_TABLE:
+    case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
         heap = fugc_destructor_heap;
         break;
     case FILC_SPECIAL_TYPE_WEAK:
@@ -3097,7 +3100,8 @@ filc_finalizer_queue* filc_finalizer_queue_create(filc_thread* my_thread)
                 my_thread, sizeof(filc_finalizer_queue), 1, FILC_SPECIAL_TYPE_FINALIZER_QUEUE));
     pas_system_mutex_construct(&finalizer_queue->lock);
     pas_system_condition_construct(&finalizer_queue->cond);
-    filc_object_array_construct(&finalizer_queue->finalizable_objects);
+    finalizer_queue->head = NULL;
+    finalizer_queue->tail = NULL;
     return finalizer_queue;
 }
 
@@ -3105,137 +3109,47 @@ void filc_finalizer_queue_destruct(filc_finalizer_queue* finalizer_queue)
 {
     pas_system_mutex_destruct(&finalizer_queue->lock);
     pas_system_condition_destruct(&finalizer_queue->cond);
-    filc_object_array_destruct(&finalizer_queue->finalizable_objects);
 }
 
-void filc_finalizer_queue_enqueue_if_necessary(filc_object* object,
-                                               filc_mark_stack* stack)
+static filc_object* finalizer_queue_try_dequeue(filc_finalizer_queue* finalizer_queue)
 {
-    filc_alignment_header* alignment_header = filc_object_get_alignment_header(object);
-    PAS_ASSERT(alignment_header);
-    filc_finalizer_queue* finalizer_queue = alignment_header->finalizer_queue;
-    if (finalizer_queue == FILC_FINALIZER_ENQUEUED)
-        return;
-    /* FIXME: It's possible that upon enqueueing this object, it's dequeued, which then causes another
-       finalizable object that this one points to to be marked, which then causes it to not be
-       finalized.
-    
-       That would almost be OK. After all, such a case could be explained as the object being
-       legitimately live for this GC cycle. But the problem is that it could happen in parallel to
-       the GC picking up that object during the revival phase. And because of how the race is
-       constructed, there's no way to make that right.
-    
-       Also, the current design of the finalizer queue means that it's not even a queue. I think that
-       a linked list would be the path of least resistance instead of an array.
-    
-       So the right solution is for the finalizer_queue field of the alignment_header to be an
-       encoded pointer with the following states:
-    
-       - NULL, meaning this isn't even a finalizable object and never was.
-    
-       - finalizable but live with a pointer to a finalizer queue.
-    
-       - finalizable, picked for revival. we know we will put this object on a finalizer queue and
-         we know we will mark it and put it on a mark stack, but we haven't don't all of those things
-         yet. still has a pointer to the same finalizer queue as before.
-    
-       - finalizable, revived (has been marked and placed on a mark stack), and enqueued on the
-         finalizer queue. has a `next` pointer for the finalizer queue that it's on. 
-    
-       - finalizable and no longer on any finalizer queue. maybe this could be represented as NULL,
-         since nobody cares about the difference between this state and the other NULL state. 
-       
-       In this solution, we'd have two revival phases. The first phase picks objects for revival. The
-       second phase actually revives them.
-    
-       Need to think carefully about whether this is really necessary.
-    
-       Say that we didn't have the two phases. Worst case, we'd have object A and object B where:
-    
-       - Both objects are finalizable and dead.
-    
-       - A points at B and A's finalizer will store B somewhere, causing the barrier to mark it. Or,
-         A's finalizer will have B in a root that is captured by a stack scan.
-    
-       - A gets revived and placed on the finalizer queue.
-    
-       - Some user thread dequeues A, leading to B being marked.
-    
-       - At the same time, we try to revive B. 
-    
-       Then the two OK outcomes are:
-    
-       - B ends up on the finalizer queue and is viewed as dead from the standpoint of all weak
-         references for the whole time that this is happening. 
-    
-       - B gets marked during the run of A's finalizer, doesn't get revived, and no weak reference
-         ever thought it was dead.
-    
-       If we don't have two phases, then we might get the following additional bad outcomes:
-    
-       - B ends up on the finalizer queue but there was a brief period of time during which weak
-         references thought it was live (because it was marked in a way that made is_live_for_weak
-         think that it was live).
-    
-       - B doesn't end up on the finalizer queue, survives the GC to be finalized again in the future,
-         but some weak reference observed it to be dead for some period of time. 
-    
-       So, we need two phases to ensure that these two bad outcomes don't happen.
-    
-       FIXME: But there's a deeper problem! The revival will mark other objects, including ones that
-       had been thought to be dead from the standpoint of weak references!
-    
-       Options:
-    
-       - We could have the second phase of marking mark the objects in a way that makes them seem dead
-         for the purpose of weak references.
-    
-       - We could have the first phase of marking allow arbitrary revival of weak references. Weak
-         references just continue to be live.
-    
-       - We could abandon precise weak reference semantics in the presence of finalizable objects.
-    
-       All of these options suck.
-    
-       What does JSC want? From JSC's standpoint, objects referenced by destructors are dead in the
-       sense that the JS heap can't reach them. So, if we kept them alive for the purpose of weak
-       references then that would be fine. It would just seem like we had delayed their collection.
-       JSC would also be fine with those objects all seemed dead for the purpose of weak references.
-       But JSC would not be OK if weak references observed revival. It's not OK for one weak reference
-       to an object to disagree with another one about whether an object is live, and it's not OK for
-       the same weak reference to report something as dead and then later say it's alive.
-    
-       It feels like continuing to let weak references seem to be live is the best, since it's OK for
-       JSC and the easiest to justify to other users. The problem with that is that you could have a
-       weak reference report an object live and then the object gets finalized anyway! But one easy
-       way around that is to say that if a weak reference returns an object and marks it then this
-       prevents the object from being finalized. Is that enough?
-    
-       The Java semantics are that any objects that would have been revived by finalizers have their
-       weak references nulled, but new weak references created to those revived objects end up being
-       able to reference them normally. Those are some subtle semantics!
-    
-       One approach for implementing Java semantics:
-    
-       - Use the two phase finalization approach outlined above.
-    
-       - After recording objects for finalization but not yet letting finalizers run, perform the
-         census phase. This means running census before destruction, but we can do that. That's OK.
-         
-       - Indicate to weak references that they should no longer look at finalization state for
-         deciding whether the object is live or not.
-    
-       - Then run finalizer revival. At this point new weak references might get created.
-    
-       This should work. */
-    alignment_header->finalizer_queue = FILC_FINALIZER_ENQUEUED;
-    pas_store_store_fence();
-    fugc_mark(stack, object);
+    filc_object* result = finalizer_queue->head;
+    if (result) {
+        finalizer_queue->head = filc_object_get_next_revived(result);
+        if (!finalizer_queue->head)
+            finalizer_queue->tail = NULL;
+    }
+    return result;
+}
+
+filc_object* filc_finalizer_queue_try_dequeue_with_manual_tracking(
+    filc_thread* my_thread, filc_finalizer_queue* finalizer_queue)
+{
+    PAS_UNUSED_PARAM(my_thread);
     pas_system_mutex_lock(&finalizer_queue->lock);
-    filc_object_array_push(&finalizer_queue->finalizable_objects, object);
-    if (filc_object_array_num_objects(&finalizer_queue->finalizable_objects) == 1)
-        pas_system_condition_broadcast(&finalizer_queue->cond);
+    filc_object* result = finalizer_queue_try_dequeue(finalizer_queue);
     pas_system_mutex_unlock(&finalizer_queue->lock);
+    return result;
+}
+
+filc_object* filc_finalizer_queue_dequeue_with_manual_tracking(filc_thread* my_thread,
+                                                               filc_finalizer_queue* finalizer_queue)
+{
+    for (;;) {
+        if (pas_system_mutex_try_lock(&finalizer_queue->lock)) {
+            filc_object* result = finalizer_queue_try_dequeue(finalizer_queue);
+            pas_system_mutex_unlock(&finalizer_queue->lock);
+            if (result)
+                return result;
+        }
+
+        filc_exit(my_thread);
+        pas_system_mutex_lock(&finalizer_queue->lock);
+        if (!finalizer_queue->head)
+            pas_system_condition_wait(&finalizer_queue->cond, &finalizer_queue->lock);
+        pas_system_mutex_unlock(&finalizer_queue->lock);
+        filc_enter(my_thread);
+    }
 }
 
 filc_ptr filc_native_zgc_alloc(filc_thread* my_thread, size_t size)
@@ -3318,6 +3232,44 @@ void filc_native_zgc_free(filc_thread* my_thread, filc_ptr ptr)
     if (!filc_ptr_ptr(ptr))
         return;
     filc_free(object_for_deallocate(ptr));
+}
+
+filc_ptr filc_native_zgc_finq_new(filc_thread* my_thread)
+{
+    return filc_ptr_for_special_payload_with_manual_tracking(filc_finalizer_queue_create(my_thread));
+}
+
+filc_ptr filc_native_zgc_finq_poll(filc_thread* my_thread, filc_ptr finq_ptr)
+{
+    filc_check_access_special(finq_ptr, FILC_SPECIAL_TYPE_FINALIZER_QUEUE);
+    return filc_ptr_create_with_object_and_manual_tracking(
+        filc_finalizer_queue_try_dequeue_with_manual_tracking(
+            my_thread, (filc_finalizer_queue*)filc_ptr_ptr(finq_ptr)));
+}
+
+filc_ptr filc_native_zgc_finq_wait(filc_thread* my_thread, filc_ptr finq_ptr)
+{
+    filc_check_access_special(finq_ptr, FILC_SPECIAL_TYPE_FINALIZER_QUEUE);
+    return filc_ptr_create_with_object_and_manual_tracking(
+        filc_finalizer_queue_dequeue_with_manual_tracking(
+            my_thread, (filc_finalizer_queue*)filc_ptr_ptr(finq_ptr)));
+}
+
+filc_ptr filc_native_zgc_finq_alloc(filc_thread* my_thread, filc_ptr finq_ptr, size_t size)
+{
+    filc_check_access_special(finq_ptr, FILC_SPECIAL_TYPE_FINALIZER_QUEUE);
+    return filc_ptr_create_with_object_and_manual_tracking(
+        filc_allocate_finalizable_with_alignment(
+            my_thread, size, 1, (filc_finalizer_queue*)filc_ptr_ptr(finq_ptr)));
+}
+
+filc_ptr filc_native_zgc_finq_aligned_alloc(filc_thread* my_thread, filc_ptr finq_ptr,
+                                            size_t alignment, size_t size)
+{
+    filc_check_access_special(finq_ptr, FILC_SPECIAL_TYPE_FINALIZER_QUEUE);
+    return filc_ptr_create_with_object_and_manual_tracking(
+        filc_allocate_finalizable_with_alignment(
+            my_thread, size, alignment, (filc_finalizer_queue*)filc_ptr_ptr(finq_ptr)));
 }
 
 filc_ptr filc_native_zgetlower(filc_thread* my_thread, filc_ptr ptr)
@@ -5304,7 +5256,7 @@ void filc_error(const char* reason, const filc_origin* origin)
 
 void filc_system_mutex_lock(filc_thread* my_thread, pas_system_mutex* lock)
 {
-    if (pas_system_mutex_trylock(lock))
+    if (pas_system_mutex_try_lock(lock))
         return;
 
     filc_exit(my_thread);

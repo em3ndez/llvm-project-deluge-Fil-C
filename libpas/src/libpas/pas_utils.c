@@ -353,7 +353,7 @@ void pas_system_mutex_lock(pas_system_mutex* mutex)
     pthread_mutex_lock(mutex);
 }
 
-bool pas_system_mutex_trylock(pas_system_mutex* mutex)
+bool pas_system_mutex_try_lock(pas_system_mutex* mutex)
 {
     return !pthread_mutex_trylock(mutex);
 }

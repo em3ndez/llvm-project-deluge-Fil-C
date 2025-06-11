@@ -61,6 +61,11 @@ struct verse_heap_object_set {
 PAS_API void verse_heap_object_set_add_view(verse_heap_object_set* set, pas_segregated_exclusive_view* view);
 PAS_API void verse_heap_object_set_add_large_entry(verse_heap_object_set* set, verse_heap_large_entry* entry);
 
+static inline bool verse_heap_object_set_is_empty(verse_heap_object_set* set)
+{
+    return !set->num_large_entries && !set->views.size;
+}
+
 PAS_END_EXTERN_C;
 
 #endif /* PAS_ENABLE_VERSE */

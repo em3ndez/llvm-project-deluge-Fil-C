@@ -154,7 +154,7 @@ static PAS_ALWAYS_INLINE filc_ptr filc_weak_get_with_manual_tracking(filc_thread
     for (;;) {
         switch (filc_current_marking_state) {
         case filc_not_marking:
-            if (filc_has_unfinished_census &&
+            if (fugc_has_unfinished_census &&
                 !filc_object_is_live_for_weak(filc_ptr_object(result), FUGC_MARKER))
                 return filc_ptr_forge_null();
             return result;
@@ -214,6 +214,125 @@ static PAS_ALWAYS_INLINE void filc_weak_map_mark_outgoing_ptrs(filc_weak_map* ma
     }
 
     pas_lock_unlock(&map->lock);
+}
+
+static PAS_ALWAYS_INLINE void filc_finalizer_queue_mark_outgoing_ptrs(
+    filc_finalizer_queue* finalizer_queue, const filc_marker marker, filc_mark_stack* stack)
+{
+    pas_system_mutex_lock(&finalizer_queue->lock);
+    filc_object* object;
+    for (object = finalizer_queue->head; object; object = filc_object_get_next_revived(object))
+        marker.mark(stack, object);
+    pas_system_mutex_unlock(&finalizer_queue->lock);
+}
+ 
+/* The way finalizable objects work is:
+ 
+   - They participate in census because their reference to the finalizer queue is weak.
+
+   - Census runs before revival.
+
+   - Revival marks the objects and puts them on a mark stack. Also puts them in the revived state.
+   
+   - Run marking again after revival, but with the barrier disabled, since it's impossible for the
+     mutator to do anything with the revived objects.
+
+   - Then after those objects are marked, we census the finalizable objects. This makes enqueues
+     revived objects if the finalizer queue is live.
+
+   Note that this has the semantics that:
+
+   - If an object refers to its own finalizer queue and uses its finalizer to enqueue the finalizer
+     queue somewhere, then that just works. The finalizer queue will be revived along with the object
+     that refers to it.
+
+   - If an object refers to a finalizer queue used by another object, and stashes the finalizer queue
+     somewhere during finalization, then that reliably works. The finalizer queue will see the objects
+     associated with it.
+
+   I am picking those semantics because they happen to be slightly more natural to implement overall,
+   but it's a close call. */
+
+static PAS_ALWAYS_INLINE void filc_finalizable_object_revive(filc_object* object,
+                                                             filc_mark_stack* stack)
+{
+    static const bool verbose = false;
+
+    if (verbose)
+        pas_log("filc_finalizable_object_revive(%p)\n", object);
+    filc_alignment_header* alignment_header = filc_object_get_alignment_header(object);
+    uintptr_t encoded_finalizer = alignment_header->encoded_finalizer;
+    switch (encoded_finalizer & FILC_FINALIZER_STATE_MASK) {
+    case FILC_FINALIZER_STATE_NONE: /* The object had been revived, got finalized, and is now dead. */
+    case FILC_FINALIZER_STATE_ENQUEUED: /* The object was enqueued and its finalizer queue died. */
+        break;
+    case FILC_FINALIZER_STATE_LIVE:
+        if (verbose)
+            pas_log("reviving unmarked live object %p\n", object);
+        PAS_ASSERT(fugc_mark(stack, object));
+        if (verbose)
+            pas_log("stack size: %zu\n", filc_mark_stack_num_objects(stack));
+        alignment_header->encoded_finalizer =
+            (encoded_finalizer & ~FILC_FINALIZER_STATE_MASK) | FILC_FINALIZER_STATE_REVIVED;
+        break;
+    case FILC_FINALIZER_STATE_REVIVED:
+        pas_log("Unexpected revived object during revive: %p\n", object);
+        PAS_ASSERT(!"Unexpected revived object");
+        break;
+    default:
+        PAS_ASSERT(!"Invalid finalizer state");
+        break;
+    }
+}
+
+static PAS_ALWAYS_INLINE void filc_finalizable_object_census(filc_object* object)
+{
+    static const bool verbose = false;
+
+    if (verbose)
+        pas_log("filc_finalizable_object_census(%p)\n", object);
+    filc_alignment_header* alignment_header = filc_object_get_alignment_header(object);
+    uintptr_t encoded_finalizer = alignment_header->encoded_finalizer;
+    switch (encoded_finalizer & FILC_FINALIZER_STATE_MASK) {
+    case FILC_FINALIZER_STATE_NONE:
+    case FILC_FINALIZER_STATE_ENQUEUED:
+        break;
+    case FILC_FINALIZER_STATE_LIVE:
+        if (!filc_object_is_live_for_weak(
+                filc_object_for_special_payload(
+                    (filc_finalizer_queue*)(encoded_finalizer & ~FILC_FINALIZER_STATE_MASK)),
+                FUGC_MARKER))
+            alignment_header->encoded_finalizer = FILC_FINALIZER_STATE_NONE;
+        break;
+    case FILC_FINALIZER_STATE_REVIVED: {
+        filc_finalizer_queue* finalizer_queue =
+            (filc_finalizer_queue*)(encoded_finalizer & ~FILC_FINALIZER_STATE_MASK);
+        if (!filc_object_is_live_for_weak(filc_object_for_special_payload(finalizer_queue),
+                                          FUGC_MARKER))
+            alignment_header->encoded_finalizer = FILC_FINALIZER_STATE_NONE;
+        else {
+            pas_system_mutex_lock(&finalizer_queue->lock);
+            PAS_ASSERT(!!finalizer_queue->head == !!finalizer_queue->tail);
+            if (!finalizer_queue->head) {
+                finalizer_queue->head = object;
+                pas_system_condition_broadcast(&finalizer_queue->cond);
+            } else {
+                filc_alignment_header* tail_alignment_header =
+                    filc_object_get_alignment_header(finalizer_queue->tail);
+                PAS_ASSERT(tail_alignment_header->encoded_finalizer == FILC_FINALIZER_STATE_ENQUEUED);
+                tail_alignment_header->encoded_finalizer =
+                    (uintptr_t)object | FILC_FINALIZER_STATE_ENQUEUED;
+            }
+            finalizer_queue->tail = object;
+            alignment_header->encoded_finalizer = FILC_FINALIZER_STATE_ENQUEUED;
+            pas_system_mutex_unlock(&finalizer_queue->lock);
+        }
+        break;
+    }
+    default:
+        PAS_ASSERT(!"Invalid finalizer state");
+        break;
+    }
 }
 
 static PAS_ALWAYS_INLINE void filc_jmp_buf_mark_outgoing_ptrs(filc_jmp_buf* jmp_buf,
@@ -382,6 +501,11 @@ static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_special_ptrs(filc_object
             (filc_weak_map*)filc_object_special_payload_with_manual_tracking(object),
             marker, stack);
         break;
+    case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
+        filc_finalizer_queue_mark_outgoing_ptrs(
+            (filc_finalizer_queue*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
     default:
         pas_log("Got a bad special ptr type: ");
         filc_special_type_dump(special_type, pas_log_stream);
@@ -400,9 +524,6 @@ static PAS_ALWAYS_INLINE void filc_object_mark_weak_map_values_based_on_key(filc
 {
     static const bool verbose = false;
 
-    if (!filc_marked_object_is_live_for_weak(object))
-        return;
-    
     if (verbose)
         pas_log("inverse marking from %p\n", filc_object_lower(object));
 

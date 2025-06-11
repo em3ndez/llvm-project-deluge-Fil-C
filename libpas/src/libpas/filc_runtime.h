@@ -245,7 +245,11 @@ typedef uintptr_t filc_word;
 
 #define FILC_ATOMIC_BOX_BIT               ((uintptr_t)1)
 
-#define FILC_FINALIZER_ENQUEUED           ((filc_finalizer_queue*)(uintptr_t)1)
+#define FILC_FINALIZER_STATE_NONE         ((uintptr_t)0)
+#define FILC_FINALIZER_STATE_LIVE         ((uintptr_t)1)
+#define FILC_FINALIZER_STATE_REVIVED      ((uintptr_t)2)
+#define FILC_FINALIZER_STATE_ENQUEUED     ((uintptr_t)3)
+#define FILC_FINALIZER_STATE_MASK         ((uintptr_t)3)
 
 #define FILC_MAX_USER_SIGNUM              (_NSIG - 1)
                                           
@@ -432,16 +436,8 @@ struct filc_alignment_header {
     /* Since the alignment header has to anyway have 64 bits spare, we use it for determining if an
        object has a finalizer queue. This can be:
        
-       NULL: Means that this object was never finalizable and never had a finalizer queue.
-       
-       FILC_FINALIZER_ENQUEUED: This object had a finalizer queue, was found to be dead by the GC, and
-       got enqueued on the finalizer queue. This object is dead from the standpoint of weak references
-       and weak maps.
-       
-       Any other value: pointer to a finalizer queue. This object has a finalizer queue and has not
-       yet been found to be dead by the GC. It's not yet enqueued on the queue, but will be when it
-       dies. */
-    filc_finalizer_queue* finalizer_queue;
+       See the FILC_FINALIZER_STATE defines for how this is encoded. */
+    uintptr_t encoded_finalizer;
 };
 
 struct filc_cc_cursor {
@@ -638,7 +634,8 @@ struct filc_marker {
 struct filc_finalizer_queue {
     pas_system_mutex lock;
     pas_system_condition cond;
-    filc_object_array finalizable_objects;
+    filc_object* head;
+    filc_object* tail;
 };
 
 struct filc_native_frame {
@@ -1435,8 +1432,6 @@ enum filc_marking_state {
 typedef enum filc_marking_state filc_marking_state;
 
 PAS_API extern filc_marking_state filc_current_marking_state;
-
-PAS_API extern bool filc_has_unfinished_census;
 
 PAS_API extern const filc_object filc_free_singleton;
 
@@ -2295,12 +2290,19 @@ static inline size_t filc_object_alignment(filc_object* object)
 }
 
 /* Returns NULL if the object has no alignemnt header. */
-static inline filc_alignment_header* filc_object_get_alignment_header(filc_object* object)
+static inline filc_alignment_header* filc_object_try_get_alignment_header(filc_object* object)
 {
     if (!filc_object_is_aligned(object))
         return NULL;
     return (filc_alignment_header*)PAS_ROUND_DOWN_TO_POWER_OF_2(
         (uintptr_t)object, filc_object_alignment(object));
+}
+
+static inline filc_alignment_header* filc_object_get_alignment_header(filc_object* object)
+{
+    filc_alignment_header* result = filc_object_try_get_alignment_header(object);
+    PAS_ASSERT(result);
+    return result;
 }
 
 static inline void* filc_object_mark_base_with_flags(filc_object* object, filc_object_flags flags)
@@ -2318,24 +2320,13 @@ static inline void* filc_object_mark_base(filc_object* object)
     return filc_object_mark_base_with_flags(object, filc_object_get_flags(object));
 }
 
-static inline bool filc_marked_object_is_live_for_weak(filc_object* object)
-{
-    filc_alignment_header* alignment_header = filc_object_get_alignment_header(object);
-    if (PAS_UNLIKELY(alignment_header)) {
-        pas_load_load_fence();
-        if (alignment_header->finalizer_queue == FILC_FINALIZER_ENQUEUED)
-            return false;
-    }
-    return true;
-}
-
 static inline bool filc_object_is_live_for_weak(filc_object* object, const filc_marker marker)
 {
     if (!filc_object_is_markable(object))
         return true;
     if (!marker.is_marked(filc_object_mark_base(object)))
         return false;
-    return filc_marked_object_is_live_for_weak(object);
+    return true;
 }
 
 static PAS_ALWAYS_INLINE void filc_thread_assert_object_allocation_color(filc_thread* thread,
@@ -2397,6 +2388,7 @@ static inline void filc_object_validate_special_with_payload(filc_object* object
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_EXACT_PTR_TABLE ||
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_WEAK ||
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_WEAK_MAP ||
+               filc_object_special_type(object) == FILC_SPECIAL_TYPE_FINALIZER_QUEUE ||
                (filc_object_special_type(object) == FILC_SPECIAL_TYPE_FUNCTION
                 && (filc_object_get_flags(object) & FILC_OBJECT_FLAG_CLOSURE)));
 }
@@ -2464,13 +2456,28 @@ static inline void filc_alignment_header_construct(filc_thread* my_thread,
 {
     PAS_TESTING_ASSERT(alignment > PAS_MIN_ALIGN);
     header->encoded_alignment = (uintptr_t)pas_log2(alignment) << (uintptr_t)PAS_ADDRESS_BITS;
-    filc_store_barrier_for_lower(my_thread, finalizer_queue);
-    header->finalizer_queue = finalizer_queue;
+    if (finalizer_queue) {
+        filc_store_barrier_for_lower(my_thread, finalizer_queue);
+        header->encoded_finalizer = FILC_FINALIZER_STATE_LIVE | (uintptr_t)finalizer_queue;
+    } else
+        header->encoded_finalizer = FILC_FINALIZER_STATE_NONE;
 }
 
 static inline size_t filc_alignment_header_get_alignment(filc_alignment_header* header)
 {
     return (uintptr_t)1 << (header->encoded_alignment >> (uintptr_t)PAS_ADDRESS_BITS);
+}
+
+static inline filc_object* filc_alignment_header_get_next_revived(filc_alignment_header* header)
+{
+    uintptr_t encoded_finalizer = header->encoded_finalizer;
+    PAS_ASSERT((encoded_finalizer & FILC_FINALIZER_STATE_MASK) == FILC_FINALIZER_STATE_ENQUEUED);
+    return (filc_object*)(encoded_finalizer & ~FILC_FINALIZER_STATE_MASK);
+}
+
+static inline filc_object* filc_object_get_next_revived(filc_object* object)
+{
+    return filc_alignment_header_get_next_revived(filc_object_get_alignment_header(object));
 }
 
 static inline bool filc_allocation_starts_with_alignment_header(void* allocation)
@@ -3463,6 +3470,7 @@ static inline bool filc_special_type_is_valid(filc_special_type special_type)
     case FILC_SPECIAL_TYPE_JMP_BUF:
     case FILC_SPECIAL_TYPE_WEAK:
     case FILC_SPECIAL_TYPE_WEAK_MAP:
+    case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
         return true;
     default:
         return false;
@@ -3608,10 +3616,10 @@ PAS_API void filc_inverse_weak_map_map_destroy(filc_inverse_weak_map_map* map);
 
 PAS_API filc_finalizer_queue* filc_finalizer_queue_create(filc_thread* my_thread);
 PAS_API void filc_finalizer_queue_destruct(filc_finalizer_queue* finalizer_queue);
-PAS_API void filc_finalizer_queue_enqueue_if_necessary(filc_object* object,
-                                                       filc_mark_stack* stack);
-PAS_API filc_object* filc_finalizer_queue_try_dequeue(filc_finalizer_queue* finalizer_queue);
-PAS_API filc_object* filc_finalizer_queue_dequeue(filc_finalizer_queue* finalizer_queue);
+PAS_API filc_object* filc_finalizer_queue_try_dequeue_with_manual_tracking(
+    filc_thread* my_thread, filc_finalizer_queue* finalizer_queue);
+PAS_API filc_object* filc_finalizer_queue_dequeue_with_manual_tracking(
+    filc_thread* my_thread, filc_finalizer_queue* finalizer_queue);
 
 static inline const char* filc_access_kind_get_string(filc_access_kind access_kind)
 {

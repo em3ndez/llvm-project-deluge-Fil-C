@@ -1674,7 +1674,7 @@ PAS_API bool pas_create_detached_thread_allowing_errors(
     pas_thread_return_type (*thread_main)(void* arg), void* arg);
 PAS_API void pas_system_mutex_construct(pas_system_mutex* mutex);
 PAS_API void pas_system_mutex_lock(pas_system_mutex* mutex);
-PAS_API bool pas_system_mutex_trylock(pas_system_mutex* mutex);
+PAS_API bool pas_system_mutex_try_lock(pas_system_mutex* mutex);
 PAS_API void pas_system_mutex_assert_held(pas_system_mutex* mutex);
 PAS_API void pas_system_mutex_unlock(pas_system_mutex* mutex);
 PAS_API void pas_system_mutex_destruct(pas_system_mutex* mutex);
