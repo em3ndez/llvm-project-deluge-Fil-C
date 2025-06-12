@@ -292,6 +292,11 @@ int main(int argc, char** argv)
     tv2.tv_usec = 0;
     ZASSERT(!select(0, NULL, NULL, NULL, &tv2));
 
+    struct timespec ts2;
+    ts2.tv_sec = 0;
+    ts2.tv_nsec = 0;
+    ZASSERT(!pselect(0, NULL, NULL, NULL, &ts2, NULL));
+
     return 0;
 }
 
