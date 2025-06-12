@@ -287,6 +287,11 @@ int main(int argc, char** argv)
     ZASSERT(close(-1) == -1);
     ZASSERT(errno == EBADF);
 
+    struct timeval tv2;
+    tv2.tv_sec = 0;
+    tv2.tv_usec = 0;
+    ZASSERT(!select(0, NULL, NULL, NULL, &tv2));
+
     return 0;
 }
 
