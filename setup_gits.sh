@@ -88,3 +88,4 @@ handle_git pizlonated-simdjson pizlonated-simdjson
 handle_git pizlonated-ada pizlonated-ada
 handle_git pizlonated-zstd-1.5.6 pizlonated-zstd
 handle_git pizlonated-libffi libffi-3.4.6
+handle_git pizlonated-libexpat expat-2.7.1
