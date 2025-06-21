@@ -572,6 +572,37 @@ int zsys_uselib(const char* library)
     return -1;
 }
 
+struct zweak_map_iter {
+    void** snapshot;
+    __SIZE_TYPE__ index_plus_two;
+};
+
+zweak_map_iter* zweak_map_get_iter(zweak_map* map)
+{
+    zweak_map_iter* result = zgc_alloc(sizeof(zweak_map_iter));
+    result->snapshot = zweak_map_snapshot_impl(map);
+    result->index_plus_two = 0;
+    return result;
+}
+
+filc_bool zweak_map_iter_next(zweak_map_iter* iter)
+{
+    if (!iter->snapshot[iter->index_plus_two + 1])
+        return 0;
+    iter->index_plus_two += 2;
+    return 1;
+}
+
+void* zweak_map_iter_key(zweak_map_iter* iter)
+{
+    return iter->snapshot[iter->index_plus_two - 2];
+}
+
+void* zweak_map_iter_value(zweak_map_iter* iter)
+{
+    return iter->snapshot[iter->index_plus_two - 1];
+}
+
 void zgc_request_and_wait(void)
 {
     zgc_wait(zgc_request_fresh());

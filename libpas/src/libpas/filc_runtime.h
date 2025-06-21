@@ -3608,6 +3608,8 @@ PAS_API void filc_weak_map_set(filc_thread* my_thread, filc_weak_map* map,
                                filc_ptr key, filc_ptr value);
 PAS_API filc_ptr filc_weak_map_get(filc_weak_map* map, filc_ptr key);
 
+PAS_API filc_object* filc_weak_map_snapshot(filc_thread* my_thread, filc_weak_map* map);
+
 PAS_API void filc_weak_map_census(filc_weak_map* map);
 PAS_API void filc_weak_map_destruct(filc_weak_map* map);
 

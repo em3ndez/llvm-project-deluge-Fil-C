@@ -369,6 +369,24 @@ void* zweak_map_get(zweak_map* map, void* key);
 /* Reports the number of entries currently in the weak map. */
 __SIZE_TYPE__ zweak_map_size(zweak_map* map);
 
+struct zweak_map_iter;
+typedef struct zweak_map_iter zweak_map_iter;
+
+/* Correct iterator usage:
+   
+       zweak_map_iter* iter = zweak_map_get_iter(map);
+       while (zweak_map_iter_next(iter)) {
+           void* key = zweak_map_iter_key(iter);
+           void* value = zweak_map_iter_value(iter);
+           ... do stuff with key and value ...
+       }
+
+   Note that you have to call `zweak_map_iter_next` to get to the first element. */
+zweak_map_iter* zweak_map_get_iter(zweak_map* map);
+filc_bool zweak_map_iter_next(zweak_map_iter* iter);
+void* zweak_map_iter_key(zweak_map_iter* iter);
+void* zweak_map_iter_value(zweak_map_iter* iter);
+
 /* Low-level printing functions. These might die someday. They are useful for Fil-C's own tests. They
    print directly to stdout using write(). They are safe (passing an invalid ptr to zprint() will trap
    for sure, and it will never print out of bounds even if there is no null terminator). */

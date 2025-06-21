@@ -3024,6 +3024,52 @@ filc_ptr filc_weak_map_get(filc_weak_map* map, filc_ptr key)
     return result.value;
 }
 
+filc_object* filc_weak_map_snapshot(filc_thread* my_thread, filc_weak_map* map)
+{
+    /* This currently does not exit.
+       
+       Reasons:
+       
+       - If we exit while holding the map's lock, then we'd deadlock the GC, since the GC is
+         going to want the map's lock. So we'd have to drop the lock to exit. But if we dropped the
+         lock, then our iteration of the map would be invalidated.
+
+       - It's so much simpler to write this code if we know that there are no exits. For example, we
+         don't have to track pointers or whatever.
+       
+       FIXME: At some point it'll become a perf problem tha this doesn't exit! */
+      
+    pas_lock_lock(&map->lock);
+
+    size_t size = filc_mul_size(
+        sizeof(void*), filc_mul_size(filc_add_size(map->map.key_count, 1), 2));
+
+    filc_object* result = filc_allocate_without_exiting(my_thread, size);
+    filc_object_ensure_aux_ptr_without_exiting(my_thread, result);
+
+    filc_ptr result_ptr = filc_ptr_create_with_object_and_manual_tracking(result);
+    size_t offset = 0;
+    size_t index;
+    for (index = 0; index < map->map.table_size; ++index) {
+        filc_ptr_hash_map_entry entry = map->map.table[index];
+        if (filc_ptr_hash_map_entry_is_empty_or_deleted(entry))
+            continue;
+        filc_ptr key = entry.key;
+        if (!filc_weak_load_barrier(my_thread, key))
+            continue;
+        filc_store_ptr(my_thread, result_ptr, offset, key);
+        offset = filc_add_size(offset, sizeof(void*));
+        filc_store_ptr(my_thread, result_ptr, offset, entry.value);
+        offset = filc_add_size(offset, sizeof(void*));
+    }
+    filc_store_ptr(my_thread, result_ptr, offset, filc_ptr_forge_null());
+    offset = filc_add_size(offset, sizeof(void*));
+    filc_store_ptr(my_thread, result_ptr, offset, filc_ptr_forge_null());
+    
+    pas_lock_unlock(&map->lock);
+    return result;
+}
+
 void filc_weak_map_census(filc_weak_map* map)
 {
     pas_lock_lock(&map->lock);
@@ -3365,6 +3411,14 @@ size_t filc_native_zweak_map_size(filc_thread* my_thread, filc_ptr weak_map_ptr)
     PAS_UNUSED_PARAM(my_thread);
     filc_check_access_special(weak_map_ptr, FILC_SPECIAL_TYPE_WEAK_MAP);
     return ((filc_weak_map*)filc_ptr_ptr(weak_map_ptr))->map.key_count;
+}
+
+filc_ptr filc_native_zweak_map_snapshot_impl(filc_thread* my_thread, filc_ptr weak_map_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    filc_check_access_special(weak_map_ptr, FILC_SPECIAL_TYPE_WEAK_MAP);
+    return filc_ptr_create_with_object_and_manual_tracking(
+        filc_weak_map_snapshot(my_thread, (filc_weak_map*)filc_ptr_ptr(weak_map_ptr)));
 }
 
 size_t filc_native_ztesting_get_num_ptrtables(filc_thread* my_thread)
