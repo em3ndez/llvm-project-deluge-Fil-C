@@ -6230,36 +6230,35 @@ void filc_native_zregister_sys_dlerror_handler(filc_thread* my_thread, filc_ptr 
     filc_flight_ptr_store(my_thread, &filc_pizlonated_dlerror_handler, dlerror_handler);
 }
 
-void filc_set_user_errno(int errno_value)
+void filc_set_errno(int errno_value)
 {
+    filc_thread* my_thread = filc_get_my_thread();
+    if (dump_errnos) {
+        pas_log("[%d] Setting errno! System errno = %d, system error = %s\n",
+                getpid(), errno_value, strerror(errno_value));
+        filc_thread_dump_stack(my_thread, pas_log_stream);
+    }
     FILC_CHECK(
         !filc_ptr_is_totally_null(filc_pizlonated_errno_handler),
         NULL,
         "errno handler not registered when trying to set errno = %d.", errno_value);
-    filc_thread* my_thread = filc_get_my_thread();
     filc_call_user_void_int(
         my_thread, filc_flight_ptr_load(my_thread, &filc_pizlonated_errno_handler), errno_value);
 }
 
-void filc_set_errno(int errno_value)
-{
-    int user_errno = filc_to_user_errno(errno_value);
-    if (dump_errnos) {
-        pas_log("[%d] Setting errno! System errno = %d, user errno = %d, system error = %s\n",
-                getpid(), errno_value, user_errno, strerror(errno_value));
-        filc_thread_dump_stack(filc_get_my_thread(), pas_log_stream);
-    }
-    filc_set_user_errno(user_errno);
-}
-
-static void set_dlerror(const char* error)
+static void set_dlerror(const char* error, const char* context)
 {
     PAS_ASSERT(error);
+    filc_thread* my_thread = filc_get_my_thread();
+    if (dump_errnos) {
+        pas_log("[%d] Setting dlerror! message = %s, context = %s\n",
+                getpid(), error, context);
+        filc_thread_dump_stack(my_thread, pas_log_stream);
+    }
     FILC_CHECK(
         !filc_ptr_is_totally_null(filc_pizlonated_dlerror_handler),
         NULL,
         "dlerror handler not registered when trying to set dlerror = %s.", error);
-    filc_thread* my_thread = filc_get_my_thread();
     filc_call_user_void_ptr(
         my_thread, filc_flight_ptr_load(my_thread, &filc_pizlonated_dlerror_handler),
         filc_strdup(my_thread, error));
@@ -6450,7 +6449,10 @@ int filc_native_zsys_open(filc_thread* my_thread, filc_ptr path_ptr, int flags,
     char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
     if (verbose)
         pas_log("doing an open with path = %s, flags = %d, mode = %u.\n", path, flags, mode);
-    return FILC_SYSCALL(my_thread, open(path, flags, (mode_t)mode));
+    int result = FILC_SYSCALL(my_thread, open(path, flags, (mode_t)mode));
+    if (result < 0 && dump_errnos)
+        pas_log("[%d] open(2) failed for path = %s\n", pas_getpid(), path);
+    return result;
 }
 
 int filc_native_zsys_getpid(filc_thread* my_thread)
@@ -7358,17 +7360,17 @@ static bool from_user_dlopen_flags(int user_flags, int* flags)
 
 filc_ptr filc_native_zsys_dlopen(filc_thread* my_thread, filc_ptr filename_ptr, int user_flags)
 {
+    char* filename = filc_check_and_get_tmp_str_or_null(my_thread, filename_ptr);
     int flags;
     if (!from_user_dlopen_flags(user_flags, &flags)) {
-        set_dlerror("Unrecognized flag to dlopen");
+        set_dlerror("Unrecognized flag to dlopen", filename);
         return filc_ptr_forge_null();
     }
-    char* filename = filc_check_and_get_tmp_str_or_null(my_thread, filename_ptr);
     filc_exit(my_thread);
     void* handle = dlopen(filename, flags);
     filc_enter(my_thread);
     if (!handle) {
-        set_dlerror(dlerror());
+        set_dlerror(dlerror(), filename);
         return filc_ptr_forge_null();
     }
     return filc_ptr_create_with_special_object_and_manual_tracking(
@@ -7391,7 +7393,7 @@ filc_ptr filc_native_zsys_dlsym(filc_thread* my_thread, filc_ptr handle_ptr, fil
     filc_enter(my_thread);
     pas_string_stream_destruct(&stream);
     if (!raw_symbol) {
-        set_dlerror(dlerror());
+        set_dlerror(dlerror(), symbol);
         return filc_ptr_forge_null();
     }
     return raw_symbol(my_thread, NULL);
@@ -7752,11 +7754,6 @@ int filc_native_zsys_unlinkat(filc_thread* my_thread, int dirfd, filc_ptr path_p
     check_fd(dirfd);
     char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
     return FILC_SYSCALL(my_thread, unlinkat(dirfd, path, flag));
-}
-
-int filc_to_user_errno(int errno_value)
-{
-    return errno_value;
 }
 
 void filc_from_user_sigset(sigset_t* user_sigset,

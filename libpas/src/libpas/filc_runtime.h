@@ -4088,8 +4088,6 @@ PAS_API void filc_system_mutex_lock(filc_thread* my_thread, pas_system_mutex* lo
 /* Same as filc_system_mutex_lock() but for pas_locks. */
 PAS_API void filc_lock_lock(filc_thread* my_thread, pas_lock* lock);
 
-PAS_API void filc_set_user_errno(int libc_errno_value);
-PAS_API int filc_to_user_errno(int errno_value);
 PAS_API void filc_set_errno(int errno_value);
 
 #define filc_check_and_clear(passed_flags_ptr, passed_expected) ({ \
