@@ -425,7 +425,8 @@ std::string PizlonateVersionScript(const std::string& Input) {
                         peek() == '_' ||
                         peek() == '$' ||
                         peek() == '@' ||
-                        peek() == '.'))
+                        peek() == '.' ||
+                        peek() == '*'))
       take();
   };
 
@@ -463,12 +464,6 @@ std::string PizlonateVersionScript(const std::string& Input) {
         Output << " }";
         break;
       }
-      if (peek() == '*') {
-        take();
-        parseSymbol(';');
-        Output << " *;";
-        continue;
-      }
       std::string ID = parseID();
       skipWhitespace();
       if (atEnd())
@@ -479,7 +474,11 @@ std::string PizlonateVersionScript(const std::string& Input) {
         continue;
       }
       parseSymbol(';');
-      Output << " pizlonated_" << ID << ";";
+      if (ID == "*")
+        Output << "*";
+      else
+        Output << " pizlonated_" << ID;
+      Output << ";";
     }
     skipWhitespace();
     if (atEnd())
