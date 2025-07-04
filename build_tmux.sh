@@ -30,7 +30,7 @@ set -x
 
 cd pizlonated-tmux
 make distclean || echo whatever
-ACLOCAL_PATH=`aclocal --print-ac-dir`:/usr/share/aclocal ./autogen.sh
+ACLOCAL_PATH=`aclocal --print-ac-dir`:$PWD/../pizfix/share/aclocal ./autogen.sh
 PATH=$PWD/../pizfix/bin:$PATH CC=$PWD/../build/bin/clang ./configure --prefix=$PWD/../pizfix
 make -j $NCPU
 make install
