@@ -33,7 +33,8 @@ mkdir -p compiler-bin
 ln -fs ../../build/bin/clang-17 compiler-bin/cc
 rm -rf install
 PATH=$PWD/compiler-bin:$PATH make distclean
-PATH=$PWD/compiler-bin:$PATH make defconfig
+cp good-config .config
+PATH=$PWD/compiler-bin:$PATH make oldconfig
 PATH=$PWD/compiler-bin:$PATH make -j $NCPU
 PATH=$PWD/compiler-bin:$PATH make install
 
