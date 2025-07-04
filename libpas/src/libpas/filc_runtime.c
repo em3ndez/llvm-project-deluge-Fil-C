@@ -6693,11 +6693,10 @@ int filc_native_zsys_select(filc_thread* my_thread, int nfds,
                             filc_ptr readfds_ptr, filc_ptr writefds_ptr, filc_ptr exceptfds_ptr,
                             filc_ptr timeout_ptr)
 {
-    FILC_CHECK(
-        nfds >= 0,
-        NULL,
-        "attempt to select with nfds = %d (should be non-negative).",
-        nfds);
+    if (nfds < 0) {
+        filc_set_errno(EINVAL);
+        return -1;
+    }
     if (filc_ptr_ptr(readfds_ptr))
         filc_check_write(readfds_ptr, fd_set_size_in_bytes(nfds));
     if (filc_ptr_ptr(writefds_ptr))
@@ -6783,11 +6782,10 @@ int filc_native_zsys_pselect(filc_thread* my_thread, int nfds,
                              filc_ptr readfds_ptr, filc_ptr writefds_ptr, filc_ptr exceptfds_ptr,
                              filc_ptr timeout_ptr, filc_ptr sigmask_ptr)
 {
-    FILC_CHECK(
-        nfds >= 0,
-        NULL,
-        "attempt to select with nfds = %d (should be non-negative).",
-        nfds);
+    if (nfds < 0) {
+        filc_set_errno(EINVAL);
+        return -1;
+    }
     if (filc_ptr_ptr(readfds_ptr))
         filc_check_write(readfds_ptr, fd_set_size_in_bytes(nfds));
     if (filc_ptr_ptr(writefds_ptr))

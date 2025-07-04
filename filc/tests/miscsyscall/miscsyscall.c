@@ -418,6 +418,11 @@ int main(int argc, char** argv)
     struct rusage usage;
     ZASSERT(!getrusage(RUSAGE_SELF, &usage));
 
+    ZASSERT(select(-1, NULL, NULL, NULL, NULL) == -1);
+    ZASSERT(errno == EINVAL);
+    ZASSERT(pselect(-1, NULL, NULL, NULL, NULL, NULL) == -1);
+    ZASSERT(errno == EINVAL);
+
     zprintf("No worries.\n");
     return 0;
 }

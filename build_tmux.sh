@@ -23,13 +23,14 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
+. libpas/common.sh
+
 set -e
 set -x
 
-cd ncurses-6.5-20240720
+cd pizlonated-tmux
 make distclean || echo whatever
-PATH=$PWD/../pizfix/bin:$PATH CC="$PWD/../build/bin/clang -O -g" CXX="$PWD/../build/bin/clang++ -O -g" ./configure \
-    --prefix="$PWD/../pizfix" --disable-lib-suffixes --with-shared --without-ada --enable-pc-files
+ACLOCAL_PATH=`aclocal --print-ac-dir`:/usr/share/aclocal ./autogen.sh
+PATH=$PWD/../pizfix/bin:$PATH CC=$PWD/../build/bin/clang ./configure --prefix=$PWD/../pizfix
 make -j $NCPU
 make install
-

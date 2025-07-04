@@ -58,4 +58,5 @@ set -x
 ./build_ada.sh
 ./build_toybox.sh
 ./build_libevent.sh
+./build_tmux.sh
 ./build_benchmarks.sh

@@ -152,9 +152,12 @@ static void lock_unlock(struct lock* lock)
    needs epoll tracking even though it doesn't, and that epoll tracking won't have anything in it
    unless the user attempts epoll operations on the fd (and those operations will fail anyway). */
 
-/* FIXME: We should have a variant called get_locked_existing_fd_holder() that doesn't try to create
-   one if there isn't one already. */
-static struct fd_holder* get_locked_fd_holder(int fd)
+enum fd_nonexistence_mode {
+    fd_nonexistent_return_null,
+    fd_nonexistent_create
+};
+static struct fd_holder* get_locked_fd_holder_impl(int fd,
+                                                   enum fd_nonexistence_mode nonexistence_mode)
 {
     ZASSERT(fd >= 0);
 
@@ -162,6 +165,8 @@ static struct fd_holder* get_locked_fd_holder(int fd)
         struct fd_holder* table = fd_table;
         
         if (!table || (__SIZE_TYPE__)fd >= zlength(table)) {
+            if (nonexistence_mode == fd_nonexistent_return_null)
+                return 0;
             struct fd_holder* old_table = table;
             __SIZE_TYPE__ new_length = ((__SIZE_TYPE__)fd + 1) * 2;
             struct fd_holder* new_table = zgc_alloc(sizeof(struct fd_holder) * new_length);
@@ -207,6 +212,16 @@ static struct fd_holder* get_locked_fd_holder(int fd)
             return holder;
         lock_unlock(&holder->lock);
     }
+}
+
+static struct fd_holder* get_locked_fd_holder(int fd)
+{
+    return get_locked_fd_holder_impl(fd, fd_nonexistent_create);
+}
+
+static struct fd_holder* get_locked_existing_fd_holder(int fd)
+{
+    return get_locked_fd_holder_impl(fd, fd_nonexistent_return_null);
 }
 
 static void lock_table(void)
@@ -272,7 +287,7 @@ int zsys_close(int fd)
        the backer if the close succeeded. */
     struct fd_holder* holder;
     if (fd >= 0)
-        holder = get_locked_fd_holder(fd);
+        holder = get_locked_existing_fd_holder(fd);
     else
         holder = 0;
     int result = zsys_close_impl(fd);
