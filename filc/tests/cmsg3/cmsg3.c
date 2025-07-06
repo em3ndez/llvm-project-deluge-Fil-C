@@ -194,6 +194,8 @@ static void parent(int sockfd)
         nmsg -= recv_result;
     }
 
+    ZASSERT(msgvec[0].msg_len == 1);
+    ZASSERT(msgvec[1].msg_len == 1);
     ZASSERT(thingy1 == (char)42);
     ZASSERT(thingy2 == (char)43);
 
