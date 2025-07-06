@@ -362,6 +362,8 @@ int zsys_fdatasync(int fd);
 long zsys_copy_file_range(int fd_in, long* off_in, int fd_out, long* off_out, __SIZE_TYPE__ len,
                           unsigned flags);
 int zsys_renameat2(int oldfd, const char* oldpath, int newfd, const char* newpath, unsigned flags);
+int zsys_sendmmsg(int sock, void* msgvec, unsigned vlen, int flags);
+int zsys_recvmmsg(int sock, void* msgvec, unsigned vlen, int flags, void* timeout);
 
 #ifdef __cplusplus
 }

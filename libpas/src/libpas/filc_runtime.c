@@ -8096,13 +8096,90 @@ ssize_t filc_native_zsys_recvmsg(filc_thread* my_thread, int sockfd, filc_ptr ms
         if (verbose)
             pas_log("recvmsg failed: %s\n", strerror(errno));
         filc_set_errno(my_errno);
-    } else
+    } else {
+        check_msghdr(msg_ptr, filc_write_access);
         to_user_msghdr_for_recv(&msg, msg_ptr);
+    }
     return result;
+}
 
-einval:
-    filc_set_errno(EINVAL);
-    return -1;
+int filc_native_zsys_sendmmsg(filc_thread* my_thread, int sockfd, filc_ptr msgvec_ptr, unsigned vlen,
+                              int flags)
+{
+    check_fd(sockfd);
+    static const bool verbose = false;
+    
+    if (verbose)
+        pas_log("In sendmsg\n");
+
+    filc_check_write(msgvec_ptr, filc_mul_size(sizeof(struct mmsghdr), vlen));
+    struct mmsghdr* user_msgvec = (struct mmsghdr*)filc_ptr_ptr(msgvec_ptr);
+    struct mmsghdr* msgvec = alloca(filc_mul_size(sizeof(struct mmsghdr), vlen));
+    unsigned index;
+    for (index = vlen; index--;) {
+        from_user_msghdr_for_send(
+            my_thread, filc_ptr_with_ptr(msgvec_ptr, &user_msgvec[index].msg_hdr),
+            &msgvec[index].msg_hdr);
+    }
+    if (verbose)
+        pas_log("Got this far\n");
+    filc_exit(my_thread);
+    if (verbose)
+        pas_log("Actually doing sendmsg\n");
+    int result = sendmmsg(sockfd, msgvec, vlen, flags);
+    int my_errno = errno;
+    if (verbose)
+        pas_log("sendmsg result = %ld\n", (long)result);
+    filc_enter(my_thread);
+    if (result < 0)
+        filc_set_errno(my_errno);
+    else {
+        filc_check_write(msgvec_ptr, filc_mul_size(sizeof(struct mmsghdr), vlen));
+        for (index = vlen; index--;)
+            user_msgvec[index].msg_len = msgvec[index].msg_len;
+    }
+    return result;
+}
+
+int filc_native_zsys_recvmmsg(filc_thread* my_thread, int sockfd, filc_ptr msgvec_ptr, unsigned vlen,
+                              int flags, filc_ptr timeout_ptr)
+{
+    check_fd(sockfd);
+    static const bool verbose = false;
+
+    if (filc_ptr_ptr(timeout_ptr))
+        filc_check_write(timeout_ptr, sizeof(struct timespec));
+
+    filc_check_write(msgvec_ptr, filc_mul_size(sizeof(struct mmsghdr), vlen));
+    struct mmsghdr* user_msgvec = (struct mmsghdr*)filc_ptr_ptr(msgvec_ptr);
+    struct mmsghdr* msgvec = alloca(filc_mul_size(sizeof(struct mmsghdr), vlen));
+    unsigned index;
+    for (index = vlen; index--;) {
+        from_user_msghdr_for_recv(
+            my_thread, filc_ptr_with_ptr(msgvec_ptr, &user_msgvec[index].msg_hdr),
+            &msgvec[index].msg_hdr);
+    }
+    filc_exit(my_thread);
+    if (verbose)
+        pas_log("Actually doing recvmmsg\n");
+    int result = recvmmsg(sockfd, msgvec, vlen, flags, (struct timespec*)filc_ptr_ptr(timeout_ptr));
+    int my_errno = errno;
+    if (verbose)
+        pas_log("recvmsg result = %ld\n", (long)result);
+    filc_enter(my_thread);
+    if (result < 0) {
+        if (verbose)
+            pas_log("recvmsg failed: %s\n", strerror(errno));
+        filc_set_errno(my_errno);
+    } else {
+        filc_check_write(msgvec_ptr, filc_mul_size(sizeof(struct mmsghdr), vlen));
+        for (index = vlen; index--;) {
+            user_msgvec[index].msg_len = msgvec[index].msg_len;
+            to_user_msghdr_for_recv(
+                &msgvec[index].msg_hdr, filc_ptr_with_ptr(msgvec_ptr, &user_msgvec[index].msg_hdr));
+        }
+    }
+    return result;
 }
 
 int filc_native_zsys_fcntl_impl(filc_thread* my_thread, int fd, int cmd, filc_cc_cursor* args)
