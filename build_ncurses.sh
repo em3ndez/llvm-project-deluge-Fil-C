@@ -32,4 +32,5 @@ PATH=$PWD/../pizfix/bin:$PATH CC="$PWD/../build/bin/clang -O -g" CXX="$PWD/../bu
     --prefix="$PWD/../pizfix" --disable-lib-suffixes --with-shared --without-ada --enable-pc-files
 make -j $NCPU
 make install
+ln -fs ncurses6-config ../pizfix/bin/ncursesw6-config
 
