@@ -10535,6 +10535,20 @@ ssize_t filc_native_zsys_tee(filc_thread* my_thread, int fd_in, int fd_out, size
     return FILC_SYSCALL(my_thread, tee(fd_in, fd_out, len, flags));
 }
 
+int filc_native_zsys_mknod(filc_thread* my_thread, filc_ptr pathname_ptr, unsigned mode,
+                           unsigned long dev)
+{
+    char* pathname = filc_check_and_get_tmp_str(my_thread, pathname_ptr);
+    return FILC_SYSCALL(my_thread, mknod(pathname, mode, dev));
+}
+
+int filc_native_zsys_mknodat(filc_thread* my_thread, int dirfd, filc_ptr pathname_ptr, unsigned mode,
+                             unsigned long dev)
+{
+    char* pathname = filc_check_and_get_tmp_str(my_thread, pathname_ptr);
+    return FILC_SYSCALL(my_thread, mknodat(dirfd, pathname, mode, dev));
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;

@@ -545,6 +545,13 @@ int main(int argc, char** argv)
     close(splice_pipe[0]);
     close(splice_pipe[1]);
 
+    unlink("filc/test-output/miscsyscall/testnode");
+    ZASSERT(!mknod("filc/test-output/miscsyscall/testnode", 0600, S_IFREG));
+    fd = open("filc/test-output/miscsyscall/testnode", O_RDONLY);
+    ZASSERT(fd > 2);
+    ZASSERT(!read(fd, buf, 1));
+    ZASSERT(!close(fd));
+
     zprintf("No worries.\n");
     return 0;
 }
