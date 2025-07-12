@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,10 +28,8 @@
 set -e
 set -x
 
-cd deluded-openssh-portable
-
-($MAKE distclean || echo whatever)
-autoreconf
-CC="$CCPREFIX$PWD/../build/bin/clang -g -O" ./configure --prefix=$PWD/../pizfix
-$MAKE -j $NCPU
-$MAKE install
+cd openssh-9.8p1
+extract_source
+CC=$PWD/../../build/bin/clang ./configure --prefix=$PWD/../../pizfix
+make -j $NCPU
+make -j $NCPU install
