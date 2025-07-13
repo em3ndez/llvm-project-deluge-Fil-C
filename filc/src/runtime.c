@@ -524,11 +524,14 @@ long zsys_syscall(long n, ...)
         callee = zsys_getrandom;
         break;
 
+    case 39 /* SYS_getpid */:
+        callee = zsys_getpid;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:
-        zerrorf("unsupported syscall: %ld (this is a bug in usermusl's syscall "
-                "implementation).", n);
+        zerrorf("unsupported syscall: %ld.", n);
         return -1;
     }
 	
