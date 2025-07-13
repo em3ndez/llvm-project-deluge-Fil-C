@@ -370,6 +370,7 @@ long zsys_splice(int fd_in, long* off_in, int fd_out, long* off_out, __SIZE_TYPE
 long zsys_tee(int fd_in, int fd_out, __SIZE_TYPE__ len, unsigned flags);
 int zsys_mknod(const char* pathname, unsigned mode, unsigned long dev);
 int zsys_mknodat(int dirfd, const char* pathname, unsigned mode, unsigned long dev);
+int zsys_reboot(int howto);
 
 #ifdef __cplusplus
 }

@@ -98,6 +98,7 @@
 #include <sys/quota.h>
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
+#include <sys/reboot.h>
 
 #if PAS_GLIBC
 #include <sys/pidfd.h>
@@ -10547,6 +10548,11 @@ int filc_native_zsys_mknodat(filc_thread* my_thread, int dirfd, filc_ptr pathnam
 {
     char* pathname = filc_check_and_get_tmp_str(my_thread, pathname_ptr);
     return FILC_SYSCALL(my_thread, mknodat(dirfd, pathname, mode, dev));
+}
+
+int filc_native_zsys_reboot(filc_thread* my_thread, int howto)
+{
+    return FILC_SYSCALL(my_thread, reboot(howto));
 }
 
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
