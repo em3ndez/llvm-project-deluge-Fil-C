@@ -79,7 +79,6 @@ handle_git pizlonated-simdutf pizlonated-simdutf
 handle_git pizlonated-tcl pizlonated-tcl
 handle_git pizlonated-icu pizlonated-icu
 handle_git pizlonated-libedit pizlonated-libedit
-handle_git pizlonated-postgres pizlonated-postgres
 handle_git pizlonated-quickjs pizlonated-quickjs
 handle_git wg14_signals wg14_signals
 handle_git pizlonated-libuev pizlonated-libuev
