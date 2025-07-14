@@ -10556,6 +10556,12 @@ int filc_native_zsys_reboot(filc_thread* my_thread, int howto)
     return FILC_SYSCALL(my_thread, reboot(howto));
 }
 
+int filc_native_zsys_umount2(filc_thread* my_thread, filc_ptr special_ptr, int flags)
+{
+    char* special = filc_check_and_get_tmp_str(my_thread, special_ptr);
+    return FILC_SYSCALL(my_thread, umount2(special, flags));
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;

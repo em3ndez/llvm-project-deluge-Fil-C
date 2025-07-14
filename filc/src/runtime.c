@@ -490,8 +490,7 @@ long zsys_syscall(long n, ...)
             zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
             return 0;
         default:
-            zerrorf("unsupported futex op: %d (this is a bug in usermusl's syscall "
-                    "implementation).", args->futex_op);
+            zerrorf("unsupported futex op: %d.", args->futex_op);
             return -1;
         }
     }
@@ -526,6 +525,15 @@ long zsys_syscall(long n, ...)
 
     case 39 /* SYS_getpid */:
         callee = zsys_getpid;
+        break;
+
+    case 452 /* SYS_fchmodat2 */:
+        /* The pizlonated fchmodat syscall is really an interface to fchmodat2 on modern kernels, and
+           on older kernels, it's an interface to a reasonably faithful emulation of fchmodat2.
+        
+           In particular, zsys_fchmodat does take a flags argument, and correctly handles the case
+           where it's nonzero. */
+        callee = zsys_fchmodat;
         break;
 
 	/* FIXME: Implement more syscalls! */

@@ -488,6 +488,7 @@ addSig "long", "zsys_tee", "int", "int", "size_t", "unsigned"
 addSig "int", "zsys_mknod", "filc_ptr", "unsigned", "unsigned long"
 addSig "int", "zsys_mknodat", "int", "filc_ptr", "unsigned", "unsigned long"
 addSig "int", "zsys_reboot", "int"
+addSig "int", "zsys_umount2", "filc_ptr", "int"
 
 addSig "filc_ptr", "zthread_self"
 addSig "unsigned", "zthread_get_id", "filc_ptr"
