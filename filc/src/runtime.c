@@ -543,6 +543,10 @@ long zsys_syscall(long n, ...)
         callee = zsys_fchmodat;
         break;
 
+    case 164 /* SYS_settimeofday */:
+        callee = zsys_settimeofday;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:
