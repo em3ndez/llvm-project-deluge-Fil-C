@@ -7904,21 +7904,34 @@ ssize_t filc_native_zsys_sendto(filc_thread* my_thread, int sockfd, filc_ptr buf
     return result;
 }
 
+static bool handle_returned_addr(filc_thread* my_thread, filc_ptr addr_ptr, filc_ptr addrlen_ptr,
+                                 unsigned** addrlen)
+{
+    if (filc_ptr_ptr(addrlen_ptr)) {
+        *addrlen = filc_bmalloc_allocate_tmp(my_thread, sizeof(unsigned));
+        filc_check_write(addrlen_ptr, sizeof(unsigned));
+        **addrlen = *(unsigned*)filc_ptr_ptr(addrlen_ptr);
+        filc_check_write(addr_ptr, **addrlen);
+        return true;
+    }
+
+    if (filc_ptr_ptr(addr_ptr)) {
+        filc_set_errno(EINVAL);
+        return false;
+    }
+
+    *addrlen = NULL;
+    return true;
+}
+
 ssize_t filc_native_zsys_recvfrom(filc_thread* my_thread, int sockfd, filc_ptr buf_ptr, size_t len,
                                   int flags, filc_ptr addr_ptr, filc_ptr addrlen_ptr)
 {
     check_fd(sockfd);
     filc_check_write(buf_ptr, len);
-    unsigned* addrlen = NULL;
-    if (filc_ptr_ptr(addrlen_ptr)) {
-        addrlen = alloca(sizeof(unsigned));
-        filc_check_write(addrlen_ptr, sizeof(unsigned));
-        *addrlen = *(unsigned*)filc_ptr_ptr(addrlen_ptr);
-        filc_check_write(addr_ptr, *addrlen);
-    } else if (filc_ptr_ptr(addr_ptr)) {
-        filc_set_errno(EINVAL);
+    unsigned* addrlen;
+    if (!handle_returned_addr(my_thread, addr_ptr, addrlen_ptr, &addrlen))
         return -1;
-    }
     PAS_ASSERT(!!addrlen == !!filc_ptr_ptr(addr_ptr));
     filc_exit(my_thread);
     int result = recvfrom(sockfd, filc_ptr_ptr(buf_ptr), len, flags,
@@ -7932,37 +7945,39 @@ ssize_t filc_native_zsys_recvfrom(filc_thread* my_thread, int sockfd, filc_ptr b
     return result;
 }
 
-int filc_native_zsys_accept(filc_thread* my_thread, int sockfd, filc_ptr addr_ptr, filc_ptr addrlen_ptr)
+int filc_native_zsys_accept(filc_thread* my_thread, int sockfd, filc_ptr addr_ptr,
+                            filc_ptr addrlen_ptr)
 {
     check_fd(sockfd);
-    filc_check_write(addrlen_ptr, sizeof(unsigned));
-    unsigned addrlen = *(unsigned*)filc_ptr_ptr(addrlen_ptr);
-    filc_check_write(addr_ptr, addrlen);
+    unsigned* addrlen;
+    if (!handle_returned_addr(my_thread, addr_ptr, addrlen_ptr, &addrlen))
+        return -1;
     filc_exit(my_thread);
-    int result = accept(sockfd, (struct sockaddr*)filc_ptr_ptr(addr_ptr), &addrlen);
+    int result = accept(sockfd, (struct sockaddr*)filc_ptr_ptr(addr_ptr), addrlen);
     int my_errno = errno;
     filc_enter(my_thread);
     if (result < 0)
         filc_set_errno(my_errno);
-    else
-        *(unsigned*)filc_ptr_ptr(addrlen_ptr) = addrlen;
+    else if (addrlen)
+        *(unsigned*)filc_ptr_ptr(addrlen_ptr) = *addrlen;
     return result;
 }
 
-int filc_native_zsys_accept4(filc_thread* my_thread, int sockfd, filc_ptr addr_ptr, filc_ptr addrlen_ptr, int flg)
+int filc_native_zsys_accept4(filc_thread* my_thread, int sockfd, filc_ptr addr_ptr,
+                             filc_ptr addrlen_ptr, int flg)
 {
     check_fd(sockfd);
-    filc_check_write(addrlen_ptr, sizeof(unsigned));
-    unsigned addrlen = *(unsigned*)filc_ptr_ptr(addrlen_ptr);
-    filc_check_write(addr_ptr, addrlen);
+    unsigned* addrlen;
+    if (!handle_returned_addr(my_thread, addr_ptr, addrlen_ptr, &addrlen))
+        return -1;
     filc_exit(my_thread);
-    int result = accept4(sockfd, (struct sockaddr*)filc_ptr_ptr(addr_ptr), &addrlen, flg);
+    int result = accept4(sockfd, (struct sockaddr*)filc_ptr_ptr(addr_ptr), addrlen, flg);
     int my_errno = errno;
     filc_enter(my_thread);
     if (result < 0)
         filc_set_errno(my_errno);
-    else
-        *(unsigned*)filc_ptr_ptr(addrlen_ptr) = addrlen;
+    else if (addrlen)
+        *(unsigned*)filc_ptr_ptr(addrlen_ptr) = *addrlen;
     return result;
 }
 
