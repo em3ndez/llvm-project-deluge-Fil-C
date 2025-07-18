@@ -154,11 +154,13 @@ static PAS_ALWAYS_INLINE bool filc_weak_load_barrier(filc_thread* my_thread, fil
 {
     if (!filc_ptr_object(result))
         return true;
+    if (filc_object_is_free(filc_ptr_object(result)))
+        return false;
     for (;;) {
         switch (filc_current_marking_state) {
         case filc_not_marking:
             if (fugc_has_unfinished_census &&
-                !filc_object_is_live_for_weak(filc_ptr_object(result), FUGC_MARKER))
+                !filc_non_free_object_is_live_for_weak(filc_ptr_object(result), FUGC_MARKER))
                 return false;
             return true;
         case filc_marking:
@@ -562,6 +564,9 @@ static PAS_ALWAYS_INLINE void filc_object_mark_weak_map_values_based_on_key(filc
 
     if (verbose)
         pas_log("inverse marking from %p\n", filc_object_lower(object));
+
+    if (filc_object_is_free(object))
+        return;
 
     verse_heap_page_header* header = verse_heap_get_page_header((uintptr_t)object);
     PAS_ASSERT(header);

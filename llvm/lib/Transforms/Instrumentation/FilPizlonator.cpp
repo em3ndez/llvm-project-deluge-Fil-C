@@ -1188,6 +1188,8 @@ class Pizlonator {
   FunctionCallee CCRetsCheckFailure;
   FunctionCallee AllocateThreadLocal;
   FunctionCallee AllocateThreadLocalWithPtrs;
+  FunctionCallee WeakMapCreate;
+  FunctionCallee WeakMapSet;
   FunctionCallee _Setjmp;
   FunctionCallee ExpectI1;
   FunctionCallee LifetimeStart;
@@ -1209,7 +1211,8 @@ class Pizlonator {
   std::unordered_map<EHDataKey, GlobalVariable*> EHDatas; /* the value is a high-level GV, need to
                                                              lookup the getter. */
   std::unordered_map<Constant*, int> EHTypeIDs;
-  std::unordered_map<CallBase*, unsigned> Setjmps;
+  bool HasSetjmps;
+  size_t SetjmpSetFrameIndex;
   std::unordered_map<Type*, Constant*> CCTypes;
   std::unordered_map<Instruction*, std::vector<AccessCheckWithDI>> ChecksForInst;
   std::unordered_map<OptimizedAccessCheckOriginKey, GlobalVariable*> OptimizedAccessCheckOrigins;
@@ -1307,7 +1310,6 @@ class Pizlonator {
     }
     
     bool CanThrow = !OldF->doesNotThrow();
-    unsigned NumSetjmps = Setjmps.size();
 
     assert(FrameSize < UINT_MAX);
     
@@ -1319,7 +1321,7 @@ class Pizlonator {
             OldF->getSubprogram() ? getString(OldF->getSubprogram()->getFilename()) : RawNull,
             ConstantInt::get(Int32Ty, FrameSize) }),
         Personality, ConstantInt::get(Int8Ty, CanThrow), ConstantInt::get(Int8Ty, CanCatch),
-        ConstantInt::get(Int32Ty, NumSetjmps) });
+        ConstantInt::get(Int8Ty, HasSetjmps) });
     GlobalVariable* Result = new GlobalVariable(
       M, FunctionOriginTy, true, GlobalVariable::PrivateLinkage, C, "filc_function_origin");
     FunctionOrigins[FOK] = Result;
@@ -2210,8 +2212,9 @@ class Pizlonator {
   void computeFrameIndexMap(const std::vector<BasicBlock*>& Blocks) {
     FrameIndexMap.clear();
     FrameSize = NumSpecialFrameObjects;
-    Setjmps.clear();
+    HasSetjmps = false;
     UsesVastartOrZargs = false;
+    SetjmpSetFrameIndex = SIZE_MAX;
 
     assert(!Blocks.empty());
 
@@ -2387,7 +2390,10 @@ class Pizlonator {
             if (isSetjmp(F)) {
               assert(CI->hasFnAttr(Attribute::ReturnsTwice));
               assert(F->hasFnAttribute(Attribute::ReturnsTwice));
-              Setjmps[CI] = FrameSize++;
+              if (!HasSetjmps) {
+                SetjmpSetFrameIndex = FrameSize++;
+                HasSetjmps = true;
+              }
             }
           }
         }
@@ -2395,7 +2401,7 @@ class Pizlonator {
     }
   }
 
-  void recordLowerAtIndex(Value* Lower, size_t FrameIndex, Instruction* InsertBefore) {
+  Value* recordedLowerPtrAtIndex(size_t FrameIndex, Instruction* InsertBefore) {
     assert(FrameIndex < FrameSize);
     Instruction* LowersPtr = GetElementPtrInst::Create(
       FrameTy, Frame, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 2) },
@@ -2405,7 +2411,12 @@ class Pizlonator {
       RawPtrTy, LowersPtr, { ConstantInt::get(IntPtrTy, FrameIndex) }, "filc_frame_lower",
       InsertBefore);
     LowerPtr->setDebugLoc(InsertBefore->getDebugLoc());
-    (new StoreInst(Lower, LowerPtr, InsertBefore))->setDebugLoc(InsertBefore->getDebugLoc());
+    return LowerPtr;
+  }
+
+  void recordLowerAtIndex(Value* Lower, size_t FrameIndex, Instruction* InsertBefore) {
+    (new StoreInst(Lower, recordedLowerPtrAtIndex(FrameIndex, InsertBefore), InsertBefore))
+      ->setDebugLoc(InsertBefore->getDebugLoc());
   }
 
   void recordLowersRecurse(
@@ -5411,7 +5422,8 @@ class Pizlonator {
             lowerConstantOperand(Arg, CI);
           assert(FT == F->getFunctionType());
           assert(CI->hasFnAttr(Attribute::ReturnsTwice));
-          assert(Setjmps.count(CI));
+          assert(HasSetjmps);
+          assert(SetjmpSetFrameIndex != SIZE_MAX);
           Value* ValueArg;
           if (F->getName() == "sigsetjmp") {
             assert(CI->arg_size() == 2);
@@ -5420,7 +5432,6 @@ class Pizlonator {
             assert(CI->arg_size() == 1);
             ValueArg = ConstantInt::get(Int32Ty, 0);
           }
-          unsigned FrameIndex = Setjmps[CI];
           storeOrigin(getOrigin(CI->getDebugLoc()), CI);
           CallInst* Create = CallInst::Create(
             JmpBufCreate,
@@ -5431,8 +5442,18 @@ class Pizlonator {
           Value* UserJmpBuf = CI->getArgOperand(0);
           storePtr(flightPtrForPayload(Create, CI), flightPtrPtr(UserJmpBuf, CI),
                    auxPtrForOperand(UserJmpBuf, CI, 0, CI).P, CI);
+          Instruction* Set = new LoadInst(
+            RawPtrTy, recordedLowerPtrAtIndex(SetjmpSetFrameIndex, CI), "filc_setjmp_set", CI);
+          Set->setDebugLoc(CI->getDebugLoc());
+          CallInst::Create(
+            WeakMapSet,
+            { MyThread, Set, flightPtrForPayload(Create, CI),
+              createFlightPtr(
+                RawNull,
+                ConstantExpr::getIntToPtr(ConstantInt::get(IntPtrTy, 1), RawPtrTy),
+                CI) },
+            "", CI)->setDebugLoc(CI->getDebugLoc());
           CallInst* NewCI = CallInst::Create(_Setjmp, { Create }, "filc_setjmp", CI);
-          recordLowerAtIndex(Create, FrameIndex, CI);
           CI->replaceAllUsesWith(NewCI);
           NewCI->setDebugLoc(CI->getDebugLoc());
           Erasify();
@@ -7594,7 +7615,7 @@ public:
     FlightPtrTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_flight_ptr");
     OriginNodeTy = StructType::create({ RawPtrTy, RawPtrTy, Int32Ty }, "filc_origin_node");
     FunctionOriginTy = StructType::create(
-      { OriginNodeTy, RawPtrTy, Int8Ty, Int8Ty, Int32Ty }, "filc_function_origin");
+      { OriginNodeTy, RawPtrTy, Int8Ty, Int8Ty, Int8Ty }, "filc_function_origin");
     OriginTy = StructType::create({ RawPtrTy, Int32Ty, Int32Ty }, "filc_origin");
     InlineFrameTy = StructType::create({ OriginNodeTy, OriginTy }, "filc_inline_frame");
     OriginWithEHTy = StructType::create(
@@ -7772,6 +7793,10 @@ public:
       "filc_allocate_thread_local", RawPtrTy, RawPtrTy, IntPtrTy, IntPtrTy);
     AllocateThreadLocalWithPtrs = M.getOrInsertFunction(
       "filc_allocate_thread_local_with_ptrs", RawPtrTy, RawPtrTy, IntPtrTy, IntPtrTy);
+    WeakMapCreate = M.getOrInsertFunction(
+      "filc_weak_map_create", RawPtrTy, RawPtrTy);
+    WeakMapSet = M.getOrInsertFunction(
+      "filc_weak_map_set", RawPtrTy, RawPtrTy, RawPtrTy, FlightPtrTy, FlightPtrTy);
     _Setjmp = M.getOrInsertFunction(
       "_setjmp", Int32Ty, RawPtrTy);
     cast<Function>(_Setjmp.getCallee())->addFnAttr(Attribute::ReturnsTwice);
@@ -8312,13 +8337,20 @@ public:
         if (UsesVastartOrZargs) {
           // Do this after we have recorded all the args for GC, so it's safe to have a pollcheck.
           Value* SnapshottedArgsPtr = CallInst::Create(
-            PromoteArgsToHeap, { MyThread, NewF->getArg(2) }, "", InsertionPoint);
+            PromoteArgsToHeap, { MyThread, NewF->getArg(2) }, "filc_promote_args", InsertionPoint);
           recordLowerAtIndex(
             flightPtrLower(SnapshottedArgsPtr, InsertionPoint), SnapshottedArgsFrameIndex,
             InsertionPoint);
           SnapshottedArgsPtrForVastart = flightPtrWithOffset(
             SnapshottedArgsPtr, ConstantInt::get(IntPtrTy, LastOffset), InsertionPoint);
           SnapshottedArgsPtrForZargs = SnapshottedArgsPtr;
+        }
+
+        if (HasSetjmps) {
+          assert(SetjmpSetFrameIndex != SIZE_MAX);
+          Value* Set = CallInst::Create(
+            WeakMapCreate, { MyThread }, "filc_setjmp_set_create", InsertionPoint);
+          recordLowerAtIndex(Set, SetjmpSetFrameIndex, InsertionPoint);
         }
 
         FirstRealBlock = InsertionPoint->getParent();
@@ -8357,7 +8389,7 @@ public:
         Return = ReturnInst::Create(C, UndefValue::get(FlightPtrTy), RootBB);
         Return->getOperandUse(0) = flightPtrForLocalFunction(OldF, Return);
 
-        if (Setjmps.size())
+        if (HasSetjmps)
           assert(NewF->callsFunctionThatReturnsTwice());
         
         if (verbose)

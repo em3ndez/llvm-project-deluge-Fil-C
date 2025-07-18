@@ -2952,6 +2952,11 @@ static void remove_inverse_weak_mapping(filc_object* object, filc_inverse_weak_m
 
 void filc_weak_map_set(filc_thread* my_thread, filc_weak_map* map, filc_ptr key, filc_ptr value)
 {
+    /* NOTE: It might be that the compiler is relying on this not exiting, due to how this gets
+       called when implementing setjmp.
+       
+       But it's not clear. Maybe it's called at a valid safepoint. */
+    
     filc_store_barrier(my_thread, filc_ptr_object(value));
     
     pas_allocation_config allocation_config;
@@ -3027,6 +3032,9 @@ void filc_weak_map_set(filc_thread* my_thread, filc_weak_map* map, filc_ptr key,
 
 filc_ptr filc_weak_map_get(filc_weak_map* map, filc_ptr key)
 {
+    if (filc_object_is_free(filc_ptr_object(key)))
+        return filc_ptr_forge_null();
+    
     pas_lock_lock(&map->lock);
     filc_ptr_hash_map_entry result = filc_ptr_hash_map_get(&map->map, key);
     pas_lock_unlock(&map->lock);
@@ -6197,16 +6205,21 @@ void filc_native_zlongjmp(filc_thread* my_thread, filc_ptr jmp_buf_ptr, int valu
             filc_origin_get_function_origin(current_frame->origin);
         PAS_ASSERT(function_origin);
         PAS_ASSERT(function_origin->base.num_lowers_ish < UINT_MAX);
-        PAS_ASSERT(function_origin->num_setjmps <= function_origin->base.num_lowers_ish);
-        unsigned index;
-        for (index = function_origin->num_setjmps; index-- && !found_frame;) {
-            unsigned lower_index = function_origin->base.num_lowers_ish - 1 - index;
-            PAS_ASSERT(lower_index < function_origin->base.num_lowers_ish);
-            if (jmp_buf == current_frame->lowers[lower_index]) {
-                PAS_ASSERT(current_frame == jmp_buf->saved_top_frame);
-                found_frame = true;
-                break;
-            }
+        if (!function_origin->has_setjmps)
+            continue;
+        PAS_ASSERT(function_origin->base.num_lowers_ish);
+        filc_weak_map* weak_map =
+            (filc_weak_map*)current_frame->lowers[function_origin->base.num_lowers_ish - 1];
+        PAS_ASSERT(filc_object_special_type(filc_object_for_special_payload(weak_map))
+                   == FILC_SPECIAL_TYPE_WEAK_MAP);
+        filc_ptr result = filc_weak_map_get(
+            weak_map, filc_ptr_for_special_payload_with_manual_tracking(jmp_buf));
+        PAS_ASSERT(!filc_ptr_lower(result));
+        PAS_ASSERT(!filc_ptr_ptr(result) || filc_ptr_ptr(result) == (void*)(uintptr_t)1);
+        if (filc_ptr_ptr(result)) {
+            PAS_ASSERT(current_frame == jmp_buf->saved_top_frame);
+            found_frame = true;
+            break;
         }
     }
 

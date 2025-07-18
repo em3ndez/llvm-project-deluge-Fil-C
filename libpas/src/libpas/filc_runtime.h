@@ -307,7 +307,7 @@ typedef uintptr_t filc_word;
         .personality_getter = NULL, \
         .can_throw = true, \
         .can_catch = (passed_can_catch), \
-        .num_setjmps = 0 \
+        .has_setjmps = false \
     }; \
     static const filc_origin origin_name = { \
         .origin_node = &function_ ## origin_name.base, \
@@ -507,9 +507,11 @@ struct filc_function_origin {
        unwinding isn't allowed. Most native frames are !can_catch. */
     bool can_catch;
 
-    /* The number of setjmps in the given function's frame. These are always the highest-indexed
-       object slots. */
-    unsigned num_setjmps;
+    /* Tells if we have setjmps. If we do, then the last lower is a weak_map used as a set of setjmps
+       for that frame.
+    
+       FIXME: We could use a bespoke weak set for this purpose and it would be faster! */
+    bool has_setjmps;
 };
 
 /* Given an origin, you can get the combined function/filename/line/column like so:
@@ -2247,6 +2249,17 @@ static inline bool filc_object_is_markable(filc_object* object)
         && !(filc_object_get_flags(object) & FILC_OBJECT_FLAG_GLOBAL);
 }
 
+static inline bool filc_object_is_free(filc_object* object)
+{
+    return object
+        && !!(filc_object_get_flags(object) & FILC_OBJECT_FLAG_FREE);
+}
+
+static inline bool filc_object_is_not_free(filc_object* object)
+{
+    return !filc_object_is_free(object);
+}
+
 static inline filc_special_type filc_object_flags_special_type(filc_object_flags flags)
 {
     return (flags >> FILC_OBJECT_FLAGS_SPECIAL_SHIFT) & FILC_SPECIAL_TYPE_MASK;
@@ -2357,13 +2370,21 @@ static inline void* filc_object_mark_base(filc_object* object)
     return filc_object_mark_base_with_flags(object, filc_object_get_flags(object));
 }
 
-static inline bool filc_object_is_live_for_weak(filc_object* object, const filc_marker marker)
+static PAS_ALWAYS_INLINE bool filc_non_free_object_is_live_for_weak(filc_object* object,
+                                                                    const filc_marker marker)
 {
     if (!filc_object_is_markable(object))
         return true;
     if (!marker.is_marked(filc_object_mark_base(object)))
         return false;
     return true;
+}
+
+static PAS_ALWAYS_INLINE bool filc_object_is_live_for_weak(filc_object* object,
+                                                           const filc_marker marker)
+{
+    return filc_object_is_not_free(object)
+        && filc_non_free_object_is_live_for_weak(object, marker);
 }
 
 static PAS_ALWAYS_INLINE void filc_thread_assert_object_allocation_color(filc_thread* thread,
@@ -3640,9 +3661,9 @@ static PAS_ALWAYS_INLINE void filc_exact_ptr_table_mark_outgoing_ptrs(filc_exact
 
 PAS_API filc_weak* filc_weak_create(filc_thread* my_thread, filc_ptr ptr);
 
-PAS_API filc_weak_map* filc_weak_map_create(filc_thread* my_thread);
-PAS_API void filc_weak_map_set(filc_thread* my_thread, filc_weak_map* map,
-                               filc_ptr key, filc_ptr value);
+filc_weak_map* filc_weak_map_create(filc_thread* my_thread);
+void filc_weak_map_set(filc_thread* my_thread, filc_weak_map* map,
+                       filc_ptr key, filc_ptr value);
 PAS_API filc_ptr filc_weak_map_get(filc_weak_map* map, filc_ptr key);
 
 PAS_API filc_object* filc_weak_map_snapshot(filc_thread* my_thread, filc_weak_map* map);

@@ -5,6 +5,7 @@
 
 static void* thread_main(void* arg)
 {
+    pthread_detach(pthread_self());
     ZASSERT(!arg);
     return NULL;
 }
@@ -16,7 +17,6 @@ int main()
         for (j = 10; j--;) {
             pthread_t t;
             pthread_create(&t, NULL, thread_main, NULL);
-            pthread_detach(t);
         }
         usleep(1000);
     }
