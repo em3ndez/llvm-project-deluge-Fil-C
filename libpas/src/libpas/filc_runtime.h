@@ -3589,7 +3589,10 @@ filc_object* filc_reallocate_with_alignment(filc_thread* my_thread, filc_object*
 /* "Frees" the object. This transitions the state of all words to the free state.
  
    This assumes that you've already done some basic checks that the object is OK to free. */
-void filc_free(filc_object* object);
+PAS_API void filc_free(filc_object* object);
+
+/* Equivalent to zgc_free in that it does all of the checks. */
+void filc_free_with_checks(filc_ptr ptr);
 
 PAS_API void filc_unmap(void* ptr, size_t size);
 

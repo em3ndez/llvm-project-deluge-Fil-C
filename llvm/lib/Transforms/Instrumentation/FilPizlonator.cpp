@@ -48,6 +48,9 @@ using namespace llvm;
 
 namespace {
 
+static cl::opt<bool> lightVerbose(
+  "filc-light-verbose", cl::desc("Make FilC slightly verbose"),
+  cl::Hidden, cl::init(false));
 static cl::opt<bool> verbose(
   "filc-verbose", cl::desc("Make FilC verbose"),
   cl::Hidden, cl::init(false));
@@ -1166,6 +1169,7 @@ class Pizlonator {
   FunctionCallee Allocate;
   FunctionCallee AllocateWithAlignment;
   FunctionCallee LocalAllocatorAllocate;
+  FunctionCallee FreeWithChecks;
   FunctionCallee OptimizedAlignmentContradiction;
   FunctionCallee OptimizedAccessCheckFail;
   FunctionCallee MaskedAccessCheckFail;
@@ -5275,6 +5279,14 @@ class Pizlonator {
       "", FailTerm);
   }
 
+  void emitMemmove(Value* Dst, Value* Src, Value* Size, Instruction* I) {
+    Instruction* CI = CallInst::Create(
+      Memmove,
+      { MyThread, Dst, Src, makeIntPtr(Size, I), getOrigin(I->getDebugLoc()) },
+      "", I);
+    CI->setDebugLoc(I->getDebugLoc());
+  }
+
   bool earlyLowerInstruction(Instruction* I) {
     if (verbose)
       errs() << "Early lowering: " << *I << "\n";
@@ -5301,11 +5313,8 @@ class Pizlonator {
         lowerConstantOperand(II->getArgOperandUse(0), I);
         lowerConstantOperand(II->getArgOperandUse(1), I);
         lowerConstantOperand(II->getArgOperandUse(2), I);
-        Instruction* CI = CallInst::Create(
-          Memmove,
-          { MyThread, II->getArgOperand(0), II->getArgOperand(1),
-            makeIntPtr(II->getArgOperand(2), II), getOrigin(II->getDebugLoc()) });
-        ReplaceInstWithInst(II, CI);
+        emitMemmove(II->getArgOperand(0), II->getArgOperand(1), II->getArgOperand(2), II);
+        II->eraseFromParent();
         return true;
       }
 
@@ -5461,8 +5470,10 @@ class Pizlonator {
         FunctionType* FT = CI->getFunctionType();
 
         auto Erasify = [&] () {
-          if (InvokeInst* II = dyn_cast<InvokeInst>(CI))
+          if (InvokeInst* II = dyn_cast<InvokeInst>(CI)) {
             BranchInst::Create(II->getNormalDest(), CI)->setDebugLoc(CI->getDebugLoc());
+            II->getUnwindDest()->removePredecessor(II->getParent(), /*KeepOneInputPHIs=*/true);
+          }
           CI->eraseFromParent();
         };
         
@@ -5626,6 +5637,44 @@ class Pizlonator {
           Instruction* Cookie = new LoadInst(FlightPtrTy, CookiePtr, "filc_cookie", CI);
           Cookie->setDebugLoc(CI->getDebugLoc());
           CI->replaceAllUsesWith(Cookie);
+          Erasify();
+          return true;
+        }
+
+        if (F->getName() == "zmemmove.union" &&
+            FT->getNumParams() == 3 &&
+            !FT->isVarArg() &&
+            FT->getReturnType() == VoidTy &&
+            FT->getParamType(0) == RawPtrTy &&
+            FT->getParamType(1) == RawPtrTy &&
+            FT->getParamType(2) == IntPtrTy) {
+          lowerConstantOperand(CI->getArgOperandUse(0), CI);
+          lowerConstantOperand(CI->getArgOperandUse(1), CI);
+          lowerConstantOperand(CI->getArgOperandUse(2), CI);
+          emitMemmove(CI->getArgOperand(0), CI->getArgOperand(1), CI->getArgOperand(2), CI);
+          Erasify();
+          return true;
+        }
+
+        if ((F->getName() == "zgc_alloc" || F->getName() == "malloc") &&
+            FT->getNumParams() == 1 &&
+            !FT->isVarArg() &&
+            FT->getReturnType() == RawPtrTy &&
+            FT->getParamType(0) == IntPtrTy) {
+          lowerConstantOperand(CI->getArgOperandUse(0), CI);
+          CI->replaceAllUsesWith(allocate(CI->getArgOperand(0), ConstantInt::get(IntPtrTy, 1), CI));
+          Erasify();
+          return true;
+        }
+
+        if ((F->getName() == "zgc_free" || F->getName() == "free") &&
+            FT->getNumParams() == 1 &&
+            !FT->isVarArg() &&
+            FT->getReturnType() == VoidTy &&
+            FT->getParamType(0) == RawPtrTy) {
+          lowerConstantOperand(CI->getArgOperandUse(0), CI);
+          CallInst* Free = CallInst::Create(FreeWithChecks, { CI->getArgOperand(0) }, "", CI);
+          Free->setDebugLoc(CI->getDebugLoc());
           Erasify();
           return true;
         }
@@ -7611,7 +7660,7 @@ public:
   }
 
   void run() {
-    if (verbose)
+    if (lightVerbose || verbose)
       errs() << "Going to town on module:\n" << M << "\n";
 
     assert(DLBefore.getPointerSizeInBits(TargetAS) == 64);
@@ -7803,6 +7852,8 @@ public:
       "filc_allocate_with_alignment", RawPtrTy, RawPtrTy, IntPtrTy, IntPtrTy);
     LocalAllocatorAllocate = M.getOrInsertFunction(
       "verse_local_allocator_allocate", RawPtrTy, RawPtrTy);
+    FreeWithChecks = M.getOrInsertFunction(
+      "filc_free_with_checks", VoidTy, FlightPtrTy);
     CheckFunctionCallFail = M.getOrInsertFunction(
       "filc_check_function_call_fail", VoidTy, FlightPtrTy);
     CheckClosureFail = M.getOrInsertFunction(
@@ -8565,7 +8616,7 @@ public:
       G->eraseFromParent();
     }
 
-    if (verbose)
+    if (lightVerbose || verbose)
       errs() << "Here's the pizlonated module:\n" << M << "\n";
     verifyModule(M);
   }

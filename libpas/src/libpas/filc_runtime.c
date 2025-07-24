@@ -2698,7 +2698,14 @@ filc_object* filc_reallocate_with_alignment(filc_thread* my_thread, filc_object*
         object, new_size, alignment, offset_to_payload);
 }
 
-void filc_free(filc_object* object)
+static PAS_NO_RETURN PAS_NEVER_INLINE void free_fail(filc_object* object)
+{
+    filc_safety_panic(NULL,
+                      "cannot free already free object %s.",
+                      filc_object_to_new_string(object));
+}
+
+static PAS_ALWAYS_INLINE void free_impl(filc_object* object)
 {
     static const bool verbose = false;
     if (verbose) {
@@ -2712,11 +2719,8 @@ void filc_free(filc_object* object)
     object->upper = filc_object_lower_not_null(object);
     for (;;) {
         uintptr_t aux = object->aux;
-        FILC_CHECK(
-            !(filc_aux_get_flags(aux) & FILC_OBJECT_FLAG_FREE),
-            NULL,
-            "cannot free already free object %s.",
-            filc_object_to_new_string(object));
+        if ((filc_aux_get_flags(aux) & FILC_OBJECT_FLAG_FREE))
+            free_fail(object);
         /* FIXME: This CAS could be relaxed! */
         if (pas_compare_and_swap_uintptr_weak(
                 &object->aux, aux,
@@ -2724,6 +2728,11 @@ void filc_free(filc_object* object)
                                 filc_aux_get_ptr(aux))))
             break;
     }
+}
+
+void filc_free(filc_object* object)
+{
+    free_impl(object);
 }
 
 filc_object* filc_allocate_thread_local(filc_thread* my_thread, size_t size, size_t alignment)
@@ -3279,7 +3288,7 @@ filc_ptr filc_native_zgc_aligned_alloc(filc_thread* my_thread, size_t alignment,
         filc_allocate_with_alignment(my_thread, size, alignment));
 }
 
-static filc_object* object_for_deallocate(filc_ptr ptr)
+static PAS_NO_RETURN PAS_NEVER_INLINE void object_for_deallocate_fail(filc_ptr ptr)
 {
     FILC_CHECK(
         filc_ptr_object(ptr),
@@ -3306,6 +3315,17 @@ static filc_object* object_for_deallocate(filc_ptr ptr)
         NULL,
         "cannot free ptr with ptr != lower (ptr = %s).",
         filc_ptr_to_new_string(ptr));
+    PAS_UNREACHABLE();
+}
+
+static PAS_ALWAYS_INLINE filc_object* object_for_deallocate(filc_ptr ptr)
+{
+    if (!filc_ptr_object(ptr) ||
+        filc_object_is_special(filc_ptr_object(ptr)) ||
+        (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_GLOBAL) ||
+        (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_MMAP) ||
+        filc_ptr_ptr(ptr) != filc_ptr_lower(ptr))
+        object_for_deallocate_fail(ptr);
     return filc_ptr_object(ptr);
 }
 
@@ -3340,12 +3360,22 @@ filc_ptr filc_native_zgc_realloc_preserving_alignment(filc_thread* my_thread, fi
         filc_reallocate_with_alignment(my_thread, object, size, filc_object_alignment(object)));
 }
 
+static PAS_ALWAYS_INLINE void free_with_checks(filc_ptr ptr)
+{
+    if (!filc_ptr_ptr(ptr))
+        return;
+    free_impl(object_for_deallocate(ptr));
+}
+
+void filc_free_with_checks(filc_ptr ptr)
+{
+    free_with_checks(ptr);
+}
+
 void filc_native_zgc_free(filc_thread* my_thread, filc_ptr ptr)
 {
     PAS_UNUSED_PARAM(my_thread);
-    if (!filc_ptr_ptr(ptr))
-        return;
-    filc_free(object_for_deallocate(ptr));
+    free_with_checks(ptr);
 }
 
 filc_ptr filc_native_zgc_finq_new(filc_thread* my_thread)
