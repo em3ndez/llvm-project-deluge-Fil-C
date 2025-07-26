@@ -817,6 +817,13 @@ enum filc_word_alignment_mode {
 
 typedef enum filc_word_alignment_mode filc_word_alignment_mode;
 
+enum filc_memory_kind {
+    filc_stack_memory,
+    filc_heap_memory
+};
+
+typedef enum filc_memory_kind filc_memory_kind;
+
 struct filc_global_initialization_work_item {
     filc_ptr* pizlonated_gptr;
     
@@ -2127,7 +2134,7 @@ PAS_API PAS_NEVER_INLINE char* filc_object_ensure_aux_ptr_slow(filc_thread* my_t
 PAS_NEVER_INLINE char* filc_object_ensure_aux_ptr_slow_without_exiting(filc_thread* my_thread,
                                                                        filc_object* object);
 
-static PAS_ALWAYS_INLINE char* filc_object_ensure_aux_ptr_with_allowed_exit_mode(
+static PAS_ALWAYS_INLINE char* filc_object_ensure_aux_ptr_with_exit_allowed_mode(
     filc_thread* my_thread,
     filc_object* object,
     filc_exit_allowed_mode exit_allowed)
@@ -2143,13 +2150,13 @@ static PAS_ALWAYS_INLINE char* filc_object_ensure_aux_ptr_with_allowed_exit_mode
 /* This may exit! */
 static PAS_ALWAYS_INLINE char* filc_object_ensure_aux_ptr(filc_thread* my_thread, filc_object* object)
 {
-    return filc_object_ensure_aux_ptr_with_allowed_exit_mode(my_thread, object, filc_exit_allowed);
+    return filc_object_ensure_aux_ptr_with_exit_allowed_mode(my_thread, object, filc_exit_allowed);
 }
 
 static PAS_ALWAYS_INLINE char* filc_object_ensure_aux_ptr_without_exiting(filc_thread* my_thread,
                                                                           filc_object* object)
 {
-    return filc_object_ensure_aux_ptr_with_allowed_exit_mode(
+    return filc_object_ensure_aux_ptr_with_exit_allowed_mode(
         my_thread, object, filc_exit_not_allowed);
 }
 
@@ -3953,6 +3960,10 @@ void filc_memmove_already_checked(filc_thread* my_thread, filc_ptr dst, filc_ptr
                                   const filc_origin* origin);
 void filc_memmove_already_checked_aligned(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
                                           size_t count, const filc_origin* origin);
+void filc_memmove_already_checked_small(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
+                                        size_t count, const filc_origin* origin);
+void filc_memmove_already_checked_small_aligned(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
+                                                size_t count, const filc_origin* origin);
 
 /* We don't have a separate memcpy right now. We could, in the future. But likely, the cost
    difference between the two is much smaller than the cost overhead of checking, so it might

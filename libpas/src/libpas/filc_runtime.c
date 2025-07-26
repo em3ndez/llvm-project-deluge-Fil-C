@@ -4205,6 +4205,9 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop_body(filc_thread* my_thread,
                                                     filc_object* dst_object,
                                                     filc_object* src_object,
                                                     bool is_up,
+                                                    filc_memory_kind dst_memory_kind,
+                                                    filc_memory_kind src_memory_kind,
+                                                    filc_exit_allowed_mode exit_allowed,
                                                     const filc_origin* passed_origin)
 {
     PAS_TESTING_ASSERT(dst_end_offset >= dst_start_offset);
@@ -4238,29 +4241,40 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop_body(filc_thread* my_thread,
         }
         filc_lower_or_box src_lower_or_box = filc_lower_or_box_load_unfenced(
             (filc_lower_or_box*)(src_aux_ptr + src_offset));
-        void* lower = filc_lower_or_box_extract_lower(src_lower_or_box);
+        void* lower =
+            src_memory_kind == filc_heap_memory
+            ? filc_lower_or_box_extract_lower(src_lower_or_box)
+            : filc_lower_or_box_get_lower(src_lower_or_box);
         bool do_store = true;
         if (!has_dst_aux && !*dst_aux_ptr) {
+            PAS_ASSERT(dst_memory_kind == filc_heap_memory);
             if (lower) {
-                *dst_aux_ptr = filc_object_ensure_aux_ptr(my_thread, dst_object);
+                *dst_aux_ptr = filc_object_ensure_aux_ptr_with_exit_allowed_mode(
+                    my_thread, dst_object, exit_allowed);
 
-                /* We could have exited so recheck that the objects aren't free. Note that checking the dst_object is
-                   optional for memory safety (if it's free then it doesn't matter if we copy dangling pointers into it). */
-                FILC_CHECK(
-                    !(filc_object_get_flags(dst_object) & FILC_OBJECT_FLAG_FREE),
-                    passed_origin,
-                    "destination object became free during memmove (object = %s).",
-                    filc_object_to_new_string(dst_object));
-                FILC_CHECK(
-                    !(filc_object_get_flags(src_object) & FILC_OBJECT_FLAG_FREE),
-                    passed_origin,
-                    "source object became free during memmove (object = %s).",
-                    filc_object_to_new_string(src_object));
+                if (exit_allowed) {
+                    /* We could have exited so recheck that the objects aren't free. Note that
+                       checking the dst_object is optional for memory safety (if it's free then it
+                       doesn't matter if we copy dangling pointers into it). */
+                    FILC_CHECK(
+                        !(filc_object_get_flags(dst_object) & FILC_OBJECT_FLAG_FREE),
+                        passed_origin,
+                        "destination object became free during memmove (object = %s).",
+                        filc_object_to_new_string(dst_object));
+                    if (src_memory_kind == filc_heap_memory) {
+                        FILC_CHECK(
+                            !(filc_object_get_flags(src_object) & FILC_OBJECT_FLAG_FREE),
+                            passed_origin,
+                            "source object became free during memmove (object = %s).",
+                            filc_object_to_new_string(src_object));
+                    }
+                }
             } else
                 do_store = false;
         }
         if (do_store) {
             if (!has_dst_aux) {
+                PAS_ASSERT(dst_memory_kind == filc_heap_memory);
                 /* FIXME: Could optimize the no-dst-aux case to have two loops; one for before when
                    we create the aux and one for after.
                 
@@ -4269,8 +4283,10 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop_body(filc_thread* my_thread,
                    But I suspect that this isn't a sufficiently interesting case to worry about for
                    now, and it would not be a super trivial optimization. */
                 filc_store_barrier(my_thread, filc_object_for_lower(lower));
-            } else if (do_barrier && lower)
+            } else if (do_barrier && lower) {
+                PAS_ASSERT(dst_memory_kind == filc_heap_memory);
                 fugc_mark(&my_thread->mark_stack, filc_object_for_lower_not_null(lower));
+            }
             filc_lower_or_box* dst_lower_or_box_ptr = (filc_lower_or_box*)(*dst_aux_ptr + dst_offset);
             filc_lower_or_box_store_unfenced_unbarriered(
                 dst_lower_or_box_ptr, filc_lower_or_box_create_lower(lower));
@@ -4298,6 +4314,9 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop(
     filc_word_alignment_mode dst_word_alignment_mode,
     filc_word_alignment_mode src_word_alignment_mode,
     filc_word_alignment_mode count_word_alignment_mode,
+    filc_memory_kind dst_memory_kind,
+    filc_memory_kind src_memory_kind,
+    filc_exit_allowed_mode exit_allowed,
     const filc_origin* passed_origin)
 {
     if (!dst_word_alignment_mode)
@@ -4309,81 +4328,86 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop(
 
     if (dst_end_offset <= dst_start_offset)
         return;
-    
-    switch (size_mode) {
-    case filc_small_size:
+
+    if (size_mode == filc_small_size || !exit_allowed) {
         memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
                               dst_start_offset, src_start_offset, dst_end_offset,
-                              do_barrier, has_dst_aux, dst_object, src_object, is_up, passed_origin);
-        break;
-
-    case filc_large_size: {
-        PAS_TESTING_ASSERT(dst_object);
-        PAS_TESTING_ASSERT(src_object);
-        size_t dst_offset;
-        size_t src_offset;
+                              do_barrier, has_dst_aux, dst_object, src_object, is_up,
+                              dst_memory_kind, src_memory_kind, exit_allowed, passed_origin);
+        return;
+    }
+    
+    PAS_TESTING_ASSERT(dst_object);
+    PAS_TESTING_ASSERT(src_object);
+    size_t dst_offset;
+    size_t src_offset;
+    if (is_up) {
+        dst_offset = dst_start_offset;
+        src_offset = src_start_offset;
+    } else {
+        dst_offset = dst_end_offset;
+        src_offset = src_start_offset + (dst_end_offset - dst_start_offset);
+    }
+    for (;;) {
+        size_t current_dst_start_offset;
+        size_t current_dst_end_offset;
+        size_t current_src_start_offset;
+        PAS_ASSERT(pas_is_aligned(FILC_MAX_BYTES_BETWEEN_POLLCHECKS, FILC_WORD_SIZE));
         if (is_up) {
-            dst_offset = dst_start_offset;
-            src_offset = src_start_offset;
+            if (dst_offset >= dst_end_offset) {
+                PAS_TESTING_ASSERT(dst_offset == dst_end_offset);
+                break;
+            }
+            current_dst_start_offset = dst_offset;
+            current_dst_end_offset = pas_min_uintptr(
+                dst_offset + FILC_MAX_BYTES_BETWEEN_POLLCHECKS,
+                dst_end_offset);
+            current_src_start_offset = src_offset;
+            dst_offset = current_dst_end_offset;
+            src_offset += current_dst_end_offset - current_dst_start_offset;
         } else {
-            dst_offset = dst_end_offset;
-            src_offset = src_start_offset + (dst_end_offset - dst_start_offset);
+            if (dst_offset <= dst_start_offset) {
+                PAS_TESTING_ASSERT(dst_offset == dst_start_offset);
+                break;
+            }
+            size_t step = pas_min_uintptr(FILC_MAX_BYTES_BETWEEN_POLLCHECKS,
+                                          dst_offset - dst_start_offset);
+            current_dst_end_offset = dst_offset;
+            current_dst_start_offset = dst_offset - step;
+            current_src_start_offset = src_offset - step;
+            dst_offset -= step;
+            src_offset -= step;
         }
-        for (;;) {
-            size_t current_dst_start_offset;
-            size_t current_dst_end_offset;
-            size_t current_src_start_offset;
-            PAS_ASSERT(pas_is_aligned(FILC_MAX_BYTES_BETWEEN_POLLCHECKS, FILC_WORD_SIZE));
-            if (is_up) {
-                if (dst_offset >= dst_end_offset) {
-                    PAS_TESTING_ASSERT(dst_offset == dst_end_offset);
-                    break;
-                }
-                current_dst_start_offset = dst_offset;
-                current_dst_end_offset = pas_min_uintptr(
-                    dst_offset + FILC_MAX_BYTES_BETWEEN_POLLCHECKS,
-                    dst_end_offset);
-                current_src_start_offset = src_offset;
-                dst_offset = current_dst_end_offset;
-                src_offset += current_dst_end_offset - current_dst_start_offset;
-            } else {
-                if (dst_offset <= dst_start_offset) {
-                    PAS_TESTING_ASSERT(dst_offset == dst_start_offset);
-                    break;
-                }
-                size_t step = pas_min_uintptr(FILC_MAX_BYTES_BETWEEN_POLLCHECKS,
-                                              dst_offset - dst_start_offset);
-                current_dst_end_offset = dst_offset;
-                current_dst_start_offset = dst_offset - step;
-                current_src_start_offset = src_offset - step;
-                dst_offset -= step;
-                src_offset -= step;
-            }
-            PAS_TESTING_ASSERT(pas_is_aligned(current_dst_start_offset, FILC_WORD_SIZE));
-            PAS_TESTING_ASSERT(pas_is_aligned(current_dst_end_offset, FILC_WORD_SIZE));
-            PAS_TESTING_ASSERT(pas_is_aligned(current_src_start_offset, FILC_WORD_SIZE));
-            if (!has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)) {
-                bool do_barrier = true;
-                memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
-                                      current_dst_start_offset, current_src_start_offset,
-                                      current_dst_end_offset,
-                                      do_barrier, has_dst_aux, dst_object, src_object, is_up,
-                                      passed_origin);
-            } else {
-                bool do_barrier = false;
-                memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
-                                      current_dst_start_offset, current_src_start_offset,
-                                      current_dst_end_offset,
-                                      do_barrier, has_dst_aux, dst_object, src_object, is_up,
-                                      passed_origin);
-            }
-            if (PAS_UNLIKELY(filc_pollcheck(my_thread, passed_origin))) {
-                /* NOTE: The destination object check isn't strictly necessary for memory safety. */
+        PAS_TESTING_ASSERT(pas_is_aligned(current_dst_start_offset, FILC_WORD_SIZE));
+        PAS_TESTING_ASSERT(pas_is_aligned(current_dst_end_offset, FILC_WORD_SIZE));
+        PAS_TESTING_ASSERT(pas_is_aligned(current_src_start_offset, FILC_WORD_SIZE));
+        if (!has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)) {
+            bool do_barrier = true;
+            memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
+                                  current_dst_start_offset, current_src_start_offset,
+                                  current_dst_end_offset,
+                                  do_barrier, has_dst_aux, dst_object, src_object, is_up,
+                                  dst_memory_kind, src_memory_kind, filc_exit_allowed, passed_origin);
+        } else {
+            bool do_barrier = false;
+            memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
+                                  current_dst_start_offset, current_src_start_offset,
+                                  current_dst_end_offset,
+                                  do_barrier, has_dst_aux, dst_object, src_object, is_up,
+                                  dst_memory_kind, src_memory_kind, filc_exit_allowed, passed_origin);
+        }
+        if (PAS_UNLIKELY(filc_pollcheck(my_thread, passed_origin))) {
+            /* NOTE: The destination object check isn't strictly necessary for memory safety
+               since it's no big deal to write to an object that has already been freed, so
+               long as the object is rooted. */
+            if (dst_memory_kind == filc_heap_memory) {
                 FILC_CHECK(
                     !(filc_object_get_flags(dst_object) & FILC_OBJECT_FLAG_FREE),
                     passed_origin,
                     "destination object became free during memmove (object = %s).",
                     filc_object_to_new_string(dst_object));
+            }
+            if (src_memory_kind == filc_heap_memory) {
                 FILC_CHECK(
                     !(filc_object_get_flags(src_object) & FILC_OBJECT_FLAG_FREE),
                     passed_origin,
@@ -4391,8 +4415,7 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop(
                     filc_object_to_new_string(src_object));
             }
         }
-        break;
-    } }
+    }
 }
 
 PAS_ALWAYS_INLINE static void memmove_aux_direction_specialized(
@@ -4411,6 +4434,9 @@ PAS_ALWAYS_INLINE static void memmove_aux_direction_specialized(
     filc_word_alignment_mode dst_word_alignment_mode,
     filc_word_alignment_mode src_word_alignment_mode,
     filc_word_alignment_mode count_word_alignment_mode,
+    filc_memory_kind dst_memory_kind,
+    filc_memory_kind src_memory_kind,
+    filc_exit_allowed_mode exit_allowed,
     const filc_origin* passed_origin)
 {
     memmove_smidgen(is_up ? memmove_lower_smidgen : memmove_upper_smidgen,
@@ -4420,7 +4446,8 @@ PAS_ALWAYS_INLINE static void memmove_aux_direction_specialized(
     memmove_aux_loop(my_thread, dst_aux_ptr, src_aux_ptr, dst_start_offset, src_start_offset,
                      dst_end_offset, size_mode, do_barrier, has_dst_aux, dst_object, src_object,
                      is_up, dst_word_alignment_mode, src_word_alignment_mode,
-                     count_word_alignment_mode, passed_origin);
+                     count_word_alignment_mode, dst_memory_kind, src_memory_kind, exit_allowed,
+                     passed_origin);
 
     memmove_smidgen(is_up ? memmove_upper_smidgen : memmove_lower_smidgen,
                     dst_aux_ptr, dst_start_offset, dst_end_offset, has_dst_aux,
@@ -4442,16 +4469,21 @@ PAS_ALWAYS_INLINE static void memmove_aux_barrier_specialized(
     filc_word_alignment_mode dst_word_alignment_mode,
     filc_word_alignment_mode src_word_alignment_mode,
     filc_word_alignment_mode count_word_alignment_mode,
+    filc_memory_kind dst_memory_kind,
+    filc_memory_kind src_memory_kind,
+    filc_exit_allowed_mode exit_allowed,
     const filc_origin* passed_origin)
 {
     // NOTE: If dst_aux_ptr != src_aux_ptr, then we could use either variant.
-    if (dst_aux_ptr + dst_start_offset < src_aux_ptr + src_start_offset || !has_dst_aux) {
+    if (dst_aux_ptr + dst_start_offset < src_aux_ptr + src_start_offset || !has_dst_aux
+        || dst_memory_kind != src_memory_kind) {
         bool is_up = true;
         memmove_aux_direction_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
                                           dst_start_offset, src_start_offset, dst_end_offset,
                                           size_mode, do_barrier, has_dst_aux, dst_object, src_object,
                                           is_up, dst_word_alignment_mode, src_word_alignment_mode,
-                                          count_word_alignment_mode, passed_origin);
+                                          count_word_alignment_mode, dst_memory_kind, src_memory_kind,
+                                          exit_allowed, passed_origin);
         return;
     }
     bool is_up = false;
@@ -4459,15 +4491,16 @@ PAS_ALWAYS_INLINE static void memmove_aux_barrier_specialized(
                                       dst_start_offset, src_start_offset, dst_end_offset,
                                       size_mode, do_barrier, has_dst_aux, dst_object, src_object,
                                       is_up, dst_word_alignment_mode, src_word_alignment_mode,
-                                      count_word_alignment_mode, passed_origin);
+                                      count_word_alignment_mode, dst_memory_kind, src_memory_kind,
+                                      exit_allowed, passed_origin);
 }
 
-PAS_NEVER_INLINE static void memmove_aux_small_barrier(filc_thread* my_thread,
-                                                       char* dst_aux_ptr,
-                                                       char* src_aux_ptr,
-                                                       size_t dst_start_offset,
-                                                       size_t src_start_offset,
-                                                       size_t dst_end_offset)
+PAS_NEVER_INLINE static void memmove_aux_small_barrier_from_stack(filc_thread* my_thread,
+                                                                  char* dst_aux_ptr,
+                                                                  char* src_aux_ptr,
+                                                                  size_t dst_start_offset,
+                                                                  size_t src_start_offset,
+                                                                  size_t dst_end_offset)
 {
     bool do_barrier = true;
     bool has_dst_aux = true;
@@ -4475,18 +4508,70 @@ PAS_NEVER_INLINE static void memmove_aux_small_barrier(filc_thread* my_thread,
                                     dst_start_offset, src_start_offset, dst_end_offset,
                                     filc_small_size, do_barrier, has_dst_aux, NULL, NULL,
                                     filc_not_word_aligned, filc_not_word_aligned,
-                                    filc_not_word_aligned, NULL);
+                                    filc_not_word_aligned, filc_heap_memory, filc_stack_memory,
+                                    filc_exit_allowed, NULL);
 }
 
-PAS_NEVER_INLINE static void memmove_aux_small_no_dst(filc_thread* my_thread,
-                                                      char* dst_aux_ptr,
-                                                      char* src_aux_ptr,
-                                                      size_t dst_start_offset,
-                                                      size_t src_start_offset,
-                                                      size_t dst_end_offset,
-                                                      filc_object* dst_object,
-                                                      filc_object* src_object,
-                                                      const filc_origin* passed_origin)
+PAS_NEVER_INLINE static void memmove_aux_small_barrier_from_heap(filc_thread* my_thread,
+                                                                 char* dst_aux_ptr,
+                                                                 char* src_aux_ptr,
+                                                                 size_t dst_start_offset,
+                                                                 size_t src_start_offset,
+                                                                 size_t dst_end_offset)
+{
+    bool do_barrier = true;
+    bool has_dst_aux = true;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_small_size, do_barrier, has_dst_aux, NULL, NULL,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_heap_memory,
+                                    filc_exit_allowed, NULL);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_small_barrier_from_stack_no_exit(filc_thread* my_thread,
+                                                                          char* dst_aux_ptr,
+                                                                          char* src_aux_ptr,
+                                                                          size_t dst_start_offset,
+                                                                          size_t src_start_offset,
+                                                                          size_t dst_end_offset)
+{
+    bool do_barrier = true;
+    bool has_dst_aux = true;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_small_size, do_barrier, has_dst_aux, NULL, NULL,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_stack_memory,
+                                    filc_exit_not_allowed, NULL);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_small_barrier_from_heap_no_exit(filc_thread* my_thread,
+                                                                         char* dst_aux_ptr,
+                                                                         char* src_aux_ptr,
+                                                                         size_t dst_start_offset,
+                                                                         size_t src_start_offset,
+                                                                         size_t dst_end_offset)
+{
+    bool do_barrier = true;
+    bool has_dst_aux = true;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_small_size, do_barrier, has_dst_aux, NULL, NULL,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_heap_memory,
+                                    filc_exit_not_allowed, NULL);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_small_no_dst_from_stack(filc_thread* my_thread,
+                                                                 char* dst_aux_ptr,
+                                                                 char* src_aux_ptr,
+                                                                 size_t dst_start_offset,
+                                                                 size_t src_start_offset,
+                                                                 size_t dst_end_offset,
+                                                                 filc_object* dst_object,
+                                                                 filc_object* src_object,
+                                                                 const filc_origin* passed_origin)
 {
     bool do_barrier = false;
     bool has_dst_aux = false;
@@ -4494,18 +4579,82 @@ PAS_NEVER_INLINE static void memmove_aux_small_no_dst(filc_thread* my_thread,
                                     dst_start_offset, src_start_offset, dst_end_offset,
                                     filc_small_size, do_barrier, has_dst_aux, dst_object, src_object,
                                     filc_not_word_aligned, filc_not_word_aligned,
-                                    filc_not_word_aligned, passed_origin);
+                                    filc_not_word_aligned, filc_heap_memory, filc_stack_memory,
+                                    filc_exit_allowed, passed_origin);
 }
 
-PAS_NEVER_INLINE static void memmove_aux_large_no_dst(filc_thread* my_thread,
-                                                      char* dst_aux_ptr,
-                                                      char* src_aux_ptr,
-                                                      size_t dst_start_offset,
-                                                      size_t src_start_offset,
-                                                      size_t dst_end_offset,
-                                                      filc_object* dst_object,
-                                                      filc_object* src_object,
-                                                      const filc_origin* passed_origin)
+PAS_NEVER_INLINE static void memmove_aux_small_no_dst_from_heap(filc_thread* my_thread,
+                                                                char* dst_aux_ptr,
+                                                                char* src_aux_ptr,
+                                                                size_t dst_start_offset,
+                                                                size_t src_start_offset,
+                                                                size_t dst_end_offset,
+                                                                filc_object* dst_object,
+                                                                filc_object* src_object,
+                                                                const filc_origin* passed_origin)
+{
+    bool do_barrier = false;
+    bool has_dst_aux = false;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_small_size, do_barrier, has_dst_aux, dst_object, src_object,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_heap_memory,
+                                    filc_exit_allowed, passed_origin);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_small_no_dst_from_stack_no_exit(
+    filc_thread* my_thread,
+    char* dst_aux_ptr,
+    char* src_aux_ptr,
+    size_t dst_start_offset,
+    size_t src_start_offset,
+    size_t dst_end_offset,
+    filc_object* dst_object,
+    filc_object* src_object,
+    const filc_origin* passed_origin)
+{
+    bool do_barrier = false;
+    bool has_dst_aux = false;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_small_size, do_barrier, has_dst_aux, dst_object, src_object,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_stack_memory,
+                                    filc_exit_not_allowed, passed_origin);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_small_no_dst_from_heap_no_exit(
+    filc_thread* my_thread,
+    char* dst_aux_ptr,
+    char* src_aux_ptr,
+    size_t dst_start_offset,
+    size_t src_start_offset,
+    size_t dst_end_offset,
+    filc_object* dst_object,
+    filc_object* src_object,
+    const filc_origin* passed_origin)
+{
+    bool do_barrier = false;
+    bool has_dst_aux = false;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_small_size, do_barrier, has_dst_aux, dst_object, src_object,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_heap_memory,
+                                    filc_exit_not_allowed, passed_origin);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_large_no_dst_from_stack(
+    filc_thread* my_thread,
+    char* dst_aux_ptr,
+    char* src_aux_ptr,
+    size_t dst_start_offset,
+    size_t src_start_offset,
+    size_t dst_end_offset,
+    filc_object* dst_object,
+    filc_object* src_object,
+    const filc_origin* passed_origin)
 {
     bool do_barrier = false;
     bool has_dst_aux = false;
@@ -4513,7 +4662,28 @@ PAS_NEVER_INLINE static void memmove_aux_large_no_dst(filc_thread* my_thread,
                                     dst_start_offset, src_start_offset, dst_end_offset,
                                     filc_large_size, do_barrier, has_dst_aux, dst_object, src_object,
                                     filc_not_word_aligned, filc_not_word_aligned,
-                                    filc_not_word_aligned, passed_origin);
+                                    filc_not_word_aligned, filc_heap_memory, filc_stack_memory,
+                                    filc_exit_allowed, passed_origin);
+}
+
+PAS_NEVER_INLINE static void memmove_aux_large_no_dst_from_heap(filc_thread* my_thread,
+                                                                char* dst_aux_ptr,
+                                                                char* src_aux_ptr,
+                                                                size_t dst_start_offset,
+                                                                size_t src_start_offset,
+                                                                size_t dst_end_offset,
+                                                                filc_object* dst_object,
+                                                                filc_object* src_object,
+                                                                const filc_origin* passed_origin)
+{
+    bool do_barrier = false;
+    bool has_dst_aux = false;
+    memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
+                                    dst_start_offset, src_start_offset, dst_end_offset,
+                                    filc_large_size, do_barrier, has_dst_aux, dst_object, src_object,
+                                    filc_not_word_aligned, filc_not_word_aligned,
+                                    filc_not_word_aligned, filc_heap_memory, filc_heap_memory,
+                                    filc_exit_allowed, passed_origin);
 }
 
 PAS_ALWAYS_INLINE static void memmove_aux_with_ptrs(
@@ -4529,6 +4699,9 @@ PAS_ALWAYS_INLINE static void memmove_aux_with_ptrs(
     filc_word_alignment_mode dst_word_alignment_mode,
     filc_word_alignment_mode src_word_alignment_mode,
     filc_word_alignment_mode count_word_alignment_mode,
+    filc_memory_kind dst_memory_kind,
+    filc_memory_kind src_memory_kind,
+    filc_exit_allowed_mode exit_allowed,
     const filc_origin* origin)
 {
     if (dst_aux_ptr) {
@@ -4545,8 +4718,9 @@ PAS_ALWAYS_INLINE static void memmove_aux_with_ptrs(
                            size_mode);
             return;
         }
-        if (size_mode == filc_large_size || PAS_LIKELY(!filc_current_marking_state)) {
-            /* NOTE: do_barrier is ignored if we're in large_size. */
+        if ((size_mode == filc_large_size && exit_allowed) || PAS_LIKELY(!filc_current_marking_state)
+            || dst_memory_kind == filc_stack_memory) {
+            /* NOTE: do_barrier is ignored if we're in large_size and exit is allowed. */
             bool do_barrier = false;
             bool has_dst_aux = true;
             memmove_aux_barrier_specialized(my_thread, dst_aux_ptr, src_aux_ptr,
@@ -4554,28 +4728,78 @@ PAS_ALWAYS_INLINE static void memmove_aux_with_ptrs(
                                             size_mode, do_barrier, has_dst_aux, dst_object,
                                             src_object, dst_word_alignment_mode,
                                             src_word_alignment_mode, count_word_alignment_mode,
-                                            origin);
+                                            dst_memory_kind, src_memory_kind, exit_allowed, origin);
             return;
         }
-        memmove_aux_small_barrier(my_thread, dst_aux_ptr, src_aux_ptr,
-                                  dst_start_offset, src_start_offset, dst_end_offset);
+        PAS_ASSERT(dst_memory_kind == filc_heap_memory);
+        if (src_memory_kind == filc_heap_memory) {
+            if (exit_allowed) {
+                memmove_aux_small_barrier_from_heap(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                    dst_start_offset, src_start_offset,
+                                                    dst_end_offset);
+            } else {
+                memmove_aux_small_barrier_from_heap_no_exit(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                            dst_start_offset, src_start_offset,
+                                                            dst_end_offset);
+            }
+        } else {
+            if (exit_allowed) {
+                memmove_aux_small_barrier_from_stack(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                     dst_start_offset, src_start_offset,
+                                                     dst_end_offset);
+            } else {
+                memmove_aux_small_barrier_from_stack_no_exit(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                             dst_start_offset, src_start_offset,
+                                                             dst_end_offset);
+            }
+        }
         return;
     }
+    PAS_ASSERT(dst_memory_kind == filc_heap_memory);
     if (src_aux_ptr &&
         (dst_word_alignment_mode ? 0
          : pas_modulo_power_of_2((uintptr_t)dst_start_offset, FILC_WORD_SIZE)) ==
         (src_word_alignment_mode ? 0
          : pas_modulo_power_of_2((uintptr_t)src_start_offset, FILC_WORD_SIZE))) {
-        if (size_mode == filc_small_size) {
-            memmove_aux_small_no_dst(my_thread, dst_aux_ptr, src_aux_ptr,
-                                     dst_start_offset, src_start_offset, dst_end_offset,
-                                     dst_object, src_object, origin);
+        if (size_mode == filc_small_size || !exit_allowed) {
+            if (src_memory_kind == filc_heap_memory) {
+                if (exit_allowed) {
+                    memmove_aux_small_no_dst_from_heap(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                       dst_start_offset, src_start_offset,
+                                                       dst_end_offset, dst_object, src_object,
+                                                       origin);
+                } else {
+                    memmove_aux_small_no_dst_from_heap_no_exit(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                               dst_start_offset, src_start_offset,
+                                                               dst_end_offset, dst_object, src_object,
+                                                               origin);
+                }
+            } else {
+                if (exit_allowed) {
+                    memmove_aux_small_no_dst_from_stack(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                        dst_start_offset, src_start_offset,
+                                                        dst_end_offset, dst_object, src_object,
+                                                        origin);
+                } else {
+                    memmove_aux_small_no_dst_from_stack_no_exit(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                                dst_start_offset, src_start_offset,
+                                                                dst_end_offset, dst_object,
+                                                                src_object, origin);
+                }
+            }
             return;
         }
-        memmove_aux_large_no_dst(my_thread, dst_aux_ptr, src_aux_ptr,
-                                 dst_start_offset, src_start_offset, dst_end_offset,
-                                 dst_object, src_object, origin);
-        return;
+        PAS_ASSERT(size_mode == filc_large_size);
+        PAS_ASSERT(exit_allowed);
+        if (src_memory_kind == filc_heap_memory) {
+            memmove_aux_large_no_dst_from_heap(my_thread, dst_aux_ptr, src_aux_ptr,
+                                               dst_start_offset, src_start_offset, dst_end_offset,
+                                               dst_object, src_object, origin);
+        } else {
+            memmove_aux_large_no_dst_from_stack(my_thread, dst_aux_ptr, src_aux_ptr,
+                                                dst_start_offset, src_start_offset,
+                                                dst_end_offset, dst_object, src_object, origin);
+        }
     }
 }
 
@@ -4587,6 +4811,7 @@ PAS_ALWAYS_INLINE static void memmove_size_specialized(
     filc_word_alignment_mode dst_word_alignment_mode,
     filc_word_alignment_mode src_word_alignment_mode,
     filc_word_alignment_mode count_word_alignment_mode,
+    filc_exit_allowed_mode exit_allowed,
     const filc_origin* origin)
 {
     static const bool verbose = false;
@@ -4634,7 +4859,9 @@ PAS_ALWAYS_INLINE static void memmove_size_specialized(
             filc_memmove_small_word(dst_start, src_start, count);
         else
             filc_memmove_small(dst_start, src_start, count);
-    } else {
+    } else if (!exit_allowed)
+        memmove(dst_start, src_start, count);
+    else {
         filc_memmove_with_exit(my_thread, dst_start, src_start, count);
         CHECK_ACCESSIBLE_FAST(src_object, memmove_fail(dst, src, count, origin));
         CHECK_ACCESSIBLE_FAST(dst_object, memmove_fail(dst, src, count, origin));
@@ -4662,7 +4889,8 @@ PAS_ALWAYS_INLINE static void memmove_size_specialized(
     size_t dst_end_offset = dst_start_offset + count;
     memmove_aux_with_ptrs(my_thread, dst_aux_ptr, src_aux_ptr, dst_start_offset, src_start_offset,
                           dst_end_offset, dst_object, src_object, size_mode, dst_word_alignment_mode,
-                          src_word_alignment_mode, count_word_alignment_mode, origin);
+                          src_word_alignment_mode, count_word_alignment_mode, filc_heap_memory,
+                          filc_heap_memory, exit_allowed, origin);
 }
 
 static PAS_NEVER_INLINE void memmove_large(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
@@ -4670,7 +4898,15 @@ static PAS_NEVER_INLINE void memmove_large(filc_thread* my_thread, filc_ptr dst,
 {
     memmove_size_specialized(my_thread, dst, src, count, filc_large_size,
                              filc_not_word_aligned, filc_not_word_aligned,
-                             filc_not_word_aligned, origin);
+                             filc_not_word_aligned, filc_exit_allowed, origin);
+}
+
+static PAS_NEVER_INLINE void memmove_large_no_exit(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
+                                                   size_t count, const filc_origin* origin)
+{
+    memmove_size_specialized(my_thread, dst, src, count, filc_large_size,
+                             filc_not_word_aligned, filc_not_word_aligned,
+                             filc_not_word_aligned, filc_exit_not_allowed, origin);
 }
 
 static PAS_ALWAYS_INLINE void memmove_already_checked(
@@ -4679,18 +4915,22 @@ static PAS_ALWAYS_INLINE void memmove_already_checked(
     filc_word_alignment_mode dst_word_alignment_mode,
     filc_word_alignment_mode src_word_alignment_mode,
     filc_word_alignment_mode count_word_alignment_mode,
+    filc_exit_allowed_mode exit_allowed,
     const filc_origin* origin)
 {
     if (PAS_LIKELY(count < FILC_MAX_BYTES_BETWEEN_POLLCHECKS)) {
         memmove_size_specialized(my_thread, dst, src, count, filc_small_size,
                                  dst_word_alignment_mode, src_word_alignment_mode,
-                                 count_word_alignment_mode, origin);
-    } else
+                                 count_word_alignment_mode, exit_allowed, origin);
+    } else if (exit_allowed)
         memmove_large(my_thread, dst, src, count, origin);
+    else
+        memmove_large_no_exit(my_thread, dst, src, count, origin);
 }
 
 static PAS_ALWAYS_INLINE void memmove_impl(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
-                                           size_t count, const filc_origin* origin)
+                                           size_t count, filc_exit_allowed_mode exit_allowed,
+                                           const filc_origin* origin)
 {
     if (!count)
         return;
@@ -4714,21 +4954,7 @@ static PAS_ALWAYS_INLINE void memmove_impl(filc_thread* my_thread, filc_ptr dst,
     CHECK_WRITE_FAST(dst_object, memmove_fail(dst, src, count, origin));
 
     memmove_already_checked(my_thread, dst, src, count, filc_not_word_aligned, filc_not_word_aligned,
-                            filc_not_word_aligned, origin);
-}
-
-void filc_memmove_already_checked(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t count,
-                                  const filc_origin* passed_origin)
-{
-    memmove_already_checked(my_thread, dst, src, count, filc_not_word_aligned, filc_not_word_aligned,
-                            filc_not_word_aligned, passed_origin);
-}
-
-void filc_memmove_already_checked_aligned(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
-                                          size_t count, const filc_origin* passed_origin)
-{
-    memmove_already_checked(my_thread, dst, src, count, filc_word_aligned, filc_word_aligned,
-                            filc_word_aligned, passed_origin);
+                            filc_not_word_aligned, exit_allowed, origin);
 }
 
 void filc_memmove(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t count,
@@ -4744,7 +4970,126 @@ void filc_memmove(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t cou
         filc_origin_dump_all_inline(passed_origin, "/", pas_log_stream);
         pas_log("\n");
     }
-    memmove_impl(my_thread, dst, src, count, passed_origin);
+    memmove_impl(my_thread, dst, src, count, filc_exit_allowed, passed_origin);
+}
+
+void filc_memmove_already_checked(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t count,
+                                  const filc_origin* passed_origin)
+{
+    memmove_already_checked(my_thread, dst, src, count, filc_not_word_aligned, filc_not_word_aligned,
+                            filc_not_word_aligned, filc_exit_allowed, passed_origin);
+}
+
+void filc_memmove_already_checked_aligned(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
+                                          size_t count, const filc_origin* passed_origin)
+{
+    memmove_already_checked(my_thread, dst, src, count, filc_word_aligned, filc_word_aligned,
+                            filc_word_aligned, filc_exit_allowed, passed_origin);
+}
+
+void filc_memmove_already_checked_small(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
+                                        size_t count, const filc_origin* passed_origin)
+{
+    memmove_size_specialized(my_thread, dst, src, count, filc_small_size,
+                             filc_not_word_aligned, filc_not_word_aligned,
+                             filc_not_word_aligned, filc_exit_allowed, passed_origin);
+}
+
+void filc_memmove_already_checked_small_aligned(filc_thread* my_thread, filc_ptr dst, filc_ptr src,
+                                                size_t count, const filc_origin* passed_origin)
+{
+    memmove_size_specialized(my_thread, dst, src, count, filc_small_size,
+                             filc_word_aligned, filc_word_aligned,
+                             filc_word_aligned, filc_exit_allowed, passed_origin);
+}
+
+static PAS_ALWAYS_INLINE void copy_stack_to_heap_already_checked(
+    filc_thread* my_thread, filc_ptr dst, void* src_payload, void* src_aux, size_t count,
+    filc_word_alignment_mode dst_word_alignment_mode,
+    filc_word_alignment_mode src_word_alignment_mode,
+    filc_word_alignment_mode count_word_alignment_mode,
+    filc_exit_allowed_mode exit_allowed,
+    const filc_origin* passed_origin)
+{
+    filc_object* dst_object = filc_ptr_object_not_null(dst);
+    char* dst_start = filc_ptr_ptr(dst);
+    char* dst_lower = (char*)filc_object_lower(dst_object);
+
+    if (PAS_ENABLE_TESTING) {
+        char* dst_upper = (char*)filc_object_upper(dst_object);
+
+        ASSERT_BOUNDS(dst_start, dst_lower, dst_upper, count);
+        ASSERT_WRITE(dst_object);
+
+        if (dst_word_alignment_mode)
+            PAS_ASSERT(pas_is_aligned((uintptr_t)dst_start, FILC_WORD_SIZE));
+        if (src_word_alignment_mode) {
+            PAS_ASSERT(pas_is_aligned((uintptr_t)src_payload, FILC_WORD_SIZE));
+            PAS_ASSERT(pas_is_aligned((uintptr_t)src_aux, FILC_WORD_SIZE));
+        }
+        if (count_word_alignment_mode)
+            PAS_ASSERT(pas_is_aligned(count, FILC_WORD_SIZE));
+    }
+
+    if (count_word_alignment_mode)
+        filc_memcpy_small_word_up(dst_start, src_payload, count);
+    else
+        filc_memcpy_small_up(dst_start, src_payload, count);
+
+    char* dst_aux_ptr = filc_object_aux_ptr(dst_object);
+    char* src_aux_ptr = src_word_alignment_mode ? src_aux
+        : (char*)pas_round_down_to_power_of_2((uintptr_t)src_aux, FILC_WORD_SIZE);
+    size_t dst_start_offset = dst_start - dst_lower;
+    size_t src_start_offset = (char*)src_aux - src_aux_ptr;
+    size_t dst_end_offset = dst_start_offset + count;
+    memmove_aux_with_ptrs(my_thread, dst_aux_ptr, src_aux_ptr, dst_start_offset, src_start_offset,
+                          dst_end_offset, dst_object, NULL, filc_small_size, dst_word_alignment_mode,
+                          src_word_alignment_mode, count_word_alignment_mode, filc_heap_memory,
+                          filc_stack_memory, exit_allowed, passed_origin);
+}
+
+static PAS_ALWAYS_INLINE void copy_heap_to_stack_already_checked(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_ptr src, size_t count,
+    filc_word_alignment_mode dst_word_alignment_mode,
+    filc_word_alignment_mode src_word_alignment_mode,
+    filc_word_alignment_mode count_word_alignment_mode,
+    filc_exit_allowed_mode exit_allowed,
+    const filc_origin* passed_origin)
+{
+    filc_object* src_object = filc_ptr_object_not_null(src);
+    char* src_start = filc_ptr_ptr(src);
+    char* src_lower = (char*)filc_object_lower(src_object);
+
+    if (PAS_ENABLE_TESTING) {
+        char* src_upper = (char*)filc_object_upper(src_object);
+
+        ASSERT_BOUNDS(src_start, src_lower, src_upper, count);
+
+        if (src_word_alignment_mode)
+            PAS_ASSERT(pas_is_aligned((uintptr_t)src_start, FILC_WORD_SIZE));
+        if (dst_word_alignment_mode) {
+            PAS_ASSERT(pas_is_aligned((uintptr_t)dst_payload, FILC_WORD_SIZE));
+            PAS_ASSERT(pas_is_aligned((uintptr_t)dst_aux, FILC_WORD_SIZE));
+        }
+        if (count_word_alignment_mode)
+            PAS_ASSERT(pas_is_aligned(count, FILC_WORD_SIZE));
+    }
+
+    if (count_word_alignment_mode)
+        filc_memcpy_small_word_up(dst_payload, src_start, count);
+    else
+        filc_memcpy_small_up(dst_payload, src_start, count);
+
+    char* src_aux_ptr = filc_object_aux_ptr(src_object);
+    char* dst_aux_ptr = dst_word_alignment_mode ? dst_aux
+        : (char*)pas_round_down_to_power_of_2((uintptr_t)dst_aux, FILC_WORD_SIZE);
+    size_t src_start_offset = src_start - src_lower;
+    size_t dst_start_offset = (char*)dst_aux - dst_aux_ptr;
+    size_t dst_end_offset = dst_start_offset + count;
+    memmove_aux_with_ptrs(my_thread, dst_aux_ptr, src_aux_ptr, dst_start_offset, src_start_offset,
+                          dst_end_offset, NULL, src_object, filc_small_size, dst_word_alignment_mode,
+                          src_word_alignment_mode, count_word_alignment_mode, filc_stack_memory,
+                          filc_heap_memory, exit_allowed, passed_origin);
 }
 
 filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
@@ -4755,103 +5100,30 @@ filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
     
     PAS_TESTING_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
 
-    filc_object* result_object = allocate_impl(my_thread, size, 0, filc_exit_not_allowed);
+    filc_ptr result = filc_ptr_create_with_object_and_manual_tracking(
+        allocate_impl(my_thread, size, 0, filc_exit_not_allowed));
 
-    size_t offset;
-    for (offset = 0; offset < size; offset += FILC_WORD_SIZE) {
-        *(filc_word*)((char*)filc_object_lower(result_object) + offset) =
-            *(filc_word*)((char*)payload + offset);
-    }
+    copy_stack_to_heap_already_checked(
+        my_thread, result, payload, aux, size, filc_word_aligned, filc_word_aligned,
+        filc_word_aligned, filc_exit_not_allowed, NULL);
 
-    for (offset = 0; offset < size; offset += FILC_WORD_SIZE) {
-        void* lower = filc_lower_or_box_get_lower(
-            filc_lower_or_box_load_unfenced((filc_lower_or_box*)((char*)aux + offset)));
-        if (lower) {
-            char* aux_ptr = filc_object_ensure_aux_ptr_without_exiting(my_thread, result_object);
-            filc_store_barrier(my_thread, filc_object_for_lower(lower));
-            filc_lower_or_box_store_unfenced_unbarriered(
-                (filc_lower_or_box*)(aux_ptr + offset),
-                filc_lower_or_box_create_lower(lower));
-        }
-    }
-
-    return filc_ptr_create_with_object_and_manual_tracking(result_object);
-}
-
-static void testing_check_access(filc_ptr ptr, size_t size)
-{
-    if (!size)
-        return;
-    
-    PAS_TESTING_ASSERT(filc_ptr_object(ptr));
-    PAS_TESTING_ASSERT(filc_ptr_ptr(ptr) >= filc_ptr_lower(ptr));
-    PAS_TESTING_ASSERT(filc_ptr_ptr(ptr) < filc_ptr_upper(ptr));
-    PAS_TESTING_ASSERT(size <= filc_ptr_available(ptr));
-}
-
-static PAS_ALWAYS_INLINE void demote_heap_to_stack_impl(
-    filc_ptr ptr, void* payload, void* aux, size_t size, bool word_aligned)
-{
-    if (!size)
-        return;
-
-    testing_check_access(ptr, size);
-
-    if (word_aligned) {
-        PAS_TESTING_ASSERT(pas_is_aligned((uintptr_t)filc_ptr_ptr(ptr), FILC_WORD_SIZE));
-        PAS_TESTING_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
-    }
-
-    if (word_aligned || pas_is_aligned((uintptr_t)filc_ptr_ptr(ptr), FILC_WORD_SIZE)) {
-        size_t aligned_size = pas_round_down_to_power_of_2(size, FILC_WORD_SIZE);
-        
-        size_t offset;
-        for (offset = 0; offset < aligned_size; offset += FILC_WORD_SIZE) {
-            *(filc_word*)((char*)payload + offset) =
-                *(filc_word*)((char*)filc_ptr_ptr(ptr) + offset);
-        }
-
-        char* aux_ptr = filc_ptr_aux_ptr(ptr);
-        for (offset = 0; offset < aligned_size; offset += FILC_WORD_SIZE) {
-            void* lower;
-            if (aux_ptr) {
-                lower = filc_lower_or_box_extract_lower(
-                    filc_lower_or_box_load_unfenced((filc_lower_or_box*)(
-                                                        aux_ptr + filc_ptr_offset(ptr) + offset)));
-            } else
-                lower = NULL;
-            filc_lower_or_box_store_unfenced_unbarriered(
-                (filc_lower_or_box*)((char*)aux + offset),
-                filc_lower_or_box_create_lower(lower));
-        }
-
-        ptr = filc_ptr_with_offset(ptr, aligned_size);
-        payload = (char*)payload + aligned_size;
-        aux = (char*)aux + aligned_size;
-        size -= aligned_size;
-    }
-
-    if (!size)
-        return;
-
-    testing_check_access(ptr, size);
-
-    filc_memcpy_small_up(payload, filc_ptr_ptr(ptr), size);
-    filc_memset_small(aux, 0, size);
+    return result;
 }
 
 void filc_demote_word_aligned_already_checked_heap_to_stack_without_exiting(
     filc_ptr ptr, void* payload, void* aux, size_t size)
 {
-    bool word_aligned = true;
-    demote_heap_to_stack_impl(ptr, payload, aux, size, word_aligned);
+    copy_heap_to_stack_already_checked(
+        NULL, payload, aux, ptr, size, filc_word_aligned, filc_word_aligned, filc_word_aligned,
+        filc_exit_not_allowed, NULL);
 }
 
 void filc_demote_already_checked_heap_to_stack_without_exiting(
     filc_ptr ptr, void* payload, void* aux, size_t size)
 {
-    bool word_aligned = false;
-    demote_heap_to_stack_impl(ptr, payload, aux, size, word_aligned);
+    copy_heap_to_stack_already_checked(
+        NULL, payload, aux, ptr, size, filc_not_word_aligned, filc_word_aligned,
+        filc_not_word_aligned, filc_exit_not_allowed, NULL);
 }
 
 static filc_ptr promote_cc_to_heap(filc_thread* my_thread, size_t size, bool do_tracking)
@@ -5011,7 +5283,7 @@ void filc_native_zmemset(filc_thread* my_thread, filc_ptr dst_ptr, unsigned valu
 
 void filc_native_zmemmove(filc_thread* my_thread, filc_ptr dst_ptr, filc_ptr src_ptr, size_t count)
 {
-    memmove_impl(my_thread, dst_ptr, src_ptr, count, NULL);
+    memmove_impl(my_thread, dst_ptr, src_ptr, count, filc_exit_allowed, NULL);
 }
 
 void filc_native_zsetcap(filc_thread* my_thread, filc_ptr dst_ptr, filc_ptr object_ptr, size_t size)
