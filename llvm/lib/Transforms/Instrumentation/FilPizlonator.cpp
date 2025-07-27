@@ -3319,6 +3319,20 @@ class Pizlonator {
     canonicalizeAccessChecks(Checks);
   }
 
+  Value* ptrOperandForAccess(Instruction* I) {
+    if (LoadInst* LI = dyn_cast<LoadInst>(I))
+      return LI->getPointerOperand();
+    
+    if (StoreInst* SI = dyn_cast<StoreInst>(I))
+      return SI->getPointerOperand();
+    
+    if (AtomicCmpXchgInst* AI = dyn_cast<AtomicCmpXchgInst>(I))
+      return AI->getPointerOperand();
+    
+    AtomicRMWInst* AI = cast<AtomicRMWInst>(I);
+    return AI->getPointerOperand();
+  }
+
   template<typename FuncT>
   void forEachCheck(Instruction* I, const FuncT& Func) {
     if (LoadInst* LI = dyn_cast<LoadInst>(I)) {
@@ -3973,8 +3987,9 @@ class Pizlonator {
           if (isa<CallBase>(&I))
             HandleEffects();
           else if (isa<StoreInst>(&I) || isa<AtomicCmpXchgInst>(&I) || isa<AtomicRMWInst>(&I)) {
+            Value* Ptr = canonicalizePtr(ptrOperandForAccess(&I)).HighP;
             EraseIf(Checks, [&] (const AccessCheck& AC) -> bool {
-              return AC.CK == CheckKind::GetAuxPtr;
+              return AC.CK == CheckKind::GetAuxPtr && AC.CanonicalPtr != Ptr;
             });
           }
 
@@ -4069,8 +4084,9 @@ class Pizlonator {
         if (isa<CallBase>(&I))
           HandleEffects();
         else if (isa<StoreInst>(&I) || isa<AtomicCmpXchgInst>(&I) || isa<AtomicRMWInst>(&I)) {
+          Value* Ptr = canonicalizePtr(ptrOperandForAccess(&I)).HighP;
           EraseIf(Checks, [&] (const AccessCheck& AC) -> bool {
-            return AC.CK == CheckKind::GetAuxPtr;
+            return AC.CK == CheckKind::GetAuxPtr && AC.CanonicalPtr != Ptr;
           });
         }
         

@@ -4704,6 +4704,9 @@ PAS_ALWAYS_INLINE static void memmove_aux_with_ptrs(
     filc_exit_allowed_mode exit_allowed,
     const filc_origin* origin)
 {
+    static const bool verbose = false;
+    if (verbose)
+        pas_log("filc memmove %zu bytes\n", dst_end_offset - dst_start_offset);
     if (dst_aux_ptr) {
         if (!src_aux_ptr ||
             (dst_word_alignment_mode ? 0
