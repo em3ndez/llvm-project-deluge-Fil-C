@@ -14,11 +14,51 @@ int main()
 {
     int** array = opaque(zgc_alloc(sizeof(int*) * 128));
     int** array2 = opaque(array);
+    unsigned i;
+
+    reset(array);
+    zmemmove_union(array + 5, array + 6, 2 * sizeof(int*));
+
+    for (i = 128; i--;) {
+        if (i >= 5 && i < 5 + 2)
+            ZASSERT(*array[i] == i + 1);
+        else
+            ZASSERT(*array[i] == i);
+    }
+
+    reset(array);
+    zmemmove_union(array + 6, array + 5, 2 * sizeof(int*));
+
+    for (i = 128; i--;) {
+        if (i >= 6 && i < 6 + 2)
+            ZASSERT(*array[i] == i - 1);
+        else
+            ZASSERT(*array[i] == i);
+    }
+
+    reset(array);
+    zmemmove_union(array2 + 5, array + 6, 2 * sizeof(int*));
+
+    for (i = 128; i--;) {
+        if (i >= 5 && i < 5 + 2)
+            ZASSERT(*array[i] == i + 1);
+        else
+            ZASSERT(*array[i] == i);
+    }
+
+    reset(array);
+    zmemmove_union(array2 + 6, array + 5, 2 * sizeof(int*));
+
+    for (i = 128; i--;) {
+        if (i >= 6 && i < 6 + 2)
+            ZASSERT(*array[i] == i - 1);
+        else
+            ZASSERT(*array[i] == i);
+    }
 
     reset(array);
     zmemmove_union(array + 5, array + 7, 7 * sizeof(int*));
 
-    unsigned i;
     for (i = 128; i--;) {
         if (i >= 5 && i < 5 + 7)
             ZASSERT(*array[i] == i + 2);
