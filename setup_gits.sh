@@ -92,3 +92,4 @@ handle_git pizlonated-pkgconf pkgconf-2.3.0
 handle_git pizlonated-toybox pizlonated-toybox
 handle_git pizlonated-libevent pizlonated-libevent
 handle_git pizlonated-tmux pizlonated-tmux
+handle_git pizlonated-sudo pizlonated-sudo
