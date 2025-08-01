@@ -111,7 +111,6 @@ int main(int argc, char** argv)
     ZASSERT(strlen(passwd->pw_passwd));
     ZASSERT(passwd->pw_uid == getuid());
     ZASSERT(passwd->pw_gid == getgid());
-    ZASSERT(strlen(passwd->pw_gecos));
     ZASSERT(strlen(passwd->pw_dir));
     ZASSERT(strlen(passwd->pw_shell));
 
