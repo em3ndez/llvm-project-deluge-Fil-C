@@ -2,30 +2,46 @@
 #include <stdlib.h>
 #include <string.h>
 #include "utils.h"
-static __attribute__((noinline)) void test0(void)
+static __attribute__((noinline)) void
+test0(void)
 {
     int** src = zgc_alloc(29);
     int** dst = zgc_alloc(29);
+    int** origDst = zgc_alloc(29);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
-    zmemmove((char*)dst + 5, (char*)src + 5, 24);
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    zmemmove(
+        (char*)dst + 5, (char*)src + 5, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 5 && index < 29)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test1(void)
+static __attribute__((noinline)) void
+test1(void)
 {
     int** src = zgc_alloc(29);
     int** dst = zgc_alloc(29);
+    int** origDst = zgc_alloc(29);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
@@ -34,166 +50,294 @@ static __attribute__((noinline)) void test1(void)
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 5, (char*)src + 5, 24);
+    zmemmove(
+        (char*)dst + 5, (char*)src + 5, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 5 && index < 29)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test2(void)
+static __attribute__((noinline)) void
+test2(void)
 {
     int** src = zgc_alloc(29);
     int** dst = zgc_alloc(29);
+    int** origDst = zgc_alloc(29);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove((char*)dst + 5, (char*)src + 5, 24);
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove(
+        (char*)dst + 5, (char*)src + 5, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 5 && index < 29)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test3(void)
+static __attribute__((noinline)) void
+test3(void)
 {
     int** src = zgc_alloc(29);
     int** dst = zgc_alloc(29);
+    int** origDst = zgc_alloc(29);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 5, (char*)src + 5, 24);
+    zmemmove(
+        (char*)dst + 5, (char*)src + 5, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 5 && index < 29)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test4(void)
+static __attribute__((noinline)) void
+test4(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    int** origDst = zgc_alloc(30);
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test5(void)
+static __attribute__((noinline)) void
+test5(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test6(void)
+static __attribute__((noinline)) void
+test6(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test7(void)
+static __attribute__((noinline)) void
+test7(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test8(void)
+static __attribute__((noinline)) void
+test8(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test9(void)
+static __attribute__((noinline)) void
+test9(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
@@ -202,166 +346,294 @@ static __attribute__((noinline)) void test9(void)
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test10(void)
+static __attribute__((noinline)) void
+test10(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test11(void)
+static __attribute__((noinline)) void
+test11(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove_union(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test12(void)
+static __attribute__((noinline)) void
+test12(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    int** origDst = zgc_alloc(30);
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test13(void)
+static __attribute__((noinline)) void
+test13(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test14(void)
+static __attribute__((noinline)) void
+test14(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test15(void)
+static __attribute__((noinline)) void
+test15(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test16(void)
+static __attribute__((noinline)) void
+test16(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test17(void)
+static __attribute__((noinline)) void
+test17(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
@@ -370,166 +642,294 @@ static __attribute__((noinline)) void test17(void)
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test18(void)
+static __attribute__((noinline)) void
+test18(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test19(void)
+static __attribute__((noinline)) void
+test19(void)
 {
     int** src = zgc_alloc(30);
     int** dst = zgc_alloc(30);
+    int** origDst = zgc_alloc(30);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 6, (char*)src + 6, 24);
+    zmemmove(
+        (char*)dst + 6, (char*)src + 6, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 6 && index < 30)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test20(void)
+static __attribute__((noinline)) void
+test20(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    int** origDst = zgc_alloc(31);
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test21(void)
+static __attribute__((noinline)) void
+test21(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test22(void)
+static __attribute__((noinline)) void
+test22(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test23(void)
+static __attribute__((noinline)) void
+test23(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test24(void)
+static __attribute__((noinline)) void
+test24(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test25(void)
+static __attribute__((noinline)) void
+test25(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
@@ -538,166 +938,294 @@ static __attribute__((noinline)) void test25(void)
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test26(void)
+static __attribute__((noinline)) void
+test26(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test27(void)
+static __attribute__((noinline)) void
+test27(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove_union((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove_union(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test28(void)
+static __attribute__((noinline)) void
+test28(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    int** origDst = zgc_alloc(31);
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test29(void)
+static __attribute__((noinline)) void
+test29(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test30(void)
+static __attribute__((noinline)) void
+test30(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test31(void)
+static __attribute__((noinline)) void
+test31(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(!zhasvalidcap(dst[1]));
     ZASSERT(!opaque(dst[1]));
     ZASSERT(!zhasvalidcap(dst[2]));
     ZASSERT(!opaque(dst[2]));
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test32(void)
+static __attribute__((noinline)) void
+test32(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test33(void)
+static __attribute__((noinline)) void
+test33(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
@@ -706,73 +1234,129 @@ static __attribute__((noinline)) void test33(void)
     *src[1] = 667;
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test34(void)
+static __attribute__((noinline)) void
+test34(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
-static __attribute__((noinline)) void test35(void)
+static __attribute__((noinline)) void
+test35(void)
 {
     int** src = zgc_alloc(31);
     int** dst = zgc_alloc(31);
+    int** origDst = zgc_alloc(31);
     src = opaque(src);
     dst = opaque(dst);
     src[0] = zgc_alloc(sizeof(int));
     *src[0] = 666;
     dst[0] = zgc_alloc(sizeof(int));
     *dst[0] = 1410;
+    origDst[0] = dst[0];
     src[1] = zgc_alloc(sizeof(int));
     *src[1] = 667;
     dst[1] = zgc_alloc(sizeof(int));
     *dst[1] = 1411;
+    origDst[1] = dst[1];
     src[2] = zgc_alloc(sizeof(int));
     *src[2] = 668;
     dst[2] = zgc_alloc(sizeof(int));
     *dst[2] = 1412;
+    origDst[2] = dst[2];
+    src[3] = zgc_alloc(sizeof(int));
+    *src[3] = 669;
+    dst[3] = zgc_alloc(sizeof(int));
+    *dst[3] = 1413;
+    origDst[3] = dst[3];
     src = opaque(src);
     dst = opaque(dst);
-    zmemmove((char*)dst + 7, (char*)src + 7, 24);
+    zmemmove(
+        (char*)dst + 7, (char*)src + 7, 24);
+    src = opaque(src);
+    dst = opaque(dst);
     ZASSERT(!zhasvalidcap(dst[0]));
     ZASSERT(zhasvalidcap(dst[1]));
-    ZASSERT(opaque(dst[1]) == opaque(src[1]));
+    ZASSERT(opaque(dst[1]) ==
+            opaque(src[1]));
     ZASSERT(*dst[1] == *src[1]);
     ZASSERT(zhasvalidcap(dst[2]));
-    ZASSERT(opaque(dst[2]) == opaque(src[2]));
+    ZASSERT(opaque(dst[2]) ==
+            opaque(src[2]));
     ZASSERT(*dst[2] == *src[2]);
     ZASSERT(!zhasvalidcap(dst[3]));
+    size_t index;
+    for (index = 32; index--;) {
+        int** expected =
+            (index >= 7 && index < 31)
+            ? src : origDst;
+        ZASSERT(((char*)dst)[index] == ((char*)expected)[index]);
+    }
 }
 int main()
 {
