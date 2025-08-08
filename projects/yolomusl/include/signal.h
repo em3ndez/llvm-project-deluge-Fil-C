@@ -212,9 +212,13 @@ int __libc_current_sigrtmax(void);
 
 int kill(pid_t, int);
 
+extern int libc_internal_signals[];
+extern unsigned num_libc_internal_signals;
+
 int sigemptyset(sigset_t *);
 int sigfillset(sigset_t *);
 int sigaddset(sigset_t *, int);
+int sigdelsetyolo(sigset_t *, int);
 int sigdelset(sigset_t *, int);
 int sigismember(const sigset_t *, int);
 

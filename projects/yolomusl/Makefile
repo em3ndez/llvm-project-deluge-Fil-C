@@ -48,7 +48,7 @@ CFLAGS_C99FSE = -std=c99 -ffreestanding -nostdinc
 
 CFLAGS_ALL = $(CFLAGS_C99FSE)
 CFLAGS_ALL += -D_XOPEN_SOURCE=700 -I$(srcdir)/arch/$(ARCH) -I$(srcdir)/arch/generic -Iobj/src/internal -I$(srcdir)/src/include -I$(srcdir)/src/internal -Iobj/include -I$(srcdir)/include
-CFLAGS_ALL += $(CPPFLAGS) $(CFLAGS_AUTO) $(CFLAGS)
+CFLAGS_ALL += -g $(CPPFLAGS) $(CFLAGS_AUTO) $(CFLAGS)
 
 LDFLAGS_ALL = $(LDFLAGS_AUTO) $(LDFLAGS)
 
@@ -64,16 +64,16 @@ ALL_INCLUDES = $(sort $(INCLUDES:$(srcdir)/%=%) $(GENH:obj/%=%) $(ARCH_INCLUDES:
 EMPTY_LIB_NAMES = m rt pthread crypt util xnet resolv dl
 EMPTY_LIBS = $(EMPTY_LIB_NAMES:%=lib/lib%.a)
 CRT_LIBS = $(addprefix lib/,$(notdir $(CRT_OBJS)))
-STATIC_LIBS = lib/libc.a
-SHARED_LIBS = lib/libc.so
+STATIC_LIBS = lib/libyoloc.a
+SHARED_LIBS = lib/libyoloc.so
 TOOL_LIBS = lib/musl-gcc.specs
-ALL_LIBS = $(CRT_LIBS) $(STATIC_LIBS) $(SHARED_LIBS) $(EMPTY_LIBS) $(TOOL_LIBS)
+ALL_LIBS = $(CRT_LIBS) $(STATIC_LIBS) $(SHARED_LIBS) $(TOOL_LIBS)
 ALL_TOOLS = obj/musl-gcc
 
 WRAPCC_GCC = gcc
 WRAPCC_CLANG = clang
 
-LDSO_PATHNAME = $(syslibdir)/ld-musl-$(ARCH)$(SUBARCH).so.1
+LDSO_PATHNAME = $(syslibdir)/ld-yolo-$(ARCH)$(SUBARCH).so
 
 -include config.mak
 -include $(srcdir)/arch/$(ARCH)/arch.mak
@@ -158,11 +158,11 @@ obj/%.lo: $(srcdir)/%.S
 obj/%.lo: $(srcdir)/%.c $(GENH) $(IMPH)
 	$(CC_CMD)
 
-lib/libc.so: $(LOBJS) $(LDSO_OBJS)
+lib/libyoloc.so: $(LOBJS) $(LDSO_OBJS)
 	$(CC) $(CFLAGS_ALL) $(LDFLAGS_ALL) -nostdlib -shared \
 	-Wl,-e,_dlstart -o $@ $(LOBJS) $(LDSO_OBJS) $(LIBCC)
 
-lib/libc.a: $(AOBJS)
+lib/libyoloc.a: $(AOBJS)
 	rm -f $@
 	$(AR) rc $@ $(AOBJS)
 	$(RANLIB) $@
@@ -209,8 +209,8 @@ $(DESTDIR)$(includedir)/bits/%: obj/include/bits/%
 $(DESTDIR)$(includedir)/%: $(srcdir)/include/%
 	$(INSTALL) -D -m 644 $< $@
 
-$(DESTDIR)$(LDSO_PATHNAME): $(DESTDIR)$(libdir)/libc.so
-	$(INSTALL) -D -l $(libdir)/libc.so $@ || true
+$(DESTDIR)$(LDSO_PATHNAME): $(DESTDIR)$(libdir)/libyoloc.so
+	$(INSTALL) -D -l $(libdir)/libyoloc.so $@
 
 install-libs: $(ALL_LIBS:lib/%=$(DESTDIR)$(libdir)/%) $(if $(SHARED_LIBS),$(DESTDIR)$(LDSO_PATHNAME),)
 
