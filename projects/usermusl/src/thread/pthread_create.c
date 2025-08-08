@@ -15,7 +15,6 @@ weak_alias(dummy_0, __release_ptc);
 weak_alias(dummy_0, __pthread_tsd_run_dtors);
 weak_alias(dummy_0, __do_orphaned_stdio_locks);
 weak_alias(dummy_0, __dl_thread_cleanup);
-weak_alias(dummy_0, __membarrier_init);
 
 static int tl_lock_count;
 static int tl_lock_waiters;
@@ -23,6 +22,7 @@ static int tl_lock_waiters;
 void __tl_lock(void)
 {
 	int tid = __pthread_self()->tid;
+	ZASSERT(tid);
 	int val = __thread_list_lock;
 	if (val == tid) {
 		tl_lock_count++;
@@ -114,6 +114,7 @@ _Noreturn void __pthread_exit(void *result)
 	 * see the thread as having exited. Release it now so that no
 	 * remaining locks (except thread list) are held if we end up
 	 * resetting need_locks below. */
+	ZASSERT(self->tid == zthread_self_id());
 	self->tid = 0;
 	UNLOCK(self->killlock);
 
@@ -150,26 +151,16 @@ _Noreturn void __pthread_exit(void *result)
 	self->prev = self->next = self;
 
 	if (state==DT_DETACHED && self->map_base) {
-		/* Detached threads must block even implementation-internal
-		 * signals, since they will not have a stack in their last
-		 * moments of existence. */
-		__block_all_sigs(&set);
-
-		/* Robust list will no longer be valid, and was already
-		 * processed above, so unregister it with the kernel. */
-		if (self->robust_list.off)
-			__syscall(SYS_set_robust_list, 0, 3*sizeof(long));
-
-		/* The following call unmaps the thread's stack mapping
-		 * and then exits without touching the stack. */
-		__unmapself(self->map_base, self->map_size);
+		/* I don't think we have to do anything special for detached threads. */
 	}
 
 	/* Wake any joiner. */
 	a_store(&self->detach_state, DT_EXITED);
 	__wake(&self->detach_state, 1, 1);
 
-	for (;;) __syscall(SYS_exit, 0);
+	__tl_unlock();
+	zthread_exit(0);
+	ZASSERT(!"Should not get here");
 }
 
 void __do_cleanup_push(struct __ptcb *cb)
@@ -188,29 +179,42 @@ struct start_args {
 	void *(*start_func)(void *);
 	void *start_arg;
 	volatile int control;
-	unsigned long sig_mask[_NSIG/8/sizeof(long)];
+	sigset_t sig_mask;
+	struct pthread *thread;
 };
 
-static int start(void *p)
+static void setup_thread(struct pthread* thread)
+{
+	ZASSERT(thread);
+	zthread_set_self_cookie(thread);
+	ZASSERT(!thread->tid || thread->tid == zthread_self_id());
+	thread->tid = zthread_self_id();
+}
+
+static void* start(void *p)
 {
 	struct start_args *args = p;
+	setup_thread(args->thread);
 	int state = args->control;
 	if (state) {
 		if (a_cas(&args->control, 1, 2)==1)
 			__wait(&args->control, 0, 2, 1);
 		if (args->control) {
-			__syscall(SYS_set_tid_address, &args->control);
-			for (;;) __syscall(SYS_exit, 0);
+			args->control = 0;
+			__wake(&args->control, 1, 0);
+			zthread_exit(0);
+			ZASSERT(!"Should not get here");
 		}
 	}
-	__syscall(SYS_rt_sigprocmask, SIG_SETMASK, &args->sig_mask, 0, _NSIG/8);
+	zsys_sigprocmask(SIG_SETMASK, &args->sig_mask, 0);
 	__pthread_exit(args->start_func(args->start_arg));
 	return 0;
 }
 
-static int start_c11(void *p)
+static void* start_c11(void *p)
 {
 	struct start_args *args = p;
+	setup_thread(args->thread);
 	int (*start)(void*) = (int(*)(void*)) args->start_func;
 	__pthread_exit((void *)(uintptr_t)start(args->start_arg));
 	return 0;
@@ -255,9 +259,7 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 		init_file_lock(__stdin_used);
 		init_file_lock(__stdout_used);
 		init_file_lock(__stderr_used);
-		__syscall(SYS_rt_sigprocmask, SIG_UNBLOCK, SIGPT_SET, 0, _NSIG/8);
 		self->tsd = (void **)__pthread_tsd_main;
-		__membarrier_init();
 		libc.threaded = 1;
 	}
 	if (attrp && !c11) attr = *attrp;
@@ -269,48 +271,16 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	}
 
 	if (attr._a_stackaddr) {
-		size_t need = libc.tls_size + __pthread_tsd_size;
-		size = attr._a_stacksize;
-		stack = (void *)(attr._a_stackaddr & -16);
-		stack_limit = (void *)(attr._a_stackaddr - size);
-		/* Use application-provided stack for TLS only when
-		 * it does not take more than ~12% or 2k of the
-		 * application's stack space. */
-		if (need < size/8 && need < 2048) {
-			tsd = stack - __pthread_tsd_size;
-			stack = tsd - libc.tls_size;
-			memset(stack, 0, need);
-		} else {
-			size = ROUND(need);
-		}
-		guard = 0;
+		zerror("Cannot set custom stack address because memory safety.");
 	} else {
 		guard = ROUND(attr._a_guardsize);
 		size = guard + ROUND(attr._a_stacksize
 			+ libc.tls_size +  __pthread_tsd_size);
 	}
 
-	if (!tsd) {
-		if (guard) {
-			map = __mmap(0, size, PROT_NONE, MAP_PRIVATE|MAP_ANON, -1, 0);
-			if (map == MAP_FAILED) goto fail;
-			if (__mprotect(map+guard, size-guard, PROT_READ|PROT_WRITE)
-			    && errno != ENOSYS) {
-				__munmap(map, size);
-				goto fail;
-			}
-		} else {
-			map = __mmap(0, size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
-			if (map == MAP_FAILED) goto fail;
-		}
-		tsd = map + size - __pthread_tsd_size;
-		if (!stack) {
-			stack = tsd - libc.tls_size;
-			stack_limit = map + guard;
-		}
-	}
+	tsd = zgc_alloc(__pthread_tsd_size);
 
-	new = __copy_tls(tsd - libc.tls_size);
+	new = zgc_alloc(sizeof(struct pthread));
 	new->map_base = map;
 	new->map_size = size;
 	new->stack = stack;
@@ -328,12 +298,8 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	new->canary = self->canary;
 	new->sysinfo = self->sysinfo;
 
-	/* Setup argument structure for the new thread on its stack.
-	 * It's safe to access from the caller only until the thread
-	 * list is unlocked. */
-	stack -= (uintptr_t)stack % sizeof(uintptr_t);
-	stack -= sizeof(struct start_args);
-	struct start_args *args = (void *)stack;
+	struct start_args *args = zgc_alloc(sizeof(struct start_args));
+	args->thread = new;
 	args->start_func = entry;
 	args->start_arg = arg;
 	args->control = attr._a_sched ? 1 : 0;
@@ -347,13 +313,22 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	 * working with a copy of the set so we can restore the
 	 * original mask in the calling thread. */
 	memcpy(&args->sig_mask, &set, sizeof args->sig_mask);
-	args->sig_mask[(SIGCANCEL-1)/8/sizeof(long)] &=
-		~(1UL<<((SIGCANCEL-1)%(8*sizeof(long))));
+	ZASSERT(!__sigdelsetyolo(&args->sig_mask, SIGCANCEL));
 
 	__tl_lock();
 	if (!libc.threads_minus_1++) libc.need_locks = 1;
-	ret = __clone((c11 ? start_c11 : start), stack, flags, args, &new->tid, TP_ADJ(new), &__thread_list_lock);
+	void* zthread = zthread_create((c11 ? start_c11 : start), args);
 
+	if (zthread) {
+		unsigned new_tid = zthread_get_id(zthread);
+		ZASSERT(!new->tid || new->tid == new_tid);
+                new->zthread = zthread;
+		new->tid = new_tid;
+		ret = 0;
+	} else {
+		ret = -errno;
+	}
+	
 	/* All clone failures translate to EAGAIN. If explicit scheduling
 	 * was requested, attempt it before unlocking the thread list so
 	 * that the failed thread is never exposed and so that we can
@@ -362,7 +337,7 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 		ret = -EAGAIN;
 	} else if (attr._a_sched) {
 		ret = __syscall(SYS_sched_setscheduler,
-			new->tid, attr._a_policy, &attr._a_prio);
+			new_tid, attr._a_policy, &attr._a_prio);
 		if (a_swap(&args->control, ret ? 3 : 0)==2)
 			__wake(&args->control, 1, 1);
 		if (ret)
@@ -382,7 +357,6 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	__release_ptc();
 
 	if (ret < 0) {
-		if (map) __munmap(map, size);
 		return -ret;
 	}
 

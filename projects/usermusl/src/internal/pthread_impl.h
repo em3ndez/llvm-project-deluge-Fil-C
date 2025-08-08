@@ -10,6 +10,8 @@
 #include "syscall.h"
 #include "atomic.h"
 #include "futex.h"
+#include <pizlonated_runtime.h>
+#include <pizlonated_syscalls.h>
 
 #include "pthread_arch.h"
 
@@ -32,6 +34,7 @@ struct pthread {
 #endif
 
 	/* Part 2 -- implementation details, non-ABI. */
+	void* zthread;
 	int tid;
 	int errno_val;
 	volatile int detach_state;
@@ -86,16 +89,16 @@ enum {
 #define _m_type __u.__i[0]
 #define _m_lock __u.__vi[1]
 #define _m_waiters __u.__vi[2]
-#define _m_prev __u.__p[3]
-#define _m_next __u.__p[4]
-#define _m_count __u.__i[5]
-#define _c_shared __u.__p[0]
-#define _c_seq __u.__vi[2]
-#define _c_waiters __u.__vi[3]
-#define _c_clock __u.__i[4]
-#define _c_lock __u.__vi[8]
-#define _c_head __u.__p[1]
-#define _c_tail __u.__p[5]
+#define _m_prev __p[0]
+#define _m_next __p[1]
+#define _m_count __u.__i[3]
+#define _c_shared __u.__i[0]
+#define _c_seq __u.__vi[1]
+#define _c_waiters __u.__vi[2]
+#define _c_clock __u.__i[3]
+#define _c_lock __u.__vi[4]
+#define _c_head __p[1]
+#define _c_tail __p[2]
 #define _rw_lock __u.__vi[0]
 #define _rw_waiters __u.__vi[1]
 #define _rw_shared __u.__i[2]
@@ -104,7 +107,7 @@ enum {
 #define _b_limit __u.__i[2]
 #define _b_count __u.__vi[3]
 #define _b_waiters2 __u.__vi[4]
-#define _b_inst __u.__p[3]
+#define _b_inst __p[0]
 
 #ifndef TP_OFFSET
 #define TP_OFFSET 0
@@ -114,19 +117,13 @@ enum {
 #define DTP_OFFSET 0
 #endif
 
-#ifdef TLS_ABOVE_TP
-#define TP_ADJ(p) ((char *)(p) + sizeof(struct pthread) + TP_OFFSET)
-#define __pthread_self() ((pthread_t)(__get_tp() - sizeof(struct __pthread) - TP_OFFSET))
-#else
-#define TP_ADJ(p) (p)
-#define __pthread_self() ((pthread_t)__get_tp())
-#endif
+#define __pthread_self() ((struct pthread*)zthread_self_cookie())
 
 #ifndef tls_mod_off_t
 #define tls_mod_off_t size_t
 #endif
 
-#define SIGTIMER 32
+#define SIGTIMER 35
 #define SIGCANCEL 33
 #define SIGSYNCCALL 34
 
@@ -134,16 +131,13 @@ enum {
 #define SIGPT_SET \
 	((sigset_t *)(const unsigned long [_NSIG/8/sizeof(long)]){ \
 	[sizeof(long)==4] = 3UL<<(32*(sizeof(long)>4)) })
-#define SIGTIMER_SET \
-	((sigset_t *)(const unsigned long [_NSIG/8/sizeof(long)]){ \
-	 0x80000000 })
+
+int __sigdelsetyolo(sigset_t *, int);
 
 void *__tls_get_addr(tls_mod_off_t *);
 hidden int __init_tp(void *);
-hidden void *__copy_tls(unsigned char *);
 hidden void __reset_tls();
 
-hidden void __membarrier_init(void);
 hidden void __dl_thread_cleanup(void);
 hidden void __testcancel();
 hidden void __do_cleanup_push(struct __ptcb *);
@@ -167,16 +161,11 @@ hidden int __timedwait_cp(volatile int *, int, clockid_t, const struct timespec 
 hidden void __wait(volatile int *, volatile int *, int, int);
 static inline void __wake(volatile void *addr, int cnt, int priv)
 {
-	if (priv) priv = FUTEX_PRIVATE;
-	if (cnt<0) cnt = INT_MAX;
-	__syscall(SYS_futex, addr, FUTEX_WAKE|priv, cnt) != -ENOSYS ||
-	__syscall(SYS_futex, addr, FUTEX_WAKE, cnt);
+	zsys_futex_wake(addr, cnt, priv);
 }
 static inline void __futexwait(volatile void *addr, int val, int priv)
 {
-	if (priv) priv = FUTEX_PRIVATE;
-	__syscall(SYS_futex, addr, FUTEX_WAIT|priv, val, 0) != -ENOSYS ||
-	__syscall(SYS_futex, addr, FUTEX_WAIT, val, 0);
+	zsys_futex_wait(addr, val, priv);
 }
 
 hidden void __acquire_ptc(void);

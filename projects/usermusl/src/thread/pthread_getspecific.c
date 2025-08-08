@@ -9,3 +9,4 @@ static void *__pthread_getspecific(pthread_key_t k)
 
 weak_alias(__pthread_getspecific, pthread_getspecific);
 weak_alias(__pthread_getspecific, tss_get);
+

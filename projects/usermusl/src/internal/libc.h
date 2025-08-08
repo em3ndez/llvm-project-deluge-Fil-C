@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#include <stdfil.h>
+#include <pizlonated_syscalls.h>
 
 struct __locale_map;
 
@@ -37,7 +39,7 @@ struct __libc {
 extern hidden struct __libc __libc;
 #define libc __libc
 
-hidden void __init_libc(char **, char *);
+hidden void __init_libc(char **, char *, size_t *);
 hidden void __init_tls(size_t *);
 hidden void __init_ssp(void *);
 hidden void __libc_start_init(void);
@@ -52,7 +54,7 @@ extern char *__progname, *__progname_full;
 
 extern hidden const char __libc_version[];
 
-hidden void __synccall(void (*)(void *), void *);
+#define __synccall(callback, arg) zerrorf("%s:%d: %s: attempt to __synccall(%s, %s)", __FILE__, __LINE__, __PRETTY_FUNCTION__, #callback, #arg)
 hidden int __setxid(int, int, int, int);
 
 #endif
