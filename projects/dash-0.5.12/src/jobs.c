@@ -968,7 +968,7 @@ struct job *vforkexec(union node *n, char **argv, const char *path, int idx)
 	sigblockall(NULL);
 	vforked++;
 
-	pid = vfork();
+	pid = fork();
 
 	if (!pid) {
 		forkchild(jp, n, FORK_FG);
