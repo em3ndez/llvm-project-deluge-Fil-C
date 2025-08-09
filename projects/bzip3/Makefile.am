@@ -4,8 +4,6 @@ AM_CFLAGS = -I$(top_srcdir)/include
 
 EXTRA_DIST = LICENSE 3rdparty/libsais-LICENSE PORTING.md README.md build-aux/git-version-gen CMakeLists.txt
 
-pkgconfig_DATA = bzip3.pc
-
 include_HEADERS = include/libbz3.h
 noinst_HEADERS = include/common.h \
 						 include/libsais.h \
