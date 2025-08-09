@@ -1,3 +1,4 @@
+
 #
 # QuickJS Javascript Engine
 #
@@ -92,8 +93,8 @@ else
 endif
 
 ifdef CONFIG_CLANG
-  HOST_CC=$(PWD)/../build/bin/clang
-  CC=$(CROSS_PREFIX)$(PWD)/../build/bin/clang
+  HOST_CC=$(PWD)/../../../build/bin/clang
+  CC=$(CROSS_PREFIX)$(PWD)/../../../build/bin/clang
   CFLAGS+=-g -Wall -MMD -MF $(OBJDIR)/$(@F).d
   CFLAGS += -Wextra
   CFLAGS += -Wno-sign-compare
