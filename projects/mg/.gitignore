@@ -1,0 +1,17 @@
+autom4te.cache/
+build-aux/
+log/
+patches/
+.gdb_history
+Makefile
+Makefile.in
+aclocal.m4
+config.log
+config.status
+configure
+GPATH
+GRTAGS
+GSYMS
+GTAGS
+ID
+*~

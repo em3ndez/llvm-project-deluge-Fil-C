@@ -1,0 +1,2 @@
+?package(mg2a):needs="text" section="Applications/Editors"\
+  title="Mg" command="/usr/bin/mg"
