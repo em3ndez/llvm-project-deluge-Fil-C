@@ -13022,15 +13022,7 @@ printf "%s\n" "$SHLIBS" >&6; }
 
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking perf trampoline" >&5
 printf %s "checking perf trampoline... " >&6; }
-case $PLATFORM_TRIPLET in #(
-  x86_64-linux-gnu) :
-    perf_trampoline=yes ;; #(
-  aarch64-linux-gnu) :
-    perf_trampoline=yes ;; #(
-  *) :
-    perf_trampoline=no
- ;;
-esac
+perf_trampoline=no
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $perf_trampoline" >&5
 printf "%s\n" "$perf_trampoline" >&6; }
 
@@ -23483,7 +23475,7 @@ main (void)
 _ACEOF
 if ac_fn_c_try_link "$LINENO"
 then :
-  ac_cv_gcc_asm_for_x64=yes
+  ac_cv_gcc_asm_for_x64=no
 else $as_nop
   ac_cv_gcc_asm_for_x64=no
 fi
@@ -23619,7 +23611,7 @@ main (void)
 _ACEOF
 if ac_fn_c_try_link "$LINENO"
 then :
-  ac_cv_gcc_asm_for_x87=yes
+  ac_cv_gcc_asm_for_x87=no
 else $as_nop
   ac_cv_gcc_asm_for_x87=no
 fi
@@ -23662,7 +23654,7 @@ main (void)
 _ACEOF
 if ac_fn_c_try_link "$LINENO"
 then :
-  ac_cv_gcc_asm_for_mc68881=yes
+  ac_cv_gcc_asm_for_mc68881=no
 else $as_nop
   ac_cv_gcc_asm_for_mc68881=no
 fi

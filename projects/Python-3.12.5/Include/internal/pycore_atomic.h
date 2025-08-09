@@ -43,7 +43,7 @@ typedef enum _Py_memory_order {
 } _Py_memory_order;
 
 typedef struct _Py_atomic_address {
-    atomic_uintptr_t _value;
+    void*_Atomic _value;
 } _Py_atomic_address;
 
 typedef struct _Py_atomic_int {
@@ -64,6 +64,7 @@ typedef struct _Py_atomic_int {
 
 // Use builtin atomic operations in GCC >= 4.7 and clang
 #elif defined(HAVE_BUILTIN_ATOMIC)
+#error "have builtin atomic"
 
 typedef enum _Py_memory_order {
     _Py_memory_order_relaxed = __ATOMIC_RELAXED,
@@ -103,6 +104,7 @@ typedef struct _Py_atomic_int {
 /* Only support GCC (for expression statements) and x86 (for simple
  * atomic semantics) and MSVC x86/x64/ARM */
 #elif defined(__GNUC__) && (defined(__i386__) || defined(__amd64))
+#error "have some GNU C stuff"
 typedef enum _Py_memory_order {
     _Py_memory_order_relaxed,
     _Py_memory_order_acquire,
@@ -231,6 +233,7 @@ _Py_ANNOTATE_MEMORY_ORDER(const volatile void *address, _Py_memory_order order)
     })
 
 #elif defined(_MSC_VER)
+#error "have some MSVC stuff"
 /*  _Interlocked* functions provide a full memory barrier and are therefore
     enough for acq_rel and seq_cst. If the HLE variants aren't available
     in hardware they will fall back to a full memory barrier as well.
@@ -363,6 +366,7 @@ inline int _Py_atomic_load_32bit_impl(volatile int* value, int order) {
 #define _Py_atomic_load_32bit(ATOMIC_VAL, ORDER) \
     _Py_atomic_load_32bit_impl((volatile int*)&((ATOMIC_VAL)->_value), (ORDER))
 
+#error "oh no"
 #define _Py_atomic_store_explicit(ATOMIC_VAL, NEW_VAL, ORDER) \
   if (sizeof((ATOMIC_VAL)->_value) == 8) { \
     _Py_atomic_store_64bit((ATOMIC_VAL), NEW_VAL, ORDER) } else { \
@@ -504,7 +508,8 @@ inline int _Py_atomic_load_32bit_impl(volatile int* value, int order) {
     _Py_atomic_store_64bit((ATOMIC_VAL), (NEW_VAL), (ORDER)) } else { \
     _Py_atomic_store_32bit((ATOMIC_VAL), (NEW_VAL), (ORDER)) }
 
-#define _Py_atomic_load_explicit(ATOMIC_VAL, ORDER) \
+#error "oh noooo"
+#define _Py_atomic_load_explicit(ATOMIC_VAL, ORDER)     \
   ( \
     sizeof((ATOMIC_VAL)->_value) == 8 ? \
     _Py_atomic_load_64bit((ATOMIC_VAL), (ORDER)) : \
@@ -512,6 +517,7 @@ inline int _Py_atomic_load_32bit_impl(volatile int* value, int order) {
   )
 #endif
 #else  /* !gcc x86  !_msc_ver */
+#error "oh nooooooooooo
 typedef enum _Py_memory_order {
     _Py_memory_order_relaxed,
     _Py_memory_order_acquire,

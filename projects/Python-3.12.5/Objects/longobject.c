@@ -14,6 +14,7 @@
 #include <float.h>
 #include <stddef.h>
 #include <stdlib.h>               // abs()
+#include <stdfil.h>
 
 #include "clinic/longobject.c.h"
 /*[clinic input]
@@ -1070,13 +1071,20 @@ _PyLong_AsByteArray(PyLongObject* v,
 
 }
 
+static zexact_ptrtable* ptrtable;
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    ptrtable = zexact_ptrtable_new();
+}
+ 
 /* Create a new int object from a C pointer */
 
 PyObject *
 PyLong_FromVoidPtr(void *p)
 {
-#if SIZEOF_VOID_P <= SIZEOF_LONG
-    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)p);
+#if SIZEOF_VOID_P <= SIZEOF_LONG || defined(__PIZLONATOR_WAS_HERE__)
+    return PyLong_FromUnsignedLong((unsigned long)(uintptr_t)zexact_ptrtable_encode(ptrtable, p));
 #else
 
 #if SIZEOF_LONG_LONG < SIZEOF_VOID_P
@@ -1092,7 +1100,7 @@ PyLong_FromVoidPtr(void *p)
 void *
 PyLong_AsVoidPtr(PyObject *vv)
 {
-#if SIZEOF_VOID_P <= SIZEOF_LONG
+#if SIZEOF_VOID_P <= SIZEOF_LONG || defined(__PIZLONATOR_WAS_HERE__)
     long x;
 
     if (PyLong_Check(vv) && _PyLong_IsNegative((PyLongObject *)vv)) {
@@ -1119,7 +1127,7 @@ PyLong_AsVoidPtr(PyObject *vv)
 
     if (x == -1 && PyErr_Occurred())
         return NULL;
-    return (void *)x;
+    return (void *)zexact_ptrtable_decode(ptrtable, x);
 }
 
 /* Initial long long support by Chris Herborth (chrish@qnx.com), later

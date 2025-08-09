@@ -1271,11 +1271,10 @@ binarysort(MergeState *ms, sortslice lo, PyObject **hi, PyObject **start)
             *p = *(p-1);
         *l = pivot;
         if (lo.values != NULL) {
-            Py_ssize_t offset = lo.values - lo.keys;
-            p = start + offset;
+            p = lo.values + (start - lo.keys);
             pivot = *p;
-            l += offset;
-            for (p = start + offset; p > l; --p)
+            l = lo.values + (l - lo.keys);
+            for (; p > l; --p)
                 *p = *(p-1);
             *l = pivot;
         }

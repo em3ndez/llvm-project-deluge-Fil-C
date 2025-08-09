@@ -77,34 +77,36 @@ module gc
 static inline int
 gc_is_collecting(PyGC_Head *g)
 {
-    return (g->_gc_prev & PREV_MASK_COLLECTING) != 0;
+    return ((uintptr_t)g->_gc_prev & PREV_MASK_COLLECTING) != 0;
 }
 
 static inline void
 gc_clear_collecting(PyGC_Head *g)
 {
-    g->_gc_prev &= ~PREV_MASK_COLLECTING;
+    g->_gc_prev = zandptr(g->_gc_prev, ~PREV_MASK_COLLECTING);
 }
 
 static inline Py_ssize_t
 gc_get_refs(PyGC_Head *g)
 {
-    return (Py_ssize_t)(g->_gc_prev >> _PyGC_PREV_SHIFT);
+    return (Py_ssize_t)((uintptr_t)g->_gc_prev >> _PyGC_PREV_SHIFT);
 }
 
 static inline void
 gc_set_refs(PyGC_Head *g, Py_ssize_t refs)
 {
-    g->_gc_prev = (g->_gc_prev & ~_PyGC_PREV_MASK)
-        | ((uintptr_t)(refs) << _PyGC_PREV_SHIFT);
+    g->_gc_prev = (PyGC_Head*)
+        (((uintptr_t)g->_gc_prev & ~_PyGC_PREV_MASK)
+         | ((uintptr_t)(refs) << _PyGC_PREV_SHIFT));
 }
 
 static inline void
 gc_reset_refs(PyGC_Head *g, Py_ssize_t refs)
 {
-    g->_gc_prev = (g->_gc_prev & _PyGC_PREV_MASK_FINALIZED)
-        | PREV_MASK_COLLECTING
-        | ((uintptr_t)(refs) << _PyGC_PREV_SHIFT);
+    g->_gc_prev = (PyGC_Head*)
+        (((uintptr_t)g->_gc_prev & _PyGC_PREV_MASK_FINALIZED)
+         | PREV_MASK_COLLECTING
+         | ((uintptr_t)(refs) << _PyGC_PREV_SHIFT));
 }
 
 static inline void
@@ -113,7 +115,7 @@ gc_decref(PyGC_Head *g)
     _PyObject_ASSERT_WITH_MSG(FROM_GC(g),
                               gc_get_refs(g) > 0,
                               "refcount is too small");
-    g->_gc_prev -= 1 << _PyGC_PREV_SHIFT;
+    g->_gc_prev = (PyGC_Head*)((uintptr_t)g->_gc_prev - (1 << _PyGC_PREV_SHIFT));
 }
 
 /* set for debugging information */
@@ -141,8 +143,8 @@ _PyGC_InitState(GCState *gcstate)
 {
 #define INIT_HEAD(GEN) \
     do { \
-        GEN.head._gc_next = (uintptr_t)&GEN.head; \
-        GEN.head._gc_prev = (uintptr_t)&GEN.head; \
+        GEN.head._gc_next = &GEN.head; \
+        GEN.head._gc_prev = &GEN.head; \
     } while (0)
 
     for (int i = 0; i < NUM_GENERATIONS; i++) {
@@ -233,14 +235,14 @@ gc_list_init(PyGC_Head *list)
 {
     // List header must not have flags.
     // We can assign pointer by simple cast.
-    list->_gc_prev = (uintptr_t)list;
-    list->_gc_next = (uintptr_t)list;
+    list->_gc_prev = list;
+    list->_gc_next = list;
 }
 
 static inline int
 gc_list_is_empty(PyGC_Head *list)
 {
-    return (list->_gc_next == (uintptr_t)list);
+    return (list->_gc_next == list);
 }
 
 /* Append `node` to `list`. */
@@ -255,7 +257,7 @@ gc_list_append(PyGC_Head *node, PyGC_Head *list)
 
     // node <-> list
     _PyGCHead_SET_NEXT(node, list);
-    list->_gc_prev = (uintptr_t)node;
+    list->_gc_prev = node;
 }
 
 /* Remove `node` from the gc list it's currently in. */
@@ -286,10 +288,10 @@ gc_list_move(PyGC_Head *node, PyGC_Head *list)
 
     /* Relink at end of new list. */
     // list must not have flags.  So we can skip macros.
-    PyGC_Head *to_prev = (PyGC_Head*)list->_gc_prev;
+    PyGC_Head *to_prev = list->_gc_prev;
     _PyGCHead_SET_PREV(node, to_prev);
     _PyGCHead_SET_NEXT(to_prev, node);
-    list->_gc_prev = (uintptr_t)node;
+    list->_gc_prev = node;
     _PyGCHead_SET_NEXT(node, list);
 }
 
@@ -372,8 +374,8 @@ enum flagstates {collecting_clear_unreachable_clear,
 static void
 validate_list(PyGC_Head *head, enum flagstates flags)
 {
-    assert((head->_gc_prev & PREV_MASK_COLLECTING) == 0);
-    assert((head->_gc_next & NEXT_MASK_UNREACHABLE) == 0);
+    assert(((uintptr_t)head->_gc_prev & PREV_MASK_COLLECTING) == 0);
+    assert(((uintptr_t)head->_gc_next & NEXT_MASK_UNREACHABLE) == 0);
     uintptr_t prev_value = 0, next_value = 0;
     switch (flags) {
         case collecting_clear_unreachable_clear:
@@ -395,11 +397,11 @@ validate_list(PyGC_Head *head, enum flagstates flags)
     PyGC_Head *gc = GC_NEXT(head);
     while (gc != head) {
         PyGC_Head *trueprev = GC_PREV(gc);
-        PyGC_Head *truenext = (PyGC_Head *)(gc->_gc_next  & ~NEXT_MASK_UNREACHABLE);
+        PyGC_Head *truenext = zandptr(gc->_gc_next, ~NEXT_MASK_UNREACHABLE);
         assert(truenext != NULL);
         assert(trueprev == prev);
-        assert((gc->_gc_prev & PREV_MASK_COLLECTING) == prev_value);
-        assert((gc->_gc_next & NEXT_MASK_UNREACHABLE) == next_value);
+        assert(zandptr(gc->_gc_prev, PREV_MASK_COLLECTING) == prev_value);
+        assert(zandptr(gc->_gc_next, NEXT_MASK_UNREACHABLE) == next_value);
         prev = gc;
         gc = truenext;
     }
@@ -516,7 +518,7 @@ visit_reachable(PyObject *op, PyGC_Head *reachable)
     // an untracked object.
     assert(gc->_gc_next != 0);
 
-    if (gc->_gc_next & NEXT_MASK_UNREACHABLE) {
+    if ((uintptr_t)gc->_gc_next & NEXT_MASK_UNREACHABLE) {
         /* This had gc_refs = 0 when move_unreachable got
          * to it, but turns out it's reachable after all.
          * Move it back to move_unreachable's 'young' list,
@@ -526,11 +528,11 @@ visit_reachable(PyObject *op, PyGC_Head *reachable)
         // Manually unlink gc from unreachable list because the list functions
         // don't work right in the presence of NEXT_MASK_UNREACHABLE flags.
         PyGC_Head *prev = GC_PREV(gc);
-        PyGC_Head *next = (PyGC_Head*)(gc->_gc_next & ~NEXT_MASK_UNREACHABLE);
+        PyGC_Head *next = zandptr(gc->_gc_next, ~NEXT_MASK_UNREACHABLE);
         _PyObject_ASSERT(FROM_GC(prev),
-                         prev->_gc_next & NEXT_MASK_UNREACHABLE);
+                         (uintptr_t)prev->_gc_next & NEXT_MASK_UNREACHABLE);
         _PyObject_ASSERT(FROM_GC(next),
-                         next->_gc_next & NEXT_MASK_UNREACHABLE);
+                         (uintptr_t)next->_gc_next & NEXT_MASK_UNREACHABLE);
         prev->_gc_next = gc->_gc_next;  // copy NEXT_MASK_UNREACHABLE
         _PyGCHead_SET_PREV(next, prev);
 
@@ -628,17 +630,17 @@ move_unreachable(PyGC_Head *young, PyGC_Head *unreachable)
             // But this may pollute the unreachable list head's 'next' pointer
             // too. That's semantically senseless but expedient here - the
             // damage is repaired when this function ends.
-            last->_gc_next = (NEXT_MASK_UNREACHABLE | (uintptr_t)gc);
+            last->_gc_next = zorptr(gc, NEXT_MASK_UNREACHABLE);
             _PyGCHead_SET_PREV(gc, last);
-            gc->_gc_next = (NEXT_MASK_UNREACHABLE | (uintptr_t)unreachable);
-            unreachable->_gc_prev = (uintptr_t)gc;
+            gc->_gc_next = zorptr(unreachable, NEXT_MASK_UNREACHABLE);
+            unreachable->_gc_prev = gc;
         }
         gc = (PyGC_Head*)prev->_gc_next;
     }
     // young->_gc_prev must be last element remained in the list.
-    young->_gc_prev = (uintptr_t)prev;
+    young->_gc_prev = prev;
     // don't let the pollution of the list head's next pointer leak
-    unreachable->_gc_next &= ~NEXT_MASK_UNREACHABLE;
+    unreachable->_gc_next = zandptr(unreachable->_gc_next, ~NEXT_MASK_UNREACHABLE);
 }
 
 static void
@@ -686,7 +688,7 @@ static void
 move_legacy_finalizers(PyGC_Head *unreachable, PyGC_Head *finalizers)
 {
     PyGC_Head *gc, *next;
-    assert((unreachable->_gc_next & NEXT_MASK_UNREACHABLE) == 0);
+    assert(((uintptr_t)unreachable->_gc_next & NEXT_MASK_UNREACHABLE) == 0);
 
     /* March over unreachable.  Move objects with finalizers into
      * `finalizers`.
@@ -694,9 +696,9 @@ move_legacy_finalizers(PyGC_Head *unreachable, PyGC_Head *finalizers)
     for (gc = GC_NEXT(unreachable); gc != unreachable; gc = next) {
         PyObject *op = FROM_GC(gc);
 
-        _PyObject_ASSERT(op, gc->_gc_next & NEXT_MASK_UNREACHABLE);
-        gc->_gc_next &= ~NEXT_MASK_UNREACHABLE;
-        next = (PyGC_Head*)gc->_gc_next;
+        _PyObject_ASSERT(op, (uintptr_t)gc->_gc_next & NEXT_MASK_UNREACHABLE);
+        gc->_gc_next = zandptr(gc->_gc_next, ~NEXT_MASK_UNREACHABLE);
+        next = gc->_gc_next;
 
         if (has_legacy_finalizer(op)) {
             gc_clear_collecting(gc);
@@ -712,11 +714,11 @@ clear_unreachable_mask(PyGC_Head *unreachable)
     assert(((uintptr_t)unreachable & NEXT_MASK_UNREACHABLE) == 0);
 
     PyGC_Head *gc, *next;
-    assert((unreachable->_gc_next & NEXT_MASK_UNREACHABLE) == 0);
+    assert(((uintptr_t)unreachable->_gc_next & NEXT_MASK_UNREACHABLE) == 0);
     for (gc = GC_NEXT(unreachable); gc != unreachable; gc = next) {
-        _PyObject_ASSERT((PyObject*)FROM_GC(gc), gc->_gc_next & NEXT_MASK_UNREACHABLE);
-        gc->_gc_next &= ~NEXT_MASK_UNREACHABLE;
-        next = (PyGC_Head*)gc->_gc_next;
+        _PyObject_ASSERT((PyObject*)FROM_GC(gc), (uintptr_t)gc->_gc_next & NEXT_MASK_UNREACHABLE);
+        gc->_gc_next = zandptr(gc->_gc_next, ~NEXT_MASK_UNREACHABLE);
+        next = gc->_gc_next;
     }
     validate_list(unreachable, collecting_set_unreachable_clear);
 }
@@ -888,7 +890,7 @@ handle_weakrefs(PyGC_Head *unreachable, PyGC_Head *old)
         PyObject *temp;
         PyObject *callback;
 
-        gc = (PyGC_Head*)wrcb_to_call._gc_next;
+        gc = wrcb_to_call._gc_next;
         op = FROM_GC(gc);
         _PyObject_ASSERT(op, PyWeakref_Check(op));
         wr = (PyWeakReference *)op;
@@ -914,7 +916,7 @@ handle_weakrefs(PyGC_Head *unreachable, PyGC_Head *old)
          * ours).
          */
         Py_DECREF(op);
-        if (wrcb_to_call._gc_next == (uintptr_t)gc) {
+        if (wrcb_to_call._gc_next == gc) {
             /* object is still alive -- move it */
             gc_list_move(gc, old);
         }

@@ -14,7 +14,7 @@ extern "C" {
 
 
 struct _frame {
-    PyObject_HEAD
+    PyObject_VAR_HEAD
     PyFrameObject *f_back;      /* previous frame, or NULL */
     struct _PyInterpreterFrame *f_frame; /* points to the frame data */
     PyObject *f_trace;          /* Trace function */
@@ -50,6 +50,7 @@ enum _frameowner {
 
 typedef struct _PyInterpreterFrame {
     PyCodeObject *f_code; /* Strong reference */
+    struct _PyInterpreterFrame *_f_caller_frame;
     struct _PyInterpreterFrame *previous;
     PyObject *f_funcobj; /* Strong reference. Only valid if not on C stack */
     PyObject *f_globals; /* Borrowed reference. Only valid if not on C stack */
@@ -240,13 +241,7 @@ _PyFrame_LocalsToFast(_PyInterpreterFrame *frame, int clear);
 static inline bool
 _PyThreadState_HasStackSpace(PyThreadState *tstate, int size)
 {
-    assert(
-        (tstate->datastack_top == NULL && tstate->datastack_limit == NULL)
-        ||
-        (tstate->datastack_top != NULL && tstate->datastack_limit != NULL)
-    );
-    return tstate->datastack_top != NULL &&
-        size < tstate->datastack_limit - tstate->datastack_top;
+    return true;
 }
 
 extern _PyInterpreterFrame *
@@ -262,9 +257,7 @@ _PyFrame_PushUnchecked(PyThreadState *tstate, PyFunctionObject *func, int null_l
 {
     CALL_STAT_INC(frames_pushed);
     PyCodeObject *code = (PyCodeObject *)func->func_code;
-    _PyInterpreterFrame *new_frame = (_PyInterpreterFrame *)tstate->datastack_top;
-    tstate->datastack_top += code->co_framesize;
-    assert(tstate->datastack_top < tstate->datastack_limit);
+    _PyInterpreterFrame *new_frame = _PyThreadState_PushFrame(tstate, code->co_framesize);
     _PyFrame_Initialize(new_frame, func, NULL, code, null_locals_from);
     return new_frame;
 }

@@ -124,13 +124,13 @@ typedef struct {
 Py_LOCAL_INLINE(PyObject *)
 get_handler(int i)
 {
-    return (PyObject *)_Py_atomic_load(&Handlers[i].func);
+    return _Py_atomic_load(&Handlers[i].func);
 }
 
 Py_LOCAL_INLINE(void)
 set_handler(int i, PyObject* func)
 {
-    _Py_atomic_store(&Handlers[i].func, (uintptr_t)func);
+    _Py_atomic_store(&Handlers[i].func, func);
 }
 
 

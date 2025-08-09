@@ -206,17 +206,17 @@ static inline void _PyObject_GC_TRACK(
 
     PyGC_Head *gc = _Py_AS_GC(op);
     _PyObject_ASSERT_FROM(op,
-                          (gc->_gc_prev & _PyGC_PREV_MASK_COLLECTING) == 0,
+                          ((uintptr_t)gc->_gc_prev & _PyGC_PREV_MASK_COLLECTING) == 0,
                           "object is in generation which is garbage collected",
                           filename, lineno, __func__);
 
     PyInterpreterState *interp = _PyInterpreterState_GET();
     PyGC_Head *generation0 = interp->gc.generation0;
-    PyGC_Head *last = (PyGC_Head*)(generation0->_gc_prev);
+    PyGC_Head *last = generation0->_gc_prev;
     _PyGCHead_SET_NEXT(last, gc);
     _PyGCHead_SET_PREV(gc, last);
     _PyGCHead_SET_NEXT(gc, generation0);
-    generation0->_gc_prev = (uintptr_t)gc;
+    generation0->_gc_prev = gc;
 }
 
 /* Tell the GC to stop tracking this object.
@@ -246,7 +246,7 @@ static inline void _PyObject_GC_UNTRACK(
     _PyGCHead_SET_NEXT(prev, next);
     _PyGCHead_SET_PREV(next, prev);
     gc->_gc_next = 0;
-    gc->_gc_prev &= _PyGC_PREV_MASK_FINALIZED;
+    gc->_gc_prev = zandptr(gc->_gc_prev, _PyGC_PREV_MASK_FINALIZED);
 }
 
 // Macros to accept any type for the parameter, and to automatically pass

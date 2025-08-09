@@ -217,7 +217,7 @@ _PyRuntimeState_GetFinalizingID(_PyRuntimeState *runtime) {
 
 static inline void
 _PyRuntimeState_SetFinalizing(_PyRuntimeState *runtime, PyThreadState *tstate) {
-    _Py_atomic_store_relaxed(&runtime->_finalizing, (uintptr_t)tstate);
+    _Py_atomic_store_relaxed(&runtime->_finalizing, tstate);
     if (tstate == NULL) {
         _Py_atomic_store_relaxed(&runtime->_finalizing_id, 0);
     }
@@ -225,7 +225,7 @@ _PyRuntimeState_SetFinalizing(_PyRuntimeState *runtime, PyThreadState *tstate) {
         // XXX Re-enable this assert once gh-109860 is fixed.
         //assert(tstate->thread_id == PyThread_get_thread_ident());
         _Py_atomic_store_relaxed(&runtime->_finalizing_id,
-                                 (uintptr_t)tstate->thread_id);
+                                 (void*)tstate->thread_id);
     }
 }
 

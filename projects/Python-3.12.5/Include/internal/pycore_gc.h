@@ -1,5 +1,8 @@
 #ifndef Py_INTERNAL_GC_H
 #define Py_INTERNAL_GC_H
+
+#include <stdfil.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -9,15 +12,16 @@ extern "C" {
 #endif
 
 /* GC information is stored BEFORE the object structure. */
-typedef struct {
+typedef struct PyGC_Head PyGC_Head;
+struct PyGC_Head {
     // Pointer to next object in the list.
     // 0 means the object is not tracked
-    uintptr_t _gc_next;
+    PyGC_Head* _gc_next;
 
     // Pointer to previous object in the list.
     // Lowest two bits are used for flags documented later.
-    uintptr_t _gc_prev;
-} PyGC_Head;
+    PyGC_Head* _gc_prev;
+};
 
 static inline PyGC_Head* _Py_AS_GC(PyObject *op) {
     return (_Py_CAST(PyGC_Head*, op) - 1);
@@ -56,29 +60,25 @@ static inline int _PyObject_GC_MAY_BE_TRACKED(PyObject *obj) {
 // Lowest bit of _gc_next is used for flags only in GC.
 // But it is always 0 for normal code.
 static inline PyGC_Head* _PyGCHead_NEXT(PyGC_Head *gc) {
-    uintptr_t next = gc->_gc_next;
-    return _Py_CAST(PyGC_Head*, next);
+    return gc->_gc_next;
 }
 static inline void _PyGCHead_SET_NEXT(PyGC_Head *gc, PyGC_Head *next) {
-    gc->_gc_next = _Py_CAST(uintptr_t, next);
+    gc->_gc_next = next;
 }
 
 // Lowest two bits of _gc_prev is used for _PyGC_PREV_MASK_* flags.
 static inline PyGC_Head* _PyGCHead_PREV(PyGC_Head *gc) {
-    uintptr_t prev = (gc->_gc_prev & _PyGC_PREV_MASK);
-    return _Py_CAST(PyGC_Head*, prev);
+    return zandptr(gc->_gc_prev, _PyGC_PREV_MASK);
 }
 static inline void _PyGCHead_SET_PREV(PyGC_Head *gc, PyGC_Head *prev) {
-    uintptr_t uprev = _Py_CAST(uintptr_t, prev);
-    assert((uprev & ~_PyGC_PREV_MASK) == 0);
-    gc->_gc_prev = ((gc->_gc_prev & ~_PyGC_PREV_MASK) | uprev);
+    gc->_gc_prev = zretagptr(prev, gc->_gc_prev, _PyGC_PREV_MASK);
 }
 
 static inline int _PyGCHead_FINALIZED(PyGC_Head *gc) {
-    return ((gc->_gc_prev & _PyGC_PREV_MASK_FINALIZED) != 0);
+    return (((uintptr_t)gc->_gc_prev & _PyGC_PREV_MASK_FINALIZED) != 0);
 }
 static inline void _PyGCHead_SET_FINALIZED(PyGC_Head *gc) {
-    gc->_gc_prev |= _PyGC_PREV_MASK_FINALIZED;
+    gc->_gc_prev = zorptr(gc->_gc_prev, _PyGC_PREV_MASK_FINALIZED);
 }
 
 static inline int _PyGC_FINALIZED(PyObject *op) {

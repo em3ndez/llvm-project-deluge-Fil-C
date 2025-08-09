@@ -7,6 +7,8 @@
 
 // Since this is a "meta-include" file, no #ifdef __cplusplus / extern "C" {
 
+#include <stdfil.h>
+
 // Include Python header files
 #include "patchlevel.h"
 #include "pyconfig.h"
