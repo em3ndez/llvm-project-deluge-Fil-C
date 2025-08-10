@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -26,10 +26,60 @@
 set -e
 set -x
 
-rm -rf musl zlib-1.3 openssl-3.2.0 curl-8.5.0 deluded-openssh-portable pcre-8.39
-rm -rf pizlonated-jpeg-6b pizlonated-bzip2 pizlonated-xz pizlonated-mg
-rm -rf pizlonated-sqlite pizlonated-cpython yolomusl usermusl ncurses-6.5-20240720
-rm -rf pizlonated-pcre2 pizlonated-zsh pizlonated-nghttp2 pizlonated-lua
+handle_git_with_branch()
+{
+    remote_path=$1
+    local_path=$2
+    branch=$3
+    rm -rf $local_path
+}
 
+handle_git()
+{
+    remote_path=$1
+    local_path=$2
+    rm -rf $local_path
+}
 
+handle_git_with_branch deluded-musl yolomusl yolomusl
+handle_git_with_branch deluded-musl usermusl usermusl
+
+handle_git deluded-zlib-1.3.git zlib-1.3
+handle_git deluded-openssl-3.2.0.git openssl-3.2.0
+handle_git deluded-curl-8.5.0.git curl-8.5.0
+handle_git deluded-openssh-portable.git deluded-openssh-portable
+handle_git pizlonated-pcre-8.39.git pcre-8.39
+handle_git pizlonated-jpeg-6b.git pizlonated-jpeg-6b
+handle_git pizlonated-bzip2.git pizlonated-bzip2
+handle_git pizlonated-xz.git pizlonated-xz
+handle_git pizlonated-mg.git pizlonated-mg
+handle_git pizlonated-sqlite.git pizlonated-sqlite
+handle_git pizlonated-cpython.git pizlonated-cpython
+handle_git pizlonated-cpython.git Python-3.12.5
+handle_git pizlonated-ncurses.git ncurses-6.5-20240720
+handle_git pizlonated-pcre2.git pizlonated-pcre2
+handle_git pizlonated-zsh.git pizlonated-zsh
+handle_git pizlonated-nghttp2.git pizlonated-nghttp2
+handle_git pizlonated-lua.git pizlonated-lua
+handle_git pizlonated-simdutf pizlonated-simdutf
+handle_git pizlonated-tcl pizlonated-tcl
+handle_git pizlonated-icu pizlonated-icu
+handle_git pizlonated-libedit pizlonated-libedit
+handle_git pizlonated-postgres pizlonated-postgres
+handle_git pizlonated-quickjs pizlonated-quickjs
+handle_git wg14_signals wg14_signals
+handle_git pizlonated-libuev pizlonated-libuev
+handle_git pizlonated-bzip3 pizlonated-bzip3
+handle_git pizlonated-simdjson pizlonated-simdjson
+handle_git pizlonated-ada pizlonated-ada
+handle_git pizlonated-zstd-1.5.6 pizlonated-zstd
+handle_git pizlonated-libffi libffi-3.4.6
+handle_git pizlonated-libexpat expat-2.7.1
+handle_git pizlonated-libxml2 libxml2-2.14.4
+handle_git pizlonated-dash dash-0.5.12
+handle_git pizlonated-pkgconf pkgconf-2.3.0
+handle_git pizlonated-toybox pizlonated-toybox
+handle_git pizlonated-libevent pizlonated-libevent
+handle_git pizlonated-tmux pizlonated-tmux
+rm -rf curl-8.9.1 lz4-1.10.0 openssh-9.8p1 openssl-3.3.1 sudo-1.9.15p5
 
