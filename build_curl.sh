@@ -30,7 +30,7 @@ set -x
 
 cd projects/curl-8.9.1
 extract_source
-CC=$PWD/../../../build/bin/clang ./configure --with-openssl \
+CC=$PWD/../../../build/bin/clang ./configure --with-openssl --with-nghttp2 \
     --prefix=$PWD/../../../pizfix
 $MAKE -j $NCPU
 $MAKE -j $NCPU install

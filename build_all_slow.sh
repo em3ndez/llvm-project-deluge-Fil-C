@@ -46,6 +46,7 @@ test ! -d projects/pizfix
 ./build_ncurses.sh
 ./build_libedit.sh
 ./build_openssl.sh
+./build_nghttp2.sh
 ./build_curl.sh
 ./build_openssh.sh
 ./build_mg.sh

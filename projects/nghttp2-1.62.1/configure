@@ -684,9 +684,37 @@ ENABLE_APP_FALSE
 ENABLE_APP_TRUE
 HAVE_LIBXML2_FALSE
 HAVE_LIBXML2_TRUE
+LIBXML2_LIBS
+LIBXML2_CFLAGS
+SYSTEMD_LIBS
+SYSTEMD_CFLAGS
+JANSSON_LIBS
+JANSSON_CFLAGS
+LIBEVENT_OPENSSL_LIBS
+LIBEVENT_OPENSSL_CFLAGS
+LIBBROTLIDEC_LIBS
+LIBBROTLIDEC_CFLAGS
+LIBBROTLIENC_LIBS
+LIBBROTLIENC_CFLAGS
 HAVE_LIBBPF_FALSE
 HAVE_LIBBPF_TRUE
 EXTRABPFCFLAGS
+LIBBPF_LIBS
+LIBBPF_CFLAGS
+LIBNGHTTP3_LIBS
+LIBNGHTTP3_CFLAGS
+LIBNGTCP2_CRYPTO_BORINGSSL_LIBS
+LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS
+LIBNGTCP2_CRYPTO_QUICTLS_LIBS
+LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS
+LIBNGTCP2_LIBS
+LIBNGTCP2_CFLAGS
+LIBCARES_LIBS
+LIBCARES_CFLAGS
+OPENSSL_LIBS
+OPENSSL_CFLAGS
+ZLIB_LIBS
+ZLIB_CFLAGS
 EXTRA_DEFS
 CXX1XCXXFLAGS
 HAVE_CXX20
@@ -699,6 +727,9 @@ PYTHON_PREFIX
 PYTHON_PLATFORM
 PYTHON_VERSION
 PYTHON
+PKG_CONFIG_LIBDIR
+PKG_CONFIG_PATH
+PKG_CONFIG
 CPP
 am__fastdepCXX_FALSE
 am__fastdepCXX_TRUE
@@ -903,7 +934,38 @@ CXXFLAGS
 CCC
 CXXCPP
 CPP
-PYTHON'
+PKG_CONFIG
+PKG_CONFIG_PATH
+PKG_CONFIG_LIBDIR
+PYTHON
+ZLIB_CFLAGS
+ZLIB_LIBS
+OPENSSL_CFLAGS
+OPENSSL_LIBS
+LIBCARES_CFLAGS
+LIBCARES_LIBS
+LIBNGTCP2_CFLAGS
+LIBNGTCP2_LIBS
+LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS
+LIBNGTCP2_CRYPTO_QUICTLS_LIBS
+LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS
+LIBNGTCP2_CRYPTO_BORINGSSL_LIBS
+LIBNGHTTP3_CFLAGS
+LIBNGHTTP3_LIBS
+LIBBPF_CFLAGS
+LIBBPF_LIBS
+LIBBROTLIENC_CFLAGS
+LIBBROTLIENC_LIBS
+LIBBROTLIDEC_CFLAGS
+LIBBROTLIDEC_LIBS
+LIBEVENT_OPENSSL_CFLAGS
+LIBEVENT_OPENSSL_LIBS
+JANSSON_CFLAGS
+JANSSON_LIBS
+SYSTEMD_CFLAGS
+SYSTEMD_LIBS
+LIBXML2_CFLAGS
+LIBXML2_LIBS'
 
 
 # Initialize some variables set by options.
@@ -1617,7 +1679,68 @@ Some influential environment variables:
   CXXFLAGS    C++ compiler flags
   CXXCPP      C++ preprocessor
   CPP         C preprocessor
+  PKG_CONFIG  path to pkg-config utility
+  PKG_CONFIG_PATH
+              directories to add to pkg-config's search path
+  PKG_CONFIG_LIBDIR
+              path overriding pkg-config's built-in search path
   PYTHON      the Python interpreter
+  ZLIB_CFLAGS C compiler flags for ZLIB, overriding pkg-config
+  ZLIB_LIBS   linker flags for ZLIB, overriding pkg-config
+  OPENSSL_CFLAGS
+              C compiler flags for OPENSSL, overriding pkg-config
+  OPENSSL_LIBS
+              linker flags for OPENSSL, overriding pkg-config
+  LIBCARES_CFLAGS
+              C compiler flags for LIBCARES, overriding pkg-config
+  LIBCARES_LIBS
+              linker flags for LIBCARES, overriding pkg-config
+  LIBNGTCP2_CFLAGS
+              C compiler flags for LIBNGTCP2, overriding pkg-config
+  LIBNGTCP2_LIBS
+              linker flags for LIBNGTCP2, overriding pkg-config
+  LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS
+              C compiler flags for LIBNGTCP2_CRYPTO_QUICTLS, overriding
+              pkg-config
+  LIBNGTCP2_CRYPTO_QUICTLS_LIBS
+              linker flags for LIBNGTCP2_CRYPTO_QUICTLS, overriding pkg-config
+  LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS
+              C compiler flags for LIBNGTCP2_CRYPTO_BORINGSSL, overriding
+              pkg-config
+  LIBNGTCP2_CRYPTO_BORINGSSL_LIBS
+              linker flags for LIBNGTCP2_CRYPTO_BORINGSSL, overriding
+              pkg-config
+  LIBNGHTTP3_CFLAGS
+              C compiler flags for LIBNGHTTP3, overriding pkg-config
+  LIBNGHTTP3_LIBS
+              linker flags for LIBNGHTTP3, overriding pkg-config
+  LIBBPF_CFLAGS
+              C compiler flags for LIBBPF, overriding pkg-config
+  LIBBPF_LIBS linker flags for LIBBPF, overriding pkg-config
+  LIBBROTLIENC_CFLAGS
+              C compiler flags for LIBBROTLIENC, overriding pkg-config
+  LIBBROTLIENC_LIBS
+              linker flags for LIBBROTLIENC, overriding pkg-config
+  LIBBROTLIDEC_CFLAGS
+              C compiler flags for LIBBROTLIDEC, overriding pkg-config
+  LIBBROTLIDEC_LIBS
+              linker flags for LIBBROTLIDEC, overriding pkg-config
+  LIBEVENT_OPENSSL_CFLAGS
+              C compiler flags for LIBEVENT_OPENSSL, overriding pkg-config
+  LIBEVENT_OPENSSL_LIBS
+              linker flags for LIBEVENT_OPENSSL, overriding pkg-config
+  JANSSON_CFLAGS
+              C compiler flags for JANSSON, overriding pkg-config
+  JANSSON_LIBS
+              linker flags for JANSSON, overriding pkg-config
+  SYSTEMD_CFLAGS
+              C compiler flags for SYSTEMD, overriding pkg-config
+  SYSTEMD_LIBS
+              linker flags for SYSTEMD, overriding pkg-config
+  LIBXML2_CFLAGS
+              C compiler flags for LIBXML2, overriding pkg-config
+  LIBXML2_LIBS
+              linker flags for LIBXML2, overriding pkg-config
 
 Use these variables to override the choices made by 'configure' or to help
 it to find libraries and programs with nonstandard names/locations.
@@ -19115,7 +19238,141 @@ fi
 
 
 
-PKG_PROG_PKG_CONFIG(0.20)
+
+
+
+
+
+
+
+if test "x$ac_cv_env_PKG_CONFIG_set" != "xset"; then
+	if test -n "$ac_tool_prefix"; then
+  # Extract the first word of "${ac_tool_prefix}pkg-config", so it can be a program name with args.
+set dummy ${ac_tool_prefix}pkg-config; ac_word=$2
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+printf %s "checking for $ac_word... " >&6; }
+if test ${ac_cv_path_PKG_CONFIG+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) case $PKG_CONFIG in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_PKG_CONFIG="$PKG_CONFIG" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  case $as_dir in #(((
+    '') as_dir=./ ;;
+    */) ;;
+    *) as_dir=$as_dir/ ;;
+  esac
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir$ac_word$ac_exec_ext"; then
+    ac_cv_path_PKG_CONFIG="$as_dir$ac_word$ac_exec_ext"
+    printf "%s\n" "$as_me:${as_lineno-$LINENO}: found $as_dir$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac ;;
+esac
+fi
+PKG_CONFIG=$ac_cv_path_PKG_CONFIG
+if test -n "$PKG_CONFIG"; then
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $PKG_CONFIG" >&5
+printf "%s\n" "$PKG_CONFIG" >&6; }
+else
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+fi
+
+
+fi
+if test -z "$ac_cv_path_PKG_CONFIG"; then
+  ac_pt_PKG_CONFIG=$PKG_CONFIG
+  # Extract the first word of "pkg-config", so it can be a program name with args.
+set dummy pkg-config; ac_word=$2
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+printf %s "checking for $ac_word... " >&6; }
+if test ${ac_cv_path_ac_pt_PKG_CONFIG+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) case $ac_pt_PKG_CONFIG in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_ac_pt_PKG_CONFIG="$ac_pt_PKG_CONFIG" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  case $as_dir in #(((
+    '') as_dir=./ ;;
+    */) ;;
+    *) as_dir=$as_dir/ ;;
+  esac
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir$ac_word$ac_exec_ext"; then
+    ac_cv_path_ac_pt_PKG_CONFIG="$as_dir$ac_word$ac_exec_ext"
+    printf "%s\n" "$as_me:${as_lineno-$LINENO}: found $as_dir$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  ;;
+esac ;;
+esac
+fi
+ac_pt_PKG_CONFIG=$ac_cv_path_ac_pt_PKG_CONFIG
+if test -n "$ac_pt_PKG_CONFIG"; then
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_pt_PKG_CONFIG" >&5
+printf "%s\n" "$ac_pt_PKG_CONFIG" >&6; }
+else
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+fi
+
+  if test "x$ac_pt_PKG_CONFIG" = x; then
+    PKG_CONFIG=""
+  else
+    case $cross_compiling:$ac_tool_warned in
+yes:)
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: using cross tools not prefixed with host triplet" >&5
+printf "%s\n" "$as_me: WARNING: using cross tools not prefixed with host triplet" >&2;}
+ac_tool_warned=yes ;;
+esac
+    PKG_CONFIG=$ac_pt_PKG_CONFIG
+  fi
+else
+  PKG_CONFIG="$ac_cv_path_PKG_CONFIG"
+fi
+
+fi
+if test -n "$PKG_CONFIG"; then
+	_pkg_min_version=0.20
+	{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking pkg-config is at least version $_pkg_min_version" >&5
+printf %s "checking pkg-config is at least version $_pkg_min_version... " >&6; }
+	if $PKG_CONFIG --atleast-pkgconfig-version $_pkg_min_version; then
+		{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+	else
+		{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+		PKG_CONFIG=""
+	fi
+fi
+if test -z "$PKG_CONFIG"; then
+	as_fn_error $? "pkg-config not found" "$LINENO" 5
+fi
 
 
 
@@ -22353,7 +22610,77 @@ esac
 # zlib
 have_zlib=no
 if test "x${request_zlib}" != "xno"; then
-  PKG_CHECK_MODULES(ZLIB, zlib >= 1.2.3, have_zlib=yes, have_zlib=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for zlib >= 1.2.3" >&5
+printf %s "checking for zlib >= 1.2.3... " >&6; }
+
+if test -n "$ZLIB_CFLAGS"; then
+    pkg_cv_ZLIB_CFLAGS="$ZLIB_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"zlib >= 1.2.3\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "zlib >= 1.2.3") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_ZLIB_CFLAGS=`$PKG_CONFIG --cflags "zlib >= 1.2.3" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$ZLIB_LIBS"; then
+    pkg_cv_ZLIB_LIBS="$ZLIB_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"zlib >= 1.2.3\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "zlib >= 1.2.3") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_ZLIB_LIBS=`$PKG_CONFIG --libs "zlib >= 1.2.3" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                ZLIB_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "zlib >= 1.2.3" 2>&1`
+        else
+                ZLIB_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "zlib >= 1.2.3" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$ZLIB_PKG_ERRORS" >&5
+
+        have_zlib=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_zlib=no
+else
+        ZLIB_CFLAGS=$pkg_cv_ZLIB_CFLAGS
+        ZLIB_LIBS=$pkg_cv_ZLIB_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_zlib=yes
+fi
 
   if test "x${have_zlib}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $ZLIB_PKG_ERRORS" >&5
@@ -22537,8 +22864,77 @@ fi
 # openssl (for src)
 have_openssl=no
 if test "x${request_openssl}" != "xno"; then
-  PKG_CHECK_MODULES(OPENSSL, openssl >= 1.1.1,
-                    have_openssl=yes, have_openssl=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for openssl >= 1.1.1" >&5
+printf %s "checking for openssl >= 1.1.1... " >&6; }
+
+if test -n "$OPENSSL_CFLAGS"; then
+    pkg_cv_OPENSSL_CFLAGS="$OPENSSL_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"openssl >= 1.1.1\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "openssl >= 1.1.1") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_OPENSSL_CFLAGS=`$PKG_CONFIG --cflags "openssl >= 1.1.1" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$OPENSSL_LIBS"; then
+    pkg_cv_OPENSSL_LIBS="$OPENSSL_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"openssl >= 1.1.1\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "openssl >= 1.1.1") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_OPENSSL_LIBS=`$PKG_CONFIG --libs "openssl >= 1.1.1" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                OPENSSL_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "openssl >= 1.1.1" 2>&1`
+        else
+                OPENSSL_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "openssl >= 1.1.1" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$OPENSSL_PKG_ERRORS" >&5
+
+        have_openssl=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_openssl=no
+else
+        OPENSSL_CFLAGS=$pkg_cv_OPENSSL_CFLAGS
+        OPENSSL_LIBS=$pkg_cv_OPENSSL_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_openssl=yes
+fi
   if test "x${have_openssl}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $OPENSSL_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $OPENSSL_PKG_ERRORS" >&6;}
@@ -22639,8 +23035,77 @@ fi
 # c-ares (for src)
 have_libcares=no
 if test "x${request_libcares}" != "xno"; then
-  PKG_CHECK_MODULES(LIBCARES, libcares >= 1.16.0, have_libcares=yes,
-                    have_libcares=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libcares >= 1.16.0" >&5
+printf %s "checking for libcares >= 1.16.0... " >&6; }
+
+if test -n "$LIBCARES_CFLAGS"; then
+    pkg_cv_LIBCARES_CFLAGS="$LIBCARES_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libcares >= 1.16.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libcares >= 1.16.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBCARES_CFLAGS=`$PKG_CONFIG --cflags "libcares >= 1.16.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBCARES_LIBS"; then
+    pkg_cv_LIBCARES_LIBS="$LIBCARES_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libcares >= 1.16.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libcares >= 1.16.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBCARES_LIBS=`$PKG_CONFIG --libs "libcares >= 1.16.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBCARES_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libcares >= 1.16.0" 2>&1`
+        else
+                LIBCARES_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libcares >= 1.16.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBCARES_PKG_ERRORS" >&5
+
+        have_libcares=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libcares=no
+else
+        LIBCARES_CFLAGS=$pkg_cv_LIBCARES_CFLAGS
+        LIBCARES_LIBS=$pkg_cv_LIBCARES_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libcares=yes
+fi
   if test "x${have_libcares}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBCARES_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBCARES_PKG_ERRORS" >&6;}
@@ -22655,8 +23120,77 @@ fi
 # ngtcp2 (for src)
 have_libngtcp2=no
 if test "x${request_libngtcp2}" != "xno"; then
-  PKG_CHECK_MODULES(LIBNGTCP2, libngtcp2 >= 1.4.0, have_libngtcp2=yes,
-                    have_libngtcp2=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libngtcp2 >= 1.4.0" >&5
+printf %s "checking for libngtcp2 >= 1.4.0... " >&6; }
+
+if test -n "$LIBNGTCP2_CFLAGS"; then
+    pkg_cv_LIBNGTCP2_CFLAGS="$LIBNGTCP2_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libngtcp2 >= 1.4.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libngtcp2 >= 1.4.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGTCP2_CFLAGS=`$PKG_CONFIG --cflags "libngtcp2 >= 1.4.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBNGTCP2_LIBS"; then
+    pkg_cv_LIBNGTCP2_LIBS="$LIBNGTCP2_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libngtcp2 >= 1.4.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libngtcp2 >= 1.4.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGTCP2_LIBS=`$PKG_CONFIG --libs "libngtcp2 >= 1.4.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBNGTCP2_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libngtcp2 >= 1.4.0" 2>&1`
+        else
+                LIBNGTCP2_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libngtcp2 >= 1.4.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBNGTCP2_PKG_ERRORS" >&5
+
+        have_libngtcp2=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libngtcp2=no
+else
+        LIBNGTCP2_CFLAGS=$pkg_cv_LIBNGTCP2_CFLAGS
+        LIBNGTCP2_LIBS=$pkg_cv_LIBNGTCP2_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libngtcp2=yes
+fi
   if test "x${have_libngtcp2}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBNGTCP2_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBNGTCP2_PKG_ERRORS" >&6;}
@@ -22673,10 +23207,77 @@ have_libngtcp2_crypto_quictls=no
 if test "x${have_ssl_provide_quic_data}" = "xyes" &&
    test "x${have_boringssl_quic}" != "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
-  PKG_CHECK_MODULES(LIBNGTCP2_CRYPTO_QUICTLS,
-                    libngtcp2_crypto_quictls >= 1.0.0,
-                    have_libngtcp2_crypto_quictls=yes,
-                    have_libngtcp2_crypto_quictls=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libngtcp2_crypto_quictls >= 1.0.0" >&5
+printf %s "checking for libngtcp2_crypto_quictls >= 1.0.0... " >&6; }
+
+if test -n "$LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS"; then
+    pkg_cv_LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS="$LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libngtcp2_crypto_quictls >= 1.0.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libngtcp2_crypto_quictls >= 1.0.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS=`$PKG_CONFIG --cflags "libngtcp2_crypto_quictls >= 1.0.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBNGTCP2_CRYPTO_QUICTLS_LIBS"; then
+    pkg_cv_LIBNGTCP2_CRYPTO_QUICTLS_LIBS="$LIBNGTCP2_CRYPTO_QUICTLS_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libngtcp2_crypto_quictls >= 1.0.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libngtcp2_crypto_quictls >= 1.0.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGTCP2_CRYPTO_QUICTLS_LIBS=`$PKG_CONFIG --libs "libngtcp2_crypto_quictls >= 1.0.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBNGTCP2_CRYPTO_QUICTLS_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libngtcp2_crypto_quictls >= 1.0.0" 2>&1`
+        else
+                LIBNGTCP2_CRYPTO_QUICTLS_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libngtcp2_crypto_quictls >= 1.0.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBNGTCP2_CRYPTO_QUICTLS_PKG_ERRORS" >&5
+
+        have_libngtcp2_crypto_quictls=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libngtcp2_crypto_quictls=no
+else
+        LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS=$pkg_cv_LIBNGTCP2_CRYPTO_QUICTLS_CFLAGS
+        LIBNGTCP2_CRYPTO_QUICTLS_LIBS=$pkg_cv_LIBNGTCP2_CRYPTO_QUICTLS_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libngtcp2_crypto_quictls=yes
+fi
   if test "x${have_libngtcp2_crypto_quictls}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBNGTCP2_CRYPTO_QUICTLS_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBNGTCP2_CRYPTO_QUICTLS_PKG_ERRORS" >&6;}
@@ -22698,10 +23299,77 @@ fi
 have_libngtcp2_crypto_boringssl=no
 if test "x${have_boringssl_quic}" = "xyes" &&
    test "x${request_libngtcp2}" != "xno"; then
-  PKG_CHECK_MODULES(LIBNGTCP2_CRYPTO_BORINGSSL,
-                    libngtcp2_crypto_boringssl >= 0.0.0,
-                    have_libngtcp2_crypto_boringssl=yes,
-                    have_libngtcp2_crypto_boringssl=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libngtcp2_crypto_boringssl >= 0.0.0" >&5
+printf %s "checking for libngtcp2_crypto_boringssl >= 0.0.0... " >&6; }
+
+if test -n "$LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS"; then
+    pkg_cv_LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS="$LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libngtcp2_crypto_boringssl >= 0.0.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libngtcp2_crypto_boringssl >= 0.0.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS=`$PKG_CONFIG --cflags "libngtcp2_crypto_boringssl >= 0.0.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBNGTCP2_CRYPTO_BORINGSSL_LIBS"; then
+    pkg_cv_LIBNGTCP2_CRYPTO_BORINGSSL_LIBS="$LIBNGTCP2_CRYPTO_BORINGSSL_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libngtcp2_crypto_boringssl >= 0.0.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libngtcp2_crypto_boringssl >= 0.0.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGTCP2_CRYPTO_BORINGSSL_LIBS=`$PKG_CONFIG --libs "libngtcp2_crypto_boringssl >= 0.0.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBNGTCP2_CRYPTO_BORINGSSL_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libngtcp2_crypto_boringssl >= 0.0.0" 2>&1`
+        else
+                LIBNGTCP2_CRYPTO_BORINGSSL_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libngtcp2_crypto_boringssl >= 0.0.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBNGTCP2_CRYPTO_BORINGSSL_PKG_ERRORS" >&5
+
+        have_libngtcp2_crypto_boringssl=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libngtcp2_crypto_boringssl=no
+else
+        LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS=$pkg_cv_LIBNGTCP2_CRYPTO_BORINGSSL_CFLAGS
+        LIBNGTCP2_CRYPTO_BORINGSSL_LIBS=$pkg_cv_LIBNGTCP2_CRYPTO_BORINGSSL_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libngtcp2_crypto_boringssl=yes
+fi
   if test "x${have_libngtcp2_crypto_boringssl}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBNGTCP2_CRYPTO_BORINGSSL_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBNGTCP2_CRYPTO_BORINGSSL_PKG_ERRORS" >&6;}
@@ -22721,8 +23389,77 @@ fi
 # nghttp3 (for src)
 have_libnghttp3=no
 if test "x${request_libnghttp3}" != "xno"; then
-  PKG_CHECK_MODULES(LIBNGHTTP3, libnghttp3 >= 1.1.0, have_libnghttp3=yes,
-                    have_libnghttp3=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libnghttp3 >= 1.1.0" >&5
+printf %s "checking for libnghttp3 >= 1.1.0... " >&6; }
+
+if test -n "$LIBNGHTTP3_CFLAGS"; then
+    pkg_cv_LIBNGHTTP3_CFLAGS="$LIBNGHTTP3_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libnghttp3 >= 1.1.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libnghttp3 >= 1.1.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGHTTP3_CFLAGS=`$PKG_CONFIG --cflags "libnghttp3 >= 1.1.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBNGHTTP3_LIBS"; then
+    pkg_cv_LIBNGHTTP3_LIBS="$LIBNGHTTP3_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libnghttp3 >= 1.1.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libnghttp3 >= 1.1.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBNGHTTP3_LIBS=`$PKG_CONFIG --libs "libnghttp3 >= 1.1.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBNGHTTP3_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libnghttp3 >= 1.1.0" 2>&1`
+        else
+                LIBNGHTTP3_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libnghttp3 >= 1.1.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBNGHTTP3_PKG_ERRORS" >&5
+
+        have_libnghttp3=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libnghttp3=no
+else
+        LIBNGHTTP3_CFLAGS=$pkg_cv_LIBNGHTTP3_CFLAGS
+        LIBNGHTTP3_LIBS=$pkg_cv_LIBNGHTTP3_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libnghttp3=yes
+fi
   if test "x${have_libnghttp3}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBNGHTTP3_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBNGHTTP3_PKG_ERRORS" >&6;}
@@ -22737,8 +23474,77 @@ fi
 # libbpf (for src)
 have_libbpf=no
 if test "x${request_libbpf}" != "xno"; then
-  PKG_CHECK_MODULES(LIBBPF, libbpf >= 0.7.0, have_libbpf=yes,
-                    have_libbpf=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libbpf >= 0.7.0" >&5
+printf %s "checking for libbpf >= 0.7.0... " >&6; }
+
+if test -n "$LIBBPF_CFLAGS"; then
+    pkg_cv_LIBBPF_CFLAGS="$LIBBPF_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbpf >= 0.7.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbpf >= 0.7.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBBPF_CFLAGS=`$PKG_CONFIG --cflags "libbpf >= 0.7.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBBPF_LIBS"; then
+    pkg_cv_LIBBPF_LIBS="$LIBBPF_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbpf >= 0.7.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbpf >= 0.7.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBBPF_LIBS=`$PKG_CONFIG --libs "libbpf >= 0.7.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBBPF_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libbpf >= 0.7.0" 2>&1`
+        else
+                LIBBPF_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libbpf >= 0.7.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBBPF_PKG_ERRORS" >&5
+
+        have_libbpf=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libbpf=no
+else
+        LIBBPF_CFLAGS=$pkg_cv_LIBBPF_CFLAGS
+        LIBBPF_LIBS=$pkg_cv_LIBBPF_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libbpf=yes
+fi
   if test "x${have_libbpf}" = "xyes"; then
 
 printf "%s\n" "#define HAVE_LIBBPF 1" >>confdefs.h
@@ -22810,9 +23616,77 @@ fi
 # libbrotlienc (for src)
 have_libbrotlienc=no
 if test "x${request_libbrotlienc}" != "xno"; then
-  PKG_CHECK_MODULES(LIBBROTLIENC, libbrotlienc >= 1.0.9,
-                    have_libbrotlienc=yes,
-                    have_libbrotlienc=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libbrotlienc >= 1.0.9" >&5
+printf %s "checking for libbrotlienc >= 1.0.9... " >&6; }
+
+if test -n "$LIBBROTLIENC_CFLAGS"; then
+    pkg_cv_LIBBROTLIENC_CFLAGS="$LIBBROTLIENC_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbrotlienc >= 1.0.9\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbrotlienc >= 1.0.9") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBBROTLIENC_CFLAGS=`$PKG_CONFIG --cflags "libbrotlienc >= 1.0.9" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBBROTLIENC_LIBS"; then
+    pkg_cv_LIBBROTLIENC_LIBS="$LIBBROTLIENC_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbrotlienc >= 1.0.9\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbrotlienc >= 1.0.9") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBBROTLIENC_LIBS=`$PKG_CONFIG --libs "libbrotlienc >= 1.0.9" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBBROTLIENC_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libbrotlienc >= 1.0.9" 2>&1`
+        else
+                LIBBROTLIENC_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libbrotlienc >= 1.0.9" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBBROTLIENC_PKG_ERRORS" >&5
+
+        have_libbrotlienc=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libbrotlienc=no
+else
+        LIBBROTLIENC_CFLAGS=$pkg_cv_LIBBROTLIENC_CFLAGS
+        LIBBROTLIENC_LIBS=$pkg_cv_LIBBROTLIENC_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libbrotlienc=yes
+fi
   if test "x${have_libbrotlienc}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBBROTLIENC_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBBROTLIENC_PKG_ERRORS" >&6;}
@@ -22827,9 +23701,77 @@ fi
 # libbrotlidec (for src)
 have_libbrotlidec=no
 if test "x${request_libbrotlidec}" != "xno"; then
-  PKG_CHECK_MODULES(LIBBROTLIDEC, libbrotlidec >= 1.0.9,
-                    have_libbrotlidec=yes,
-                    have_libbrotlidec=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libbrotlidec >= 1.0.9" >&5
+printf %s "checking for libbrotlidec >= 1.0.9... " >&6; }
+
+if test -n "$LIBBROTLIDEC_CFLAGS"; then
+    pkg_cv_LIBBROTLIDEC_CFLAGS="$LIBBROTLIDEC_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbrotlidec >= 1.0.9\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbrotlidec >= 1.0.9") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBBROTLIDEC_CFLAGS=`$PKG_CONFIG --cflags "libbrotlidec >= 1.0.9" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBBROTLIDEC_LIBS"; then
+    pkg_cv_LIBBROTLIDEC_LIBS="$LIBBROTLIDEC_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbrotlidec >= 1.0.9\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbrotlidec >= 1.0.9") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBBROTLIDEC_LIBS=`$PKG_CONFIG --libs "libbrotlidec >= 1.0.9" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBBROTLIDEC_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libbrotlidec >= 1.0.9" 2>&1`
+        else
+                LIBBROTLIDEC_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libbrotlidec >= 1.0.9" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBBROTLIDEC_PKG_ERRORS" >&5
+
+        have_libbrotlidec=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libbrotlidec=no
+else
+        LIBBROTLIDEC_CFLAGS=$pkg_cv_LIBBROTLIDEC_CFLAGS
+        LIBBROTLIDEC_LIBS=$pkg_cv_LIBBROTLIDEC_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libbrotlidec=yes
+fi
   if test "x${have_libbrotlidec}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBBROTLIDEC_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBBROTLIDEC_PKG_ERRORS" >&6;}
@@ -22855,8 +23797,77 @@ fi
 # 2.0.8 is required because we use evconnlistener_set_error_cb()
 have_libevent_openssl=no
 if test "x${request_libevent_openssl}" != "xno"; then
-  PKG_CHECK_MODULES(LIBEVENT_OPENSSL, libevent_openssl >= 2.0.8,
-                    have_libevent_openssl=yes, have_libevent_openssl=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libevent_openssl >= 2.0.8" >&5
+printf %s "checking for libevent_openssl >= 2.0.8... " >&6; }
+
+if test -n "$LIBEVENT_OPENSSL_CFLAGS"; then
+    pkg_cv_LIBEVENT_OPENSSL_CFLAGS="$LIBEVENT_OPENSSL_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libevent_openssl >= 2.0.8\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libevent_openssl >= 2.0.8") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBEVENT_OPENSSL_CFLAGS=`$PKG_CONFIG --cflags "libevent_openssl >= 2.0.8" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBEVENT_OPENSSL_LIBS"; then
+    pkg_cv_LIBEVENT_OPENSSL_LIBS="$LIBEVENT_OPENSSL_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libevent_openssl >= 2.0.8\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libevent_openssl >= 2.0.8") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBEVENT_OPENSSL_LIBS=`$PKG_CONFIG --libs "libevent_openssl >= 2.0.8" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBEVENT_OPENSSL_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libevent_openssl >= 2.0.8" 2>&1`
+        else
+                LIBEVENT_OPENSSL_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libevent_openssl >= 2.0.8" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBEVENT_OPENSSL_PKG_ERRORS" >&5
+
+        have_libevent_openssl=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libevent_openssl=no
+else
+        LIBEVENT_OPENSSL_CFLAGS=$pkg_cv_LIBEVENT_OPENSSL_CFLAGS
+        LIBEVENT_OPENSSL_LIBS=$pkg_cv_LIBEVENT_OPENSSL_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libevent_openssl=yes
+fi
   if test "x${have_libevent_openssl}" = "xno"; then
     { printf "%s\n" "$as_me:${as_lineno-$LINENO}: $LIBEVENT_OPENSSL_PKG_ERRORS" >&5
 printf "%s\n" "$as_me: $LIBEVENT_OPENSSL_PKG_ERRORS" >&6;}
@@ -22871,8 +23882,77 @@ fi
 # jansson (for src/nghttp, src/deflatehd and src/inflatehd)
 have_jansson=no
 if test "x${request_jansson}" != "xno"; then
-  PKG_CHECK_MODULES(JANSSON, jansson >= 2.5,
-                    have_jansson=yes, have_jansson=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for jansson >= 2.5" >&5
+printf %s "checking for jansson >= 2.5... " >&6; }
+
+if test -n "$JANSSON_CFLAGS"; then
+    pkg_cv_JANSSON_CFLAGS="$JANSSON_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"jansson >= 2.5\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "jansson >= 2.5") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_JANSSON_CFLAGS=`$PKG_CONFIG --cflags "jansson >= 2.5" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$JANSSON_LIBS"; then
+    pkg_cv_JANSSON_LIBS="$JANSSON_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"jansson >= 2.5\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "jansson >= 2.5") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_JANSSON_LIBS=`$PKG_CONFIG --libs "jansson >= 2.5" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                JANSSON_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "jansson >= 2.5" 2>&1`
+        else
+                JANSSON_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "jansson >= 2.5" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$JANSSON_PKG_ERRORS" >&5
+
+        have_jansson=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_jansson=no
+else
+        JANSSON_CFLAGS=$pkg_cv_JANSSON_CFLAGS
+        JANSSON_LIBS=$pkg_cv_JANSSON_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_jansson=yes
+fi
   if test "x${have_jansson}" = "xyes"; then
 
 printf "%s\n" "#define HAVE_JANSSON 1" >>confdefs.h
@@ -22891,8 +23971,77 @@ fi
 #  libsystemd (for src/nghttpx)
 have_libsystemd=no
 if test "x${request_systemd}" != "xno"; then
-  PKG_CHECK_MODULES(SYSTEMD, libsystemd >= 209, have_libsystemd=yes,
-                    have_libsystemd=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libsystemd >= 209" >&5
+printf %s "checking for libsystemd >= 209... " >&6; }
+
+if test -n "$SYSTEMD_CFLAGS"; then
+    pkg_cv_SYSTEMD_CFLAGS="$SYSTEMD_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libsystemd >= 209\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libsystemd >= 209") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_SYSTEMD_CFLAGS=`$PKG_CONFIG --cflags "libsystemd >= 209" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$SYSTEMD_LIBS"; then
+    pkg_cv_SYSTEMD_LIBS="$SYSTEMD_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libsystemd >= 209\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libsystemd >= 209") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_SYSTEMD_LIBS=`$PKG_CONFIG --libs "libsystemd >= 209" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                SYSTEMD_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libsystemd >= 209" 2>&1`
+        else
+                SYSTEMD_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libsystemd >= 209" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$SYSTEMD_PKG_ERRORS" >&5
+
+        have_libsystemd=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libsystemd=no
+else
+        SYSTEMD_CFLAGS=$pkg_cv_SYSTEMD_CFLAGS
+        SYSTEMD_LIBS=$pkg_cv_SYSTEMD_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libsystemd=yes
+fi
   if test "x${have_libsystemd}" = "xyes"; then
 
 printf "%s\n" "#define HAVE_LIBSYSTEMD 1" >>confdefs.h
@@ -22911,8 +24060,77 @@ fi
 # libxml2 (for src/nghttp)
 have_libxml2=no
 if test "x${request_libxml2}" != "xno"; then
-  PKG_CHECK_MODULES(LIBXML2, libxml-2.0 >= 2.6.26,
-                    have_libxml2=yes, have_libxml2=no)
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for libxml-2.0 >= 2.6.26" >&5
+printf %s "checking for libxml-2.0 >= 2.6.26... " >&6; }
+
+if test -n "$LIBXML2_CFLAGS"; then
+    pkg_cv_LIBXML2_CFLAGS="$LIBXML2_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libxml-2.0 >= 2.6.26\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libxml-2.0 >= 2.6.26") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBXML2_CFLAGS=`$PKG_CONFIG --cflags "libxml-2.0 >= 2.6.26" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBXML2_LIBS"; then
+    pkg_cv_LIBXML2_LIBS="$LIBXML2_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libxml-2.0 >= 2.6.26\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libxml-2.0 >= 2.6.26") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBXML2_LIBS=`$PKG_CONFIG --libs "libxml-2.0 >= 2.6.26" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBXML2_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libxml-2.0 >= 2.6.26" 2>&1`
+        else
+                LIBXML2_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libxml-2.0 >= 2.6.26" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBXML2_PKG_ERRORS" >&5
+
+        have_libxml2=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_libxml2=no
+else
+        LIBXML2_CFLAGS=$pkg_cv_LIBXML2_CFLAGS
+        LIBXML2_LIBS=$pkg_cv_LIBXML2_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_libxml2=yes
+fi
   if test "x${have_libxml2}" = "xyes"; then
 
 printf "%s\n" "#define HAVE_LIBXML2 1" >>confdefs.h

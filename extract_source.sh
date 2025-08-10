@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -21,46 +21,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
-case `uname -s` in
-    Linux)
-        MAKE=make
-        CCPREFIX=""
-        OS=linux
-        ;;
-    *)
-        echo "Unsupported OS"
-        exit 1
-        ;;
-esac
+set -e
+set -x
 
-case `uname -m` in
-    amd64|x86_64)
-        ARCH=x86_64
-        LLVMARCH=X86
-        ;;
-    arm64|aarch64)
-        ARCH=aarch64
-        LLVMARCH=AArch64
-        ;;
-    *)
-        echo "Unsupported arch"
-        exit 1
-        ;;
-esac
+test ! -e extracted-source
 
-case $OS in
-    linux)
-        NCPU=`nproc`
-        ;;
-    *)
-        NCPU=`sysctl -n hw.ncpu`
-        ;;
-esac
-
-extract_source()
-{
-    rm -rf extracted-source
-    git archive --format=tar HEAD --prefix=extracted-source/ | tar -xf -
-    git diff --relative HEAD . | (cd extracted-source && patch -p1)
-    cd extracted-source
-}
+git archive --format=tar HEAD --prefix=extracted-source/ | tar -xf -
+git diff --relative HEAD . | (cd extracted-source && patch -p1)
