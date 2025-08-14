@@ -10,10 +10,16 @@ int pthread_getschedparam(pthread_t t, int *restrict policy, struct sched_param 
 	if (!t->tid) {
 		r = ESRCH;
 	} else {
-		r = -__syscall(SYS_sched_getparam, t->tid, param);
-		if (!r) {
-			*policy = __syscall(SYS_sched_getscheduler, t->tid);
-		}
+                int saved_errno = errno;
+                if (!zsys_sched_getparam(t->tid, param)) {
+                        int policy_result = zsys_sched_getscheduler(t->tid);
+                        ZASSERT(policy_result >= 0);
+                        *policy = policy_result;
+                        r = 0;
+                } else {
+                        r = errno;
+                }
+                errno = saved_errno;
 	}
 	UNLOCK(t->killlock);
 	__restore_sigs(&set);

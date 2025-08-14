@@ -11300,22 +11300,45 @@ int filc_native_zsys_renameat2(filc_thread* my_thread, int oldfd, filc_ptr old_p
 #endif
 }
 
+#if !PAS_GLIBC
+struct statx {
+    uint32_t stx_mask;
+    uint32_t stx_blksize;
+    uint64_t stx_attributes;
+    uint32_t stx_nlink;
+    uint32_t stx_uid;
+    uint32_t stx_gid;
+    uint16_t stx_mode;
+    uint16_t pad1;
+    uint64_t stx_ino;
+    uint64_t stx_size;
+    uint64_t stx_blocks;
+    uint64_t stx_attributes_mask;
+    struct {
+        int64_t tv_sec;
+        uint32_t tv_nsec;
+        int32_t pad;
+    } stx_atime, stx_btime, stx_ctime, stx_mtime;
+    uint32_t stx_rdev_major;
+    uint32_t stx_rdev_minor;
+    uint32_t stx_dev_major;
+    uint32_t stx_dev_minor;
+    uint64_t spare[14];
+};
+#endif
+
 int filc_native_zsys_statx(filc_thread* my_thread, int dirfd, filc_ptr pathname_ptr, int flags,
                            unsigned mask, filc_ptr statxbuf_ptr)
 {
-#if PAS_GLIBC
     char* pathname = filc_check_and_get_tmp_str(my_thread, pathname_ptr);
     filc_check_write(statxbuf_ptr, sizeof(struct statx));
+#if PAS_GLIBC
     return FILC_SYSCALL(
         my_thread, statx(dirfd, pathname, flags, mask, (struct statx*)filc_ptr_ptr(statxbuf_ptr)));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(dirfd);
-    PAS_UNUSED_PARAM(pathname_ptr);
-    PAS_UNUSED_PARAM(flags);
-    PAS_UNUSED_PARAM(mask);
-    PAS_UNUSED_PARAM(statxbuf_ptr);
-    filc_internal_panic(NULL, "statx not implemented.");
+    return FILC_SYSCALL(
+        my_thread, syscall(SYS_statx, dirfd, pathname, flags, mask,
+                           (struct statx*)filc_ptr_ptr(statxbuf_ptr)));
 #endif
 }
 

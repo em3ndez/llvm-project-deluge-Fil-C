@@ -228,17 +228,17 @@ int main(int argc, char** argv)
     ZASSERT(fd > 2);
     ZASSERT(!fstat(fd, &st));
     ZASSERT(st.st_mode == (0600 | S_IFREG));
-    close(fd);
+    ZASSERT(!close(fd));
     ZASSERT(!chmod("filc/test-output/miscsyscall/readonly.txt", 0400));
     fd = openat(AT_FDCWD, "filc/test-output/miscsyscall/writeonly.txt", O_CREAT | O_WRONLY, 0600);
     ZASSERT(fd > 2);
     ZASSERT(!fstat(fd, &st));
     ZASSERT(st.st_mode == (0600 | S_IFREG));
-    close(fd);
+    ZASSERT(!close(fd));
     ZASSERT(!chmod("filc/test-output/miscsyscall/writeonly.txt", 0200));
     fd = open("filc/test-output/miscsyscall/execonly.txt", O_CREAT | O_WRONLY, 0600);
     ZASSERT(fd > 2);
-    close(fd);
+    ZASSERT(!syscall(SYS_close, fd));
     ZASSERT(!chmod("filc/test-output/miscsyscall/execonly.txt", 0100));
     ZASSERT(!access("filc/test-output/miscsyscall/readonly.txt", F_OK));
     ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", F_OK));
@@ -550,6 +550,8 @@ int main(int argc, char** argv)
     ZASSERT(fd > 2);
     ZASSERT(!read(fd, buf, 1));
     ZASSERT(!close(fd));
+
+    ZASSERT(sched_getcpu() >= 0);
 
     zprintf("No worries.\n");
     return 0;

@@ -547,6 +547,15 @@ long zsys_syscall(long n, ...)
         callee = zsys_settimeofday;
         break;
 
+    case 3 /* SYS_close */:
+        /* NOTE: Folks do this because they want a "nocancel" version of close(2). */
+        callee = zsys_close;
+        break;
+
+    case 332 /* SYS_statx */:
+        callee = zsys_statx;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:

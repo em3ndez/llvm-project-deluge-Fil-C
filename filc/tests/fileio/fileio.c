@@ -17,12 +17,39 @@
 #include <sys/file.h>
 #include <time.h>
 #include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/inotify.h>
 
 struct foo {
     char* a;
     int b;
     int c;
     int d;
+};
+
+struct my_statx {
+	uint32_t stx_mask;
+	uint32_t stx_blksize;
+	uint64_t stx_attributes;
+	uint32_t stx_nlink;
+	uint32_t stx_uid;
+	uint32_t stx_gid;
+	uint16_t stx_mode;
+	uint16_t pad1;
+	uint64_t stx_ino;
+	uint64_t stx_size;
+	uint64_t stx_blocks;
+	uint64_t stx_attributes_mask;
+	struct {
+		int64_t tv_sec;
+		uint32_t tv_nsec;
+		int32_t pad;
+	} stx_atime, stx_btime, stx_ctime, stx_mtime;
+	uint32_t stx_rdev_major;
+	uint32_t stx_rdev_minor;
+	uint32_t stx_dev_major;
+	uint32_t stx_dev_minor;
+	uint64_t spare[14];
 };
 
 int main(int argc, char** argv)
@@ -281,6 +308,9 @@ int main(int argc, char** argv)
     struct stat s;
     ZASSERT(!fstat(fd, &s));
     ZASSERT(s.st_size == 666 + 42);
+    struct my_statx sx;
+    ZASSERT(!syscall(SYS_statx, fd, "", AT_EMPTY_PATH, 0xfff, &sx));
+    ZASSERT(sx.stx_size == 666 + 42);
 
     struct timeval tv[2];
     ZASSERT(!gettimeofday(tv, NULL));
@@ -321,6 +351,43 @@ int main(int argc, char** argv)
     ZASSERT(read(fd, buf, 5) == 5);
     ZASSERT(!memcmp(buf, "hello", 5));
     ZASSERT(!close(fd));
+
+    // Test inotify
+    int ifd = inotify_init1(IN_CLOEXEC);
+    ZASSERT(ifd > 2);
+    
+    // Create a test file to watch
+    fd = open("filc/test-output/fileio/inotifytest.txt", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    ZASSERT(fd > 2);
+    ZASSERT(write(fd, "initial", 7) == 7);
+    ZASSERT(!close(fd));
+    
+    // Add watch for modifications
+    int wd = inotify_add_watch(ifd, "filc/test-output/fileio/inotifytest.txt", IN_MODIFY | IN_CLOSE_WRITE);
+    ZASSERT(wd >= 0);
+    
+    // Modify the file
+    fd = open("filc/test-output/fileio/inotifytest.txt", O_WRONLY | O_APPEND);
+    ZASSERT(fd > 2);
+    ZASSERT(write(fd, " modified", 9) == 9);
+    ZASSERT(!close(fd));
+    
+    // Read the inotify events
+    char event_buf[sizeof(struct inotify_event) + 256];
+    ssize_t len = read(ifd, event_buf, sizeof(event_buf));
+    ZASSERT(len > 0);
+    
+    // Check we got at least one event
+    struct inotify_event *event = (struct inotify_event *)event_buf;
+    ZASSERT(event->wd == wd);
+    ZASSERT(event->mask & (IN_MODIFY | IN_CLOSE_WRITE));
+    
+    // Remove the watch
+    ZASSERT(!inotify_rm_watch(ifd, wd));
+    
+    // Clean up
+    ZASSERT(!close(ifd));
+    ZASSERT(!unlink("filc/test-output/fileio/inotifytest.txt"));
 
     return 0;
 }
