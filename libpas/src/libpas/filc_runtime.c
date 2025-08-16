@@ -7903,7 +7903,10 @@ int filc_native_zsys_execve(filc_thread* my_thread, filc_ptr pathname_ptr, filc_
 {
     char* pathname = filc_check_and_get_tmp_str(my_thread, pathname_ptr);
     char** argv = filc_check_and_get_null_terminated_string_array(my_thread, argv_ptr);
-    char** envp = filc_check_and_get_null_terminated_string_array(my_thread, envp_ptr);
+    char** envp =
+        filc_ptr_ptr(envp_ptr)
+        ? filc_check_and_get_null_terminated_string_array(my_thread, envp_ptr)
+        : NULL;
     filc_exit(my_thread);
     int result = execve(pathname, argv, envp);
     int my_errno = errno;

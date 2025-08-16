@@ -39,7 +39,7 @@ struct archive_rb_node {
 	 * We put the two flags in the low two bits since we know that
 	 * rb_node will have an alignment of 4 or 8 bytes.
 	 */
-	uintptr_t rb_info;
+	struct archive_rb_node *rb_info;
 };
 
 #define	ARCHIVE_RB_DIR_LEFT		0

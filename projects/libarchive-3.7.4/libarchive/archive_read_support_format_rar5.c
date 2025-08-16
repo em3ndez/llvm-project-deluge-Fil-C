@@ -181,7 +181,7 @@ struct cdeque {
 	uint16_t end_pos;
 	uint16_t cap_mask;
 	uint16_t size;
-	size_t* arr;
+	void** arr;
 };
 
 struct decode_table {
@@ -424,7 +424,7 @@ static int cdeque_push_back(struct cdeque* d, void* item) {
 	if(d->size == d->cap_mask + 1)
 		return CDE_OUT_OF_BOUNDS;
 
-	d->arr[d->end_pos] = (size_t) item;
+	d->arr[d->end_pos] = item;
 	d->end_pos = (d->end_pos + 1) & d->cap_mask;
 	d->size++;
 
