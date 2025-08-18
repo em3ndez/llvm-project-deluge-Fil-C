@@ -336,6 +336,14 @@ static pas_allocation_result try_allocate_large_in_transaction(
         return pas_allocation_result_create_failure();
     }
 
+    /* NOTE: The verse_heap_set_is_marked() call below is really enough, except that:
+     
+       - It breaks the FUGC's sweep verifier, which demands that mark bit pages are all zero after
+         sweep.
+    
+       - It makes debugging confusing to have mark bit pages with junk in them. */
+    pas_zero_memory((void*)chunk_result.begin, VERSE_HEAP_PAGE_SIZE);
+
     result = chunk_result;
     result.begin += VERSE_HEAP_PAGE_SIZE;
     result.begin = pas_round_up_to_power_of_2(result.begin, alignment);
