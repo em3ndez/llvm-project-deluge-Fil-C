@@ -4515,7 +4515,7 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop(
         PAS_TESTING_ASSERT(pas_is_aligned(current_dst_start_offset, FILC_WORD_SIZE));
         PAS_TESTING_ASSERT(pas_is_aligned(current_dst_end_offset, FILC_WORD_SIZE));
         PAS_TESTING_ASSERT(pas_is_aligned(current_src_start_offset, FILC_WORD_SIZE));
-        if (!has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)) {
+        if (has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)) {
             bool do_barrier = true;
             memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
                                   current_dst_start_offset, current_src_start_offset,

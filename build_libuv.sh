@@ -32,5 +32,12 @@ cd projects/libuv-v1.48.0
 extract_source
 CC=$PWD/../../../build/bin/clang ./configure --prefix=$PWD/../../../pizfix
 make -j $NCPU
-make -j $NCPU check
+
+# I'd love to use this test suite, however it's not robust against concurrent invocation. I consider
+# it a P1 that you should be able to run build_all.sh multiple times in parallel on the same box, so
+# long as each build_all.sh invocation is on a different checkout. All other test suites in Fil-C
+# allow this. But libuv's doesn't. For example, the udp_send_unreachable test fails with ADDRINUSE if
+# you run the test in parallel with itself.
+# make -j $NCPU check
+
 make -j $NCPU install
