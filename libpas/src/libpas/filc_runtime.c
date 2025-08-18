@@ -2514,6 +2514,11 @@ static PAS_ALWAYS_INLINE filc_object* initialize_object_header(
 static PAS_NEVER_INLINE filc_object* finish_allocate_large(
     filc_thread* my_thread, filc_object* result, size_t size)
 {
+    static const bool verbose = false;
+
+    if (verbose)
+        pas_log("allocated large %p\n", result);
+    
     filc_exit_with_allocation_root(my_thread, filc_object_mark_base(result));
     
     pas_zero_memory(filc_object_lower(result), size);
@@ -2978,12 +2983,21 @@ void filc_exact_ptr_table_destruct(filc_exact_ptr_table* ptr_table)
 uintptr_t filc_exact_ptr_table_encode(filc_thread* my_thread, filc_exact_ptr_table* ptr_table,
                                       filc_ptr ptr)
 {
+    static const bool verbose = false;
+    
     if (!filc_ptr_object(ptr)
         || (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
         return (uintptr_t)filc_ptr_ptr(ptr);
-    
+
     pas_allocation_config allocation_config;
     bmalloc_initialize_allocation_config(&allocation_config);
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) encoding ",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength));
+        filc_ptr_dump(ptr, pas_log_stream);
+        pas_log("\n");
+    }
 
     filc_uintptr_ptr_hash_map_entry decode_entry;
     decode_entry.key = (uintptr_t)filc_ptr_ptr(ptr);
@@ -3014,13 +3028,14 @@ filc_ptr filc_exact_ptr_table_decode_with_manual_tracking(filc_thread* my_thread
     case filc_strong_ref_strength:
         if (!(filc_object_get_flags(filc_ptr_object(result.value)) & FILC_OBJECT_FLAG_FREE))
             return result.value;
-        break;
+        return filc_ptr_forge_invalid((void*)encoded_ptr);
     case filc_weak_ref_strength:
         if (filc_weak_load_barrier(my_thread, result.value))
             return result.value;
-        break;
+        return filc_ptr_forge_invalid((void*)encoded_ptr);
     }
-    return filc_ptr_forge_invalid((void*)encoded_ptr);
+    PAS_ASSERT(!"Should not be reached");
+    return filc_ptr_forge_null();
 }
 
 filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_table* ptr_table,
@@ -3052,8 +3067,18 @@ void filc_exact_ptr_table_census(filc_exact_ptr_table* ptr_table)
         filc_uintptr_ptr_hash_map_entry entry = ptr_table->decode_map.table[index];
         if (filc_uintptr_ptr_hash_map_entry_is_empty_or_deleted(entry))
             continue;
+        if (verbose) {
+            pas_log("exact ptr table %p considering ", ptr_table);
+            filc_ptr_dump(entry.value, pas_log_stream);
+            pas_log("\n");
+        }
         if (!filc_object_is_live_for_weak(filc_ptr_object(entry.value), FUGC_MARKER))
             continue;
+        if (verbose) {
+            pas_log("exact ptr table %p keeping ", ptr_table);
+            filc_ptr_dump(entry.value, pas_log_stream);
+            pas_log("\n");
+        }
         filc_uintptr_ptr_hash_map_add_new(&new_decode_map, entry, NULL, &allocation_config);
     }
     filc_uintptr_ptr_hash_map_destruct(&ptr_table->decode_map, &allocation_config);
@@ -4929,11 +4954,11 @@ PAS_ALWAYS_INLINE static void memmove_size_specialized(
     static const bool verbose = false;
 
     if (verbose) {
-        pas_log("Doing memmove to %s from %s with count %zu\n",
-                filc_ptr_to_new_string(dst),
-                filc_ptr_to_new_string(src),
-                count);
-        filc_thread_dump_stack(my_thread, pas_log_stream);
+        pas_log("Doing memmove to ");
+        filc_ptr_dump(dst, pas_log_stream);
+        pas_log(" from ");
+        filc_ptr_dump(src, pas_log_stream);
+        pas_log(" with count %zu\n", count);
     }
 
     PAS_TESTING_ASSERT(count);

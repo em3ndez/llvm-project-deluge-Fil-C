@@ -758,13 +758,20 @@ static bool verify_is_marked(void* mark_base)
     return !!pas_ptr_hash_set_find(&verify_set, mark_base);
 }
 
-static bool verify_set_is_marked(void* mark_base)
+static bool verify_set_is_marked_with_object(void* mark_base, filc_object* target_object)
 {
     if (!verse_heap_is_marked(mark_base)) {
-        pas_log("[%d] fugc: verify: found unmarked %p in %s",
-                pas_getpid(), mark_base, source_explanation);
-        if (source_object)
-            pas_log(" %p", source_object);
+        pas_log("[%d] fugc: verify: found unmarked %p ", pas_getpid(), mark_base);
+        if (target_object) {
+            pas_log("(");
+            filc_object_dump(target_object, pas_log_stream);
+            pas_log(") ");
+        }
+        pas_log("in %s", source_explanation);
+        if (source_object) {
+            pas_log(" ");
+            filc_object_dump(source_object, pas_log_stream);
+        }
         if (source_thread)
             pas_log(" %p", source_thread);
         pas_log("\n");
@@ -776,6 +783,11 @@ static bool verify_set_is_marked(void* mark_base)
     return pas_ptr_hash_set_set(&verify_set, mark_base, NULL, &allocation_config);
 }
 
+static bool verify_set_is_marked(void* mark_base)
+{
+    return verify_set_is_marked_with_object(mark_base, NULL);
+}
+
 static bool verify_mark(filc_mark_stack* mark_stack, filc_object* object)
 {
     if (!object)
@@ -785,7 +797,7 @@ static bool verify_mark(filc_mark_stack* mark_stack, filc_object* object)
     if ((flags & FILC_OBJECT_FLAG_GLOBAL))
         return false;
     void* mark_base = filc_object_mark_base_with_flags(object, flags);
-    if (!verify_set_is_marked(mark_base))
+    if (!verify_set_is_marked_with_object(mark_base, object))
         return false;
     filc_mark_stack_push(mark_stack, object);
     return true;

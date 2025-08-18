@@ -1061,6 +1061,8 @@ typedef enum filc_ref_strength filc_ref_strength;
 struct filc_exact_ptr_table {
     pas_lock lock;
     filc_ref_strength ref_strength;
+    /* FIXME: The fact that this stores uintptr's at all is silly. The entire entry in this table
+       could just be the filc_ptr, and we use its raw ptr as the key. */
     filc_uintptr_ptr_hash_map decode_map;
 };
 
@@ -3681,6 +3683,18 @@ static PAS_ALWAYS_INLINE void filc_ptr_table_array_mark_outgoing_ptrs(filc_ptr_t
         marker.mark(stack, filc_ptr_object(
                         filc_flight_ptr_load_with_manual_tracking(array->ptrs + index)));
     }
+}
+
+static inline const char* filc_ref_strength_get_string(filc_ref_strength ref_strength)
+{
+    switch (ref_strength) {
+    case filc_weak_ref_strength:
+        return "weak";
+    case filc_strong_ref_strength:
+        return "strong";
+    }
+    PAS_ASSERT(!"Should not be reached");
+    return NULL;
 }
 
 PAS_API filc_exact_ptr_table* filc_exact_ptr_table_create(filc_thread* my_thread,
