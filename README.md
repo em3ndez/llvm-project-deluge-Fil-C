@@ -12,16 +12,14 @@ the capability. Fil-C has no `unsafe` escape hatch of any kind.
 
 The compiler (clang + LLVM) is covered by LLVM-LICENSE.txt. The runtime is
 covered by PAS-LICENSE.txt (see libpas/LICENSE.txt in the source distribution).
-The libc is covered by MUSL-LICENSE.txt (see yolomusl/COPYRIGHT and
-usermusl/COPYRIGHT in the source distribution). The libc++/libc++abi are
-covered by LLVM-LICENSE.txt.
+The libc is covered by MUSL-LICENSE.txt (see projects/yolomusl/COPYRIGHT and
+projects/usermusl/COPYRIGHT in the source distribution). The libc++/libc++abi
+are covered by LLVM-LICENSE.txt.
 
-You can fetch the compiler, runtime, libc++/libc++abi source from
-https://github.com/pizlonator/llvm-project-deluge.
-
-You can fetch musl source from https://github.com/pizlonator/deluded-musl
-(there are two of them - the yolomusl branch for the libc that sits below the
-runtime and the usermusl branch for the libc that sits above the runtime).
+You can fetch the compiler, runtime, libc++/libc++abi, and libc (musl) source
+from https://github.com/pizlonator/llvm-project-deluge. The source distribution
+also includes many programs that have been ported to Fil-C in the projects/
+directory, and they have a variety of licenses.
 
 ## Requirements
 
@@ -40,7 +38,6 @@ If you downloaded Fil-C binaries, run:
 
 If you downloaded Fil-C source, run:
 
-    ./setup_gits.sh
     ./build_all.sh
 
 Then you'll be able to use Fil-C from within this directory.

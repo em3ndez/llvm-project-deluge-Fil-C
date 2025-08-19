@@ -125,7 +125,6 @@ Fil-C currently only works on Linux/X86_64. Upon getting Fil-C from
 https://github.com/pizlonator/llvm-project-deluge.git, and making sure you're on the `deluge` branch,
 simply do:
 
-    ./setup_gits.sh
     ./build_all.sh
 
 This will build memory-safe musl, zlib, OpenSSL, curl, OpenSSH, pcre, and a bunch of other programs.
