@@ -27,9 +27,10 @@ Fil-C is special because:
   of memory it may access, and how it may access it) rather than tag based
   (where pointer accesses are allowed if they hit valid memory).
 
-- From a language user standpoint, Fil-C is just C and C++. It's more likely
-  than not that your favorite C or C++ program or library compiles in Fil-C
-  with zero changes.
+- From a language user standpoint, Fil-C is just C and C++ with GCC/clang
+  extensions. It's more likely than not that your favorite C or C++ program or
+  library compiles in Fil-C with zero changes. The Fil-C compiler is based on
+  clang 20.1.8, so it supports C17 and C++20.
 
 ## License
 
