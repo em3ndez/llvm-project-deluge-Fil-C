@@ -28,7 +28,7 @@
 set -e
 set -x
 
-build_name=filc-0.670-pre-$OS-$ARCH
+build_name=filc-0.670-$OS-$ARCH
 
 rm -rf $build_name
 
@@ -36,21 +36,21 @@ mkdir $build_name
 cp README.md $build_name/
 cp LLVM-LICENSE.txt $build_name/
 cp libpas/LICENSE.txt $build_name/PAS-LICENSE.txt
-cp usermusl/COPYRIGHT $build_name/MUSL-LICENSE.txt
+cp projects/usermusl/COPYRIGHT $build_name/MUSL-LICENSE.txt
 
 mkdir -p $build_name/build/bin
-cp build/bin/clang-17 $build_name/build/bin/
-strip $build_name/build/bin/clang-17
+cp build/bin/clang-20 $build_name/build/bin/
+strip $build_name/build/bin/clang-20
 (cd $build_name/build/bin/ &&
-     ln -s clang-17 clang &&
-     ln -s clang-17 clang++)
+     ln -s clang-20 clang &&
+     ln -s clang-20 clang++)
 
 mkdir -p $build_name/build/include/
 cp -R build/include/c++ $build_name/build/include/
 mkdir -p $build_name/build/include/x86_64-unknown-linux-gnu/
 cp -R build/include/x86_64-unknown-linux-gnu/c++ $build_name/build/include/x86_64-unknown-linux-gnu/
-mkdir -p $build_name/build/lib/clang/17/
-cp -R build/lib/clang/17/include $build_name/build/lib/clang/17/
+mkdir -p $build_name/build/lib/clang/20/
+cp -R build/lib/clang/20/include $build_name/build/lib/clang/20/
 
 cp -R pizfix $build_name/
 rm -f $build_name/pizfix/etc/moduli
