@@ -2990,19 +2990,19 @@ uintptr_t filc_exact_ptr_table_encode(filc_thread* my_thread, filc_exact_ptr_tab
 {
     static const bool verbose = false;
     
-    if (!filc_ptr_object(ptr)
-        || (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
-        return (uintptr_t)filc_ptr_ptr(ptr);
-
-    pas_allocation_config allocation_config;
-    bmalloc_initialize_allocation_config(&allocation_config);
-
     if (verbose) {
         pas_log("exact ptr table %p (%s) encoding ",
                 ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength));
         filc_ptr_dump(ptr, pas_log_stream);
         pas_log("\n");
     }
+
+    if (!filc_ptr_object(ptr)
+        || (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
+        return (uintptr_t)filc_ptr_ptr(ptr);
+
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
 
     filc_uintptr_ptr_hash_map_entry decode_entry;
     decode_entry.key = (uintptr_t)filc_ptr_ptr(ptr);
@@ -3019,28 +3019,53 @@ filc_ptr filc_exact_ptr_table_decode_with_manual_tracking(filc_thread* my_thread
                                                           filc_exact_ptr_table* ptr_table,
                                                           uintptr_t encoded_ptr)
 {
+    static const bool verbose = false;
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) decoding %p\n",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength), (void*)encoded_ptr);
+    }
+    
     if (!ptr_table->decode_map.key_count)
         return filc_ptr_forge_invalid((void*)encoded_ptr);
     pas_lock_lock(&ptr_table->lock);
     filc_uintptr_ptr_hash_map_entry result =
         filc_uintptr_ptr_hash_map_get(&ptr_table->decode_map, encoded_ptr);
     pas_lock_unlock(&ptr_table->lock);
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) decoding %p, tentatively got ",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength), (void*)encoded_ptr);
+        filc_ptr_dump(result.value, pas_log_stream);
+        pas_log("\n");
+    }
+    
     if (filc_ptr_is_totally_null(result.value))
         return filc_ptr_forge_invalid((void*)encoded_ptr);
     PAS_ASSERT((uintptr_t)filc_ptr_ptr(result.value) == encoded_ptr);
     PAS_ASSERT(filc_ptr_object(result.value));
     switch(ptr_table->ref_strength) {
     case filc_strong_ref_strength:
-        if (!(filc_object_get_flags(filc_ptr_object(result.value)) & FILC_OBJECT_FLAG_FREE))
-            return result.value;
-        return filc_ptr_forge_invalid((void*)encoded_ptr);
+        if ((filc_object_get_flags(filc_ptr_object(result.value)) & FILC_OBJECT_FLAG_FREE))
+            result.value = filc_ptr_forge_invalid((void*)encoded_ptr);
+        break;
     case filc_weak_ref_strength:
-        if (filc_weak_load_barrier(my_thread, result.value))
-            return result.value;
-        return filc_ptr_forge_invalid((void*)encoded_ptr);
+        if (!filc_weak_load_barrier(my_thread, result.value))
+            result.value = filc_ptr_forge_invalid((void*)encoded_ptr);
+        break;
+    default:
+        PAS_ASSERT(!"Should not be reached");
+        break;
     }
-    PAS_ASSERT(!"Should not be reached");
-    return filc_ptr_forge_null();
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) decoding %p, returning ",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength), (void*)encoded_ptr);
+        filc_ptr_dump(result.value, pas_log_stream);
+        pas_log("\n");
+    }
+
+    return result.value;
 }
 
 filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_table* ptr_table,
