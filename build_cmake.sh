@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -23,56 +23,30 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
+. libpas/common.sh
+
 set -e
 set -x
 
-test ! -d projects/pizfix
+cd projects/cmake-3.30.2
+extract_source
+export MAKEFLAGS="-j $NCPU"
+PATH=$PWD/../../../pizfix/bin:$PATH ./bootstrap \
+    --prefix=$PWD/../../../pizfix \
+    --system-libs \
+    --bootstrap-system-libuv \
+    --mandir=/share/man  \
+    --no-system-jsoncpp  \
+    --no-system-cppdap   \
+    --no-system-librhash \
+    --docdir=/share/doc/cmake-3.30.2 \
+    CC=$PWD/../../../build/bin/clang \
+    CXX=$PWD/../../../build/bin/clang++ \
+    CFLAGS="-O2 -g" \
+    CXXFLAGS="-O2 -g"
 
-./build_ffi.sh
-./build_pkgconf.sh
-./build_dash.sh
-./build_wg14_signals.sh
-./build_libuev.sh
-./build_icu.sh
-./build_zlib.sh
-./build_bzip2.sh
-./build_bzip3.sh
-./build_xz.sh
-./build_zstd.sh
-./build_expat.sh
-./build_pcre.sh      # Hilariously, pcre + pcre2 would like to depend on libedit, but libedit depends
-./build_pcre2.sh     # on ncurses, and ncurses depends on pcre2. Luckily, only pcretest wants libedit.
-./build_jpeg-6b.sh
-./build_ncurses.sh
-./build_libedit.sh
-./build_openssl.sh
-./build_nghttp2.sh
-./build_curl.sh
-./build_openssh.sh
-./build_mg.sh
-./build_tcl.sh
-./build_sqlite.sh
-./build_cpython.sh
-./build_zsh.sh
-./build_lua.sh
-./build_simdutf.sh
-./build_quickjs.sh
+# This is a terrible hack indeed
+find . -name "*.make" -type f -exec sed -i 's/-isystem \/usr\/include//g' {} +
 
-# Disable these because:
-# - We only need them for test coverage.
-# - They haven't ever caught a regression.
-# - To run the tests these builds have to download things from the intertubes, and I've seen the
-#   downloads fail flakily, causing the whole build to fail.
-# - They take forever to build.
-#./build_simdjson.sh
-#./build_ada.sh
-
-./build_toybox.sh
-./build_libevent.sh
-./build_tmux.sh
-./build_libuv.sh
-./build_libarchive.sh
-./build_cmake.sh
-./build_benchmarks.sh
-
-test ! -d projects/pizfix
+make
+make install

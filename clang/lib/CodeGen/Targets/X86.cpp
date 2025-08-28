@@ -2914,8 +2914,8 @@ void X86_64ABIInfo::computeInfo(CGFunctionInfo &FI) const {
   bool IsRegCall = CallingConv == llvm::CallingConv::X86_RegCall;
 
   // Keep track of the number of assigned registers.
-  unsigned FreeIntRegs = IsRegCall ? 11 : 6;
-  unsigned FreeSSERegs = IsRegCall ? 16 : 8;
+  unsigned FreeIntRegs = UINT_MAX;
+  unsigned FreeSSERegs = UINT_MAX;
   unsigned NeededInt = 0, NeededSSE = 0, MaxVectorWidth = 0;
 
   if (!::classifyReturnType(getCXXABI(), FI, *this)) {
