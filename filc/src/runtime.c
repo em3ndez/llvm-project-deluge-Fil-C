@@ -560,6 +560,10 @@ long zsys_syscall(long n, ...)
         callee = zsys_copy_file_range;
         break;
 
+    case 316 /* SYS_renameat2 */:
+        callee = zsys_renameat2;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:

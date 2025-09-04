@@ -11467,18 +11467,12 @@ ssize_t filc_native_zsys_copy_file_range(filc_thread* my_thread, int fd_in, filc
 int filc_native_zsys_renameat2(filc_thread* my_thread, int oldfd, filc_ptr old_ptr, int newfd,
                                filc_ptr new_ptr, unsigned flags)
 {
-#if PAS_GLIBC
     char* old = filc_check_and_get_tmp_str(my_thread, old_ptr);
     char* new = filc_check_and_get_tmp_str(my_thread, new_ptr);
+#if PAS_GLIBC
     return FILC_SYSCALL(my_thread, renameat2(oldfd, old, newfd, new, flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(oldfd);
-    PAS_UNUSED_PARAM(old_ptr);
-    PAS_UNUSED_PARAM(newfd);
-    PAS_UNUSED_PARAM(new_ptr);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "renameat2 not implemented.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_renameat2, oldfd, old, newfd, new, flags));
 #endif
 }
 
