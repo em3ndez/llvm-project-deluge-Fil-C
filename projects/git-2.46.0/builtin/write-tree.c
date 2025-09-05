@@ -33,7 +33,7 @@ int cmd_write_tree(int argc, const char **argv, const char *cmd_prefix)
 		{ OPTION_BIT, 0, "ignore-cache-tree", &flags, NULL,
 		  N_("only useful for debugging"),
 		  PARSE_OPT_HIDDEN | PARSE_OPT_NOARG, NULL,
-		  WRITE_TREE_IGNORE_CACHE_TREE },
+		  (void *) WRITE_TREE_IGNORE_CACHE_TREE },
 		OPT_END()
 	};
 

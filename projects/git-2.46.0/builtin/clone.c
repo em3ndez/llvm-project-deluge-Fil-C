@@ -124,7 +124,7 @@ static struct option builtin_clone_options[] = {
 		    N_("setup as shared repository")),
 	{ OPTION_CALLBACK, 0, "recurse-submodules", &option_recurse_submodules,
 	  N_("pathspec"), N_("initialize submodules in the clone"),
-	  PARSE_OPT_OPTARG, recurse_submodules_cb, (intptr_t)"." },
+	  PARSE_OPT_OPTARG, recurse_submodules_cb, "." },
 	OPT_ALIAS(0, "recursive", "recurse-submodules"),
 	OPT_INTEGER('j', "jobs", &max_jobs,
 		    N_("number of submodules cloned in parallel")),

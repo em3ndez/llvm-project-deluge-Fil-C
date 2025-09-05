@@ -133,7 +133,7 @@ struct config_display_options {
 
 #define OPT_CALLBACK_VALUE(s, l, v, h, i) \
 	{ OPTION_CALLBACK, (s), (l), (v), NULL, (h), PARSE_OPT_NOARG | \
-	PARSE_OPT_NONEG, option_parse_type, (i) }
+	PARSE_OPT_NONEG, option_parse_type, (void *)(i) }
 
 static int option_parse_type(const struct option *opt, const char *arg,
 			     int unset)
@@ -149,7 +149,7 @@ static int option_parse_type(const struct option *opt, const char *arg,
 	 * To support '--<type>' style flags, begin with new_type equal to
 	 * opt->defval.
 	 */
-	new_type = opt->defval;
+	new_type = (intptr_t)opt->defval;
 	if (!new_type) {
 		if (!strcmp(arg, "bool"))
 			new_type = TYPE_BOOL;

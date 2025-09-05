@@ -2282,7 +2282,7 @@ static int parse_opt_show_current_patch(const struct option *opt, const char *ar
 	BUG_ON_OPT_NEG(unset);
 
 	if (!arg)
-		*opt_value = opt->defval;
+            *opt_value = (intptr_t)opt->defval;
 	else if (!strcmp(arg, "raw"))
 		*opt_value = RESUME_SHOW_PATCH_RAW;
 	else if (!strcmp(arg, "diff"))
@@ -2393,7 +2393,7 @@ int cmd_am(int argc, const char **argv, const char *prefix)
 		  "(diff|raw)",
 		  N_("show the patch being applied"),
 		  PARSE_OPT_CMDMODE | PARSE_OPT_OPTARG | PARSE_OPT_NONEG | PARSE_OPT_LITERAL_ARGHELP,
-		  parse_opt_show_current_patch, RESUME_SHOW_PATCH_RAW },
+		  parse_opt_show_current_patch, (void *)RESUME_SHOW_PATCH_RAW },
 		OPT_CMDMODE(0, "retry", &resume_mode,
 			N_("try to apply current patch again"),
 			RESUME_APPLY),
@@ -2408,7 +2408,7 @@ int cmd_am(int argc, const char **argv, const char *prefix)
 		OPT_RERERE_AUTOUPDATE(&state.allow_rerere_autoupdate),
 		{ OPTION_STRING, 'S', "gpg-sign", &state.sign_commit, N_("key-id"),
 		  N_("GPG-sign commits"),
-		  PARSE_OPT_OPTARG, NULL, (intptr_t) "" },
+		  PARSE_OPT_OPTARG, NULL, "" },
 		OPT_CALLBACK_F(0, "empty", &state.empty_type, "(stop|drop|keep)",
 		  N_("how to handle empty patches"),
 		  PARSE_OPT_NONEG, am_option_parse_empty),

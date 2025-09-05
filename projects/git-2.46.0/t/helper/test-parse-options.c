@@ -125,7 +125,7 @@ int cmd__parse_options(int argc, const char **argv)
 		OPT_BOOL(0, "yes", &boolean, "get a boolean"),
 		OPT_BOOL('D', "no-doubt", &boolean, "begins with 'no-'"),
 		{ OPTION_SET_INT, 'B', "no-fear", &boolean, NULL,
-		  "be brave", PARSE_OPT_NOARG | PARSE_OPT_NONEG, NULL, 1 },
+		  "be brave", PARSE_OPT_NOARG | PARSE_OPT_NONEG, NULL, (void *) 1 },
 		OPT_COUNTUP('b', "boolean", &boolean, "increment by one"),
 		OPT_BIT('4', "or4", &boolean,
 			"bitwise-or boolean with ...0100", 4),

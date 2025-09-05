@@ -35,7 +35,7 @@ static inline uint64_t default_bswap64(uint64_t val)
 #undef bswap32
 #undef bswap64
 
-#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
+#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__)) && !defined(__FILC__)
 
 #define bswap32 git_bswap32
 static inline uint32_t git_bswap32(uint32_t x)

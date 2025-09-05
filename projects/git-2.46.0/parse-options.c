@@ -90,23 +90,23 @@ static enum parse_opt_result do_get_value(struct parse_opt_ctx_t *p,
 
 	case OPTION_BIT:
 		if (unset)
-			*(int *)opt->value &= ~opt->defval;
+			*(int *)opt->value &= ~(intptr_t)opt->defval;
 		else
-			*(int *)opt->value |= opt->defval;
+			*(int *)opt->value |= (intptr_t)opt->defval;
 		return 0;
 
 	case OPTION_NEGBIT:
 		if (unset)
-			*(int *)opt->value |= opt->defval;
+			*(int *)opt->value |= (intptr_t)opt->defval;
 		else
-			*(int *)opt->value &= ~opt->defval;
+			*(int *)opt->value &= ~(intptr_t)opt->defval;
 		return 0;
 
 	case OPTION_BITOP:
 		if (unset)
 			BUG("BITOP can't have unset form");
 		*(int *)opt->value &= ~opt->extra;
-		*(int *)opt->value |= opt->defval;
+		*(int *)opt->value |= (intptr_t)opt->defval;
 		return 0;
 
 	case OPTION_COUNTUP:
@@ -116,7 +116,7 @@ static enum parse_opt_result do_get_value(struct parse_opt_ctx_t *p,
 		return 0;
 
 	case OPTION_SET_INT:
-		*(int *)opt->value = unset ? 0 : opt->defval;
+		*(int *)opt->value = unset ? 0 : (intptr_t)opt->defval;
 		return 0;
 
 	case OPTION_STRING:
@@ -171,7 +171,7 @@ static enum parse_opt_result do_get_value(struct parse_opt_ctx_t *p,
 			return 0;
 		}
 		if (opt->flags & PARSE_OPT_OPTARG && !p->opt) {
-			*(int *)opt->value = opt->defval;
+			*(int *)opt->value = (intptr_t)opt->defval;
 			return 0;
 		}
 		if (get_arg(p, opt, flags, &arg))
@@ -191,7 +191,7 @@ static enum parse_opt_result do_get_value(struct parse_opt_ctx_t *p,
 			return 0;
 		}
 		if (opt->flags & PARSE_OPT_OPTARG && !p->opt) {
-			*(unsigned long *)opt->value = opt->defval;
+			*(unsigned long *)opt->value = (intptr_t)opt->defval;
 			return 0;
 		}
 		if (get_arg(p, opt, flags, &arg))
