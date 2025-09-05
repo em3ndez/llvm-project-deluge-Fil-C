@@ -78,6 +78,7 @@ test ! -d projects/pizfix
 ./build_bash.sh
 ./build_binutils.sh
 ./build_libxml2.sh
+./build_perl.sh
 ./build_benchmarks.sh
 
 test ! -d projects/pizfix
