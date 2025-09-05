@@ -387,9 +387,17 @@ extern const MGVTBL sharedsv_elem_vtbl;      /* Elements of hashes and arrays ha
  */
 
 
+static zptrtable* sharedsv_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    sharedsv_ptrtable = zptrtable_new();
+}
+
 /* Get shared aggregate SV pointed to by threads::shared::tie magic object */
 
-#define SHAREDSV_FROM_OBJ(sv) ((SvROK(sv)) ? INT2PTR(SV *, SvIV(SvRV(sv))) : NULL)
+#define SHAREDSV_FROM_OBJ(sv) ((SvROK(sv)) ? zptrtable_decode(sharedsv_ptrtable, SvIV(SvRV(sv))) : NULL)
 
 
 /* Return the user_lock structure (if any) associated with a shared SV.
@@ -493,7 +501,7 @@ Perl_sharedsv_associate(pTHX_ SV *sv, SV *ssv)
             || (SV*) mg->mg_ptr != ssv)
         {
             SV *obj = newSV(0);
-            sv_setref_iv(obj, "threads::shared::tie", PTR2IV(ssv));
+            sv_setref_iv(obj, "threads::shared::tie", zptrtable_encode(sharedsv_ptrtable, ssv));
             if (mg) {
                 sv_unmagic(sv, PERL_MAGIC_tied);
             }

@@ -339,6 +339,14 @@ typedef union {
 #define HAS_U64
 #endif
 
+static zptrtable* perinterp_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    perinterp_ptrtable = zptrtable_new();
+}
+
 /*
  * Fields s_tainted and s_dirty are prefixed with s_ because Perl's include
  * files remap tainted and dirty when threading is enabled.  That's bad for
@@ -495,7 +503,7 @@ static MAGIC *THX_sv_magicext(pTHX_
 #define dSTCXT_PTR(T,name)					\
     T name = ((perinterp_sv                                     \
                && SvIOK(perinterp_sv) && SvIVX(perinterp_sv)    \
-               ? (T)SvPVX(SvRV(INT2PTR(SV*,SvIVX(perinterp_sv)))) : (T) 0))
+               ? (T)SvPVX(SvRV((SV*)zptrtable_decode(perinterp_ptrtable, SvIVX(perinterp_sv)))) : (T) 0))
 #define dSTCXT					\
     dSTCXT_SV;                                  \
     dSTCXT_PTR(stcxt_t *, cxt)
@@ -504,12 +512,12 @@ static MAGIC *THX_sv_magicext(pTHX_
     dSTCXT;                                             \
     NEW_STORABLE_CXT_OBJ(cxt);                          \
     assert(perinterp_sv);				\
-    sv_setiv(perinterp_sv, PTR2IV(cxt->my_sv))
+    sv_setiv(perinterp_sv, zptrtable_encode(perinterp_ptrtable, cxt->my_sv))
 
 #define SET_STCXT(x)					\
     STMT_START {					\
         dSTCXT_SV;                                      \
-        sv_setiv(perinterp_sv, PTR2IV(x->my_sv));       \
+        sv_setiv(perinterp_sv, zptrtable_encode(perinterp_ptrtable, x->my_sv)); \
     } STMT_END
 
 #else /* !MULTIPLICITY && !PERL_OBJECT && !PERL_CAPI */

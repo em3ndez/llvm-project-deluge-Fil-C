@@ -1142,6 +1142,8 @@ violations are fatal.
 #   include <xlocale.h>
 #endif
 
+#include <stdfil.h>
+
 /* Even if not using locales, this header should be #included so as to #define
  * some symbols which avoid #ifdefs to get things to compile.  But make sure
  * the macro it calls does nothing */
@@ -9206,6 +9208,8 @@ END_EXTERN_C
 #else
 #  define PERL_STACK_REALIGN
 #endif
+
+extern zptrtable* Perl_xsub_ptrtable;
 
 /*
 

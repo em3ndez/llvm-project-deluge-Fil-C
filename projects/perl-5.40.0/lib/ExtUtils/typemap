@@ -202,11 +202,11 @@ T_DOUBLE
 T_PV
 	$var = ($type)SvPV_nolen($arg)
 T_PTR
-	$var = INT2PTR($type,SvIV($arg))
+	$var = zptrtable_decode(Perl_xsub_ptrtable, SvIV($arg))
 T_PTRREF
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable, tmp);
 	}
 	else
 	    Perl_croak_nocontext(\"%s: %s is not a reference\",
@@ -241,7 +241,7 @@ T_REF_IV_PTR
 T_PTROBJ
 	if (SvROK($arg) && sv_derived_from($arg, \"${ntype}\")) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable, tmp);
 	}
 	else {
 		const char* refstr = SvROK($arg) ? \"\" : SvOK($arg) ? \"scalar \" : \"undef\";
@@ -372,7 +372,7 @@ T_DOUBLE
 T_PV
 	sv_setpv((SV*)$arg, $var);
 T_PTR
-	sv_setiv($arg, PTR2IV($var));
+	sv_setiv($arg, zptrtable_encode(Perl_xsub_ptrtable, $var));
 T_PTRREF
 	sv_setref_pv($arg, Nullch, (void*)$var);
 T_REF_IV_REF

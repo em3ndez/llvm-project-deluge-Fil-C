@@ -211,7 +211,7 @@ dl_load_file(filename, flags=0)
     if (handle == NULL)
 	SaveError(aTHX_ "%s",dlerror()) ;
     else
-	sv_setiv( ST(0), PTR2IV(handle));
+	sv_setiv( ST(0), zptrtable_encode(Perl_xsub_ptrtable, handle));
 }
 
 
@@ -250,7 +250,7 @@ dl_find_symbol(libhandle, symbolname, ign_err=0)
         if (!ign_err)
 	    SaveError(aTHX_ "%s", dlerror());
     } else
-	sv_setiv( ST(0), PTR2IV(sym));
+	sv_setiv( ST(0), zptrtable_encode(Perl_xsub_ptrtable, sym));
 
 
 void

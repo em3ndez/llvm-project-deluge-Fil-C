@@ -5529,6 +5529,14 @@ Perl_xs_boot_epilog(pTHX_ const SSize_t ax)
     XSRETURN_YES;
 }
 
+zptrtable* Perl_xsub_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    Perl_xsub_ptrtable = zptrtable_new();
+}
+
 /*
  * ex: set ts=8 sts=4 sw=4 et:
  */

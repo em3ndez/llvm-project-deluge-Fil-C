@@ -42,6 +42,7 @@ within a package.  See L<perlguts/Stashes and Globs>
 #include "overload.inc"
 #include "keywords.h"
 #include "feature.h"
+#include <stdfil.h>
 
 static const char S_autoload[] = "AUTOLOAD";
 #define S_autolen (sizeof("AUTOLOAD")-1)
@@ -1662,6 +1663,14 @@ reasons.
 #define PERL_ARGS_ASSERT_GV_STASHSVPVN_CACHED \
     assert(namesv || name)
 
+static zptrtable* gvstash_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    gvstash_ptrtable = zptrtable_new();
+}
+
 HV*
 Perl_gv_stashsvpvn_cached(pTHX_ SV *namesv, const char *name, U32 namelen, I32 flags)
 {
@@ -1679,7 +1688,7 @@ Perl_gv_stashsvpvn_cached(pTHX_ SV *namesv, const char *name, U32 namelen, I32 f
         SV *sv = HeVAL(he);
         HV *hv;
         assert(SvIOK(sv));
-        hv = INT2PTR(HV*, SvIVX(sv));
+        hv = zptrtable_decode(gvstash_ptrtable, SvIVX(sv));
         assert(SvTYPE(hv) == SVt_PVHV);
         return hv;
     }
@@ -1698,7 +1707,7 @@ Perl_gv_stashsvpvn_cached(pTHX_ SV *namesv, const char *name, U32 namelen, I32 f
     stash = gv_stashpvn_internal(name, namelen, flags);
 
     if (stash && namelen) {
-        SV* const ref = newSViv(PTR2IV(stash));
+        SV* const ref = newSViv(zptrtable_encode(gvstash_ptrtable, stash));
         (void)hv_store(PL_stashcache, name,
             (flags & SVf_UTF8) ? -(I32)namelen : (I32)namelen, ref, 0);
     }

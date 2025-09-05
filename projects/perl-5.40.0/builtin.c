@@ -17,6 +17,8 @@
 
 #include "XSUB.h"
 
+#include <stdfil.h>
+
 /* copied from op.c */
 #define SHORTVER(maj,min) (((maj) << 8) | (min))
 
@@ -117,9 +119,17 @@ enum {
     BUILTIN_CONST_NAN,
 };
 
+static zptrtable* builtin_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    builtin_ptrtable = zptrtable_new();
+}
+
 static OP *ck_builtin_const(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
 {
-    const struct BuiltinFuncDescriptor *builtin = NUM2PTR(const struct BuiltinFuncDescriptor *, SvUV(ckobj));
+    const struct BuiltinFuncDescriptor *builtin = zptrtable_decode(builtin_ptrtable, SvUV(ckobj));
 
     if(builtin->is_experimental)
         warn_experimental_builtin(builtin->name);
@@ -426,7 +436,7 @@ XS(XS_builtin_created_as_number)
 
 static OP *ck_builtin_func1(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
 {
-    const struct BuiltinFuncDescriptor *builtin = NUM2PTR(const struct BuiltinFuncDescriptor *, SvUV(ckobj));
+    const struct BuiltinFuncDescriptor *builtin = zptrtable_decode(builtin_ptrtable, SvUV(ckobj));
 
     if(builtin->is_experimental)
         warn_experimental_builtin(builtin->name);
@@ -524,7 +534,7 @@ XS(XS_builtin_load_module)
 
 static OP *ck_builtin_funcN(pTHX_ OP *entersubop, GV *namegv, SV *ckobj)
 {
-    const struct BuiltinFuncDescriptor *builtin = NUM2PTR(const struct BuiltinFuncDescriptor *, SvUV(ckobj));
+    const struct BuiltinFuncDescriptor *builtin = zptrtable_decode(builtin_ptrtable, SvUV(ckobj));
 
     if(builtin->is_experimental)
         warn_experimental_builtin(builtin->name);
@@ -733,7 +743,7 @@ Perl_boot_core_builtin(pTHX)
         }
 
         if(builtin->checker) {
-            cv_set_call_checker_flags(cv, builtin->checker, newSVuv(PTR2UV(builtin)), 0);
+            cv_set_call_checker_flags(cv, builtin->checker, newSVuv(zptrtable_encode(builtin_ptrtable, (void*)builtin)), 0);
         }
     }
 

@@ -33,12 +33,20 @@
 #define SVfARG(p) ((void*)(p))
 #endif
 
+static zptrtable* encode_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    encode_ptrtable = zptrtable_new();
+}
+
 static void
 Encode_XSEncoding(pTHX_ encode_t * enc)
 {
     dSP;
     HV *stash = gv_stashpv("Encode::XS", TRUE);
-    SV *iv    = newSViv(PTR2IV(enc));
+    SV *iv    = newSViv(zptrtable_encode(encode_ptrtable, enc));
     SV *sv    = sv_bless(newRV_noinc(iv),stash);
     int i = 0;
     /* with the SvLEN() == 0 hack, PVX won't be freed. We cast away name's
@@ -769,7 +777,7 @@ SV *	obj
 PREINIT:
     encode_t *enc;
 INIT:
-    enc = INT2PTR(encode_t *, SvIV(SvRV(obj)));
+    enc = zptrtable_decode(encode_ptrtable, SvIV(SvRV(obj)));
 CODE:
     RETVAL = newSVpvn(enc->name[0], strlen(enc->name[0]));
 OUTPUT:
@@ -799,7 +807,7 @@ INIT:
     check = SvROK(check_sv) ? ENCODE_PERLQQ|ENCODE_LEAVE_SRC : SvOK(check_sv) ? SvIV_nomg(check_sv) : 0;
     fallback_cb = SvROK(check_sv) ? check_sv : &PL_sv_undef;
     modify = (check && !(check & ENCODE_LEAVE_SRC));
-    enc = INT2PTR(encode_t *, SvIV(SvRV(obj)));
+    enc = zptrtable_decode(encode_ptrtable, SvIV(SvRV(obj)));
     offset = (STRLEN)SvIV(off);
 CODE:
     if (!SvOK(src))
@@ -834,7 +842,7 @@ INIT:
     check = SvROK(check_sv) ? ENCODE_PERLQQ|ENCODE_LEAVE_SRC : SvOK(check_sv) ? SvIV_nomg(check_sv) : 0;
     fallback_cb = SvROK(check_sv) ? check_sv : &PL_sv_undef;
     modify = (check && !(check & ENCODE_LEAVE_SRC));
-    enc = INT2PTR(encode_t *, SvIV(SvRV(obj)));
+    enc = zptrtable_decode(encode_ptrtable, SvIV(SvRV(obj)));
 CODE:
     if (!SvOK(src))
         XSRETURN_UNDEF;
@@ -866,7 +874,7 @@ INIT:
     check = SvROK(check_sv) ? ENCODE_PERLQQ|ENCODE_LEAVE_SRC : SvOK(check_sv) ? SvIV_nomg(check_sv) : 0;
     fallback_cb = SvROK(check_sv) ? check_sv : &PL_sv_undef;
     modify = (check && !(check & ENCODE_LEAVE_SRC));
-    enc = INT2PTR(encode_t *, SvIV(SvRV(obj)));
+    enc = zptrtable_decode(encode_ptrtable, SvIV(SvRV(obj)));
 CODE:
     if (!SvOK(src))
         XSRETURN_UNDEF;
@@ -905,7 +913,7 @@ SV *	obj
 PREINIT:
     encode_t *enc;
 INIT:
-    enc = INT2PTR(encode_t *, SvIV(SvRV(obj)));
+    enc = zptrtable_decode(encode_ptrtable, SvIV(SvRV(obj)));
 CODE:
     ENTER;
     SAVETMPS;

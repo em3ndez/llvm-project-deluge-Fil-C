@@ -404,7 +404,7 @@ Perl_current_re_engine(pTHX)
         ptr = hv_fetchs(table, "regcomp", FALSE);
         if ( !(ptr && SvIOK(*ptr) && SvIV(*ptr)))
             return &PL_core_reg_engine;
-        return INT2PTR(regexp_engine*, SvIV(*ptr));
+        return zptrtable_decode(Perl_xsub_ptrtable, SvIV(*ptr));
     }
     else {
         SV *ptr;
@@ -413,7 +413,7 @@ Perl_current_re_engine(pTHX)
         ptr = cop_hints_fetch_pvs(PL_curcop, "regcomp", 0);
         if ( !(ptr && SvIOK(ptr) && SvIV(ptr)))
             return &PL_core_reg_engine;
-        return INT2PTR(regexp_engine*, SvIV(ptr));
+        return zptrtable_decode(Perl_xsub_ptrtable, SvIV(ptr));
     }
 }
 

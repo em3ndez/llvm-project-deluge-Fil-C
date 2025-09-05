@@ -113,7 +113,7 @@ install()
     PPCODE:
         PL_colorset = 0;	/* Allow reinspection of ENV. */
         /* PL_debug |= DEBUG_r_FLAG; */
-	XPUSHs(sv_2mortal(newSViv(PTR2IV(&my_reg_engine))));
+	XPUSHs(sv_2mortal(newSViv(zptrtable_encode(Perl_xsub_ptrtable, &my_reg_engine))));
 
 void
 regmust(sv)

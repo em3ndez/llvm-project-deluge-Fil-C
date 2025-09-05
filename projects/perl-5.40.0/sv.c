@@ -10743,7 +10743,7 @@ Perl_sv_setref_pv(pTHX_ SV *const rv, const char *const classname, void *const p
         SvSETMAGIC(rv);
     }
     else
-        sv_setiv(newSVrv(rv,classname), PTR2IV(pv));
+        sv_setiv(newSVrv(rv,classname), zptrtable_encode(Perl_xsub_ptrtable, pv));
     return rv;
 }
 

@@ -107,7 +107,7 @@ static SV *
 make_op_object(pTHX_ const OP *o)
 {
     SV *opsv = sv_newmortal();
-    sv_setiv(newSVrv(opsv, opclassnames[op_class(o)]), PTR2IV(o));
+    sv_setiv(newSVrv(opsv, opclassnames[op_class(o)]), zptrtable_encode(Perl_xsub_ptrtable,(void*)o));
     return opsv;
 }
 
@@ -159,7 +159,7 @@ make_sv_object(pTHX_ SV *sv)
     }
     if (!type) {
 	type = svclassnames[SvTYPE(sv)];
-	iv = PTR2IV(sv);
+	iv = zptrtable_encode(Perl_xsub_ptrtable, sv);
     }
     sv_setiv(newSVrv(arg, type), iv);
     return arg;
@@ -171,7 +171,7 @@ make_temp_object(pTHX_ SV *temp)
     SV *target;
     SV *arg = sv_newmortal();
     const char *const type = svclassnames[SvTYPE(temp)];
-    const IV iv = PTR2IV(temp);
+    const IV iv = zptrtable_encode(Perl_xsub_ptrtable, temp);
 
     target = newSVrv(arg, type);
     sv_setiv(target, iv);
@@ -234,7 +234,7 @@ static SV *
 make_mg_object(pTHX_ MAGIC *mg)
 {
     SV *arg = sv_newmortal();
-    sv_setiv(newSVrv(arg, "B::MAGIC"), PTR2IV(mg));
+    sv_setiv(newSVrv(arg, "B::MAGIC"), zptrtable_encode(Perl_xsub_ptrtable, mg));
     return arg;
 }
 
@@ -380,7 +380,7 @@ walkoptree(pTHX_ OP *o, const char *method, SV *ref)
 	ref = sv_newmortal();
 	object = newSVrv(ref, classname);
     }
-    sv_setiv(object, PTR2IV(o));
+    sv_setiv(object, zptrtable_encode(Perl_xsub_ptrtable, o));
 
     if (walkoptree_debug) {
 	PUSHMARK(sp);
@@ -662,7 +662,7 @@ comppadlist()
 	{
 	    SV * const rv = sv_newmortal();
 	    sv_setiv(newSVrv(rv, padlist ? "B::PADLIST" : "B::NULL"),
-		     PTR2IV(padlist));
+		     zptrtable_encode(Perl_xsub_ptrtable, padlist));
 	    PUSHs(rv);
 	}
 
@@ -709,7 +709,7 @@ walkoptree_debug(...)
     OUTPUT:
 	RETVAL
 
-#define address(sv) PTR2IV(sv)
+#define address(sv) zptrtable_encode(Perl_xsub_ptrtable, sv)
 
 IV
 address(sv)
@@ -974,7 +974,7 @@ next(o)
                         GV *const target = cPMOPo->op_pmreplrootu.op_pmtargetgv;
                         sv_setiv(newSVrv(ret, target ?
                                          svclassnames[SvTYPE((SV*)target)] : "B::SV"),
-                                 PTR2IV(target));
+                                 zptrtable_encode(Perl_xsub_ptrtable, target));
                     }
 #endif
 		}
@@ -1051,7 +1051,7 @@ next(o)
 	    case 46: /* B::COP::hints_hash */
 		ret = sv_newmortal();
 		sv_setiv(newSVrv(ret, "B::RHE"),
-			PTR2IV(CopHINTHASH_get(cCOPo)));
+                         zptrtable_encode(Perl_xsub_ptrtable, CopHINTHASH_get(cCOPo)));
 		break;
 	    case 52: /* B::OP::parent */
 #ifdef PERL_OP_PARENT
@@ -1175,7 +1175,7 @@ string(o, cv)
 
         case OP_ARGELEM:
             ret = sv_2mortal(Perl_newSVpvf(aTHX_ "%" IVdf,
-                            PTR2IV(aux)));
+                                           zptrtable_encode(Perl_xsub_ptrtable, aux)));
             break;
 
         case OP_ARGCHECK:
@@ -1216,7 +1216,7 @@ aux_list(o, cv)
             XSRETURN(0); /* by default, an empty list */
 
         case OP_ARGELEM:
-            XPUSHs(sv_2mortal(newSViv(PTR2IV(aux))));
+            XPUSHs(sv_2mortal(newSViv(zptrtable_encode(Perl_xsub_ptrtable, aux))));
             XSRETURN(1);
             break;
 
@@ -1643,7 +1643,7 @@ REGEX(sv)
 		PUSHu(RX_COMPFLAGS(sv));
 	    else
 	    /* FIXME - can we code this method more efficiently?  */
-		PUSHi(PTR2IV(sv));
+		PUSHi(zptrtable_encode(Perl_xsub_ptrtable, sv));
 	}
 
 MODULE = B  PACKAGE = B::INVLIST    PREFIX = Invlist
@@ -1837,7 +1837,7 @@ MOREMAGIC(mg)
 	    break;
 	case 7:
 	    if(mg->mg_type == PERL_MAGIC_qr) {
-                mPUSHi(PTR2IV(mg->mg_obj));
+                mPUSHi(zptrtable_encode(Perl_xsub_ptrtable, mg->mg_obj));
 	    } else {
 		croak("REGEX is only meaningful on r-magic");
 	    }
@@ -2187,7 +2187,7 @@ PadlistARRAY(padlist)
 	    sv_setiv(newSVrv(TARG, PadlistNAMES(padlist)
 				    ? "B::PADNAMELIST"
 				    : "B::NULL"),
-		     PTR2IV(PadlistNAMES(padlist)));
+		     zptrtable_encode(Perl_xsub_ptrtable, PadlistNAMES(padlist)));
 	    XPUSHTARG;
 	    for (i = 1; i <= PadlistMAX(padlist); i++)
 		XPUSHs(make_sv_object(aTHX_ (SV *)padp[i]));
@@ -2232,7 +2232,7 @@ PadnamelistARRAY(pnl)
 	    {
 		SV *rv = sv_newmortal();
 		sv_setiv(newSVrv(rv,padp[i] ? "B::PADNAME" : "B::SPECIAL"),
-			 PTR2IV(padp[i]));
+			 zptrtable_encode(Perl_xsub_ptrtable, padp[i]));
 		XPUSHs(rv);
 	    }
 	}

@@ -67,6 +67,14 @@ typedef perl_os_thread pthread_t;
 #  include <sys/param.h>
 #endif
 
+static zptrtable* threads_ptrtable;
+
+static void construct_ptrtable(void) __attribute__((constructor));
+static void construct_ptrtable(void)
+{
+    threads_ptrtable = zptrtable_new();
+}
+
 /* Values for 'state' member */
 #define PERL_ITHR_DETACHED           1 /* Thread has been detached */
 #define PERL_ITHR_JOINED             2 /* Thread is being / has been joined */
@@ -136,7 +144,7 @@ typedef struct {
 #define dMY_POOL \
     SV *my_pool_sv = *hv_fetch(PL_modglobal, MY_POOL_KEY,               \
                                sizeof(MY_POOL_KEY)-1, TRUE);            \
-    my_pool_t *my_poolp = INT2PTR(my_pool_t*, SvUV(my_pool_sv))
+    my_pool_t *my_poolp = zptrtable_decode(threads_ptrtable, SvUV(my_pool_sv))
 
 #define MY_POOL (*my_poolp)
 
@@ -397,7 +405,7 @@ STATIC int
 ithread_mg_get(pTHX_ SV *sv, MAGIC *mg)
 {
     ithread *thread = (ithread *)mg->mg_ptr;
-    SvIV_set(sv, PTR2IV(thread));
+    SvIV_set(sv, zptrtable_encode(threads_ptrtable, thread));
     SvIOK_on(sv);
     return (0);
 }
@@ -730,7 +738,7 @@ S_ithread_to_SV(pTHX_ SV *obj, ithread *thread, char *classname, bool inc)
     }
 
     sv = newSVrv(obj, classname);
-    sv_setiv(sv, PTR2IV(thread));
+    sv_setiv(sv, zptrtable_encode(threads_ptrtable, thread));
     mg = sv_magicext(sv, Nullsv, PERL_MAGIC_shared_scalar, &ithread_vtbl, (char *)thread, 0);
     mg->mg_flags |= MGf_DUP;
     SvREADONLY_on(sv);
@@ -743,7 +751,7 @@ S_SV_to_ithread(pTHX_ SV *sv)
 {
     /* Argument is a thread */
     if (SvROK(sv)) {
-      return (INT2PTR(ithread *, SvIV(SvRV(sv))));
+      return (zptrtable_decode(threads_ptrtable, SvIV(SvRV(sv))));
     }
     /* Argument is classname, therefore return current thread */
     return (S_ithread_get(aTHX));
@@ -1103,7 +1111,7 @@ ithread_create(...)
         if (sv_isobject(ST(0))) {
             /* $thr->create() */
             classname = HvNAME(SvSTASH(SvRV(ST(0))));
-            thread = INT2PTR(ithread *, SvIV(SvRV(ST(0))));
+            thread = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(0))));
             MUTEX_LOCK(&thread->mutex);
             stack_size = thread->stack_size;
             exit_opt = thread->state & PERL_ITHR_THREAD_EXIT_ONLY;
@@ -1560,8 +1568,8 @@ ithread_equal(...)
 
         /* Compares TIDs to determine thread equality */
         if (sv_isobject(ST(0)) && sv_isobject(ST(1))) {
-            ithread *thr1 = INT2PTR(ithread *, SvIV(SvRV(ST(0))));
-            ithread *thr2 = INT2PTR(ithread *, SvIV(SvRV(ST(1))));
+            ithread *thr1 = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(0))));
+            ithread *thr2 = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(1))));
             are_equal = (thr1->tid == thr2->tid);
         }
         if (are_equal) {
@@ -1666,7 +1674,7 @@ ithread_get_stack_size(...)
         PERL_UNUSED_VAR(items);
         if (sv_isobject(ST(0))) {
             /* $thr->get_stack_size() */
-            ithread *thread = INT2PTR(ithread *, SvIV(SvRV(ST(0))));
+            ithread *thread = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(0))));
             stack_size = thread->stack_size;
         } else {
             /* threads->get_stack_size() */
@@ -1708,7 +1716,7 @@ ithread_is_running(...)
             Perl_croak(aTHX_ "Usage: $thr->is_running()");
         }
 
-        thread = INT2PTR(ithread *, SvIV(SvRV(ST(0))));
+        thread = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(0))));
         MUTEX_LOCK(&thread->mutex);
         ST(0) = (thread->state & PERL_ITHR_FINISHED) ? &PL_sv_no : &PL_sv_yes;
         MUTEX_UNLOCK(&thread->mutex);
@@ -1738,7 +1746,7 @@ ithread_is_joinable(...)
             Perl_croak(aTHX_ "Usage: $thr->is_joinable()");
         }
 
-        thread = INT2PTR(ithread *, SvIV(SvRV(ST(0))));
+        thread = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(0))));
         MUTEX_LOCK(&thread->mutex);
         ST(0) = ((thread->state & PERL_ITHR_FINISHED) &&
                  ! (thread->state & PERL_ITHR_UNCALLABLE))
@@ -1789,7 +1797,7 @@ ithread_error(...)
             Perl_croak(aTHX_ "Usage: $thr->err()");
         }
 
-        thread = INT2PTR(ithread *, SvIV(SvRV(ST(0))));
+        thread = zptrtable_decode(threads_ptrtable, SvIV(SvRV(ST(0))));
         MUTEX_LOCK(&thread->mutex);
 
         /* If thread died, then clone the error into the calling thread */
@@ -1871,7 +1879,7 @@ BOOT:
     MY_CXT_INIT;
 
     Zero(my_poolp, 1, my_pool_t);
-    sv_setuv(my_pool_sv, PTR2UV(my_poolp));
+    sv_setuv(my_pool_sv, zptrtable_encode(threads_ptrtable, my_poolp));
 
     PL_perl_destruct_level = 2;
     MUTEX_INIT(&MY_POOL.create_destruct_mutex);

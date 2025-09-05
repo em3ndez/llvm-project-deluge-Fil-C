@@ -45,7 +45,7 @@ INPUT
 T_OP_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -53,7 +53,7 @@ T_OP_OBJ
 T_SV_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -61,7 +61,7 @@ T_SV_OBJ
 T_MG_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -69,7 +69,7 @@ T_MG_OBJ
 T_HE_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -77,7 +77,7 @@ T_HE_OBJ
 T_RHE_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -85,7 +85,7 @@ T_RHE_OBJ
 T_PL_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -93,7 +93,7 @@ T_PL_OBJ
 T_PNL_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
@@ -101,29 +101,29 @@ T_PNL_OBJ
 T_PN_OBJ
 	if (SvROK($arg)) {
 	    IV tmp = SvIV((SV*)SvRV($arg));
-	    $var = INT2PTR($type,tmp);
+	    $var = zptrtable_decode(Perl_xsub_ptrtable,tmp);
 	}
 	else
 	    croak(\"$var is not a reference\")
 
 OUTPUT
 T_MG_OBJ
-	sv_setiv(newSVrv($arg, "B::MAGIC"), PTR2IV($var));
+	sv_setiv(newSVrv($arg, "B::MAGIC"), zptrtable_encode(Perl_xsub_ptrtable,$var));
 
 T_HE_OBJ
-	sv_setiv(newSVrv($arg, "B::HE"), PTR2IV($var));
+	sv_setiv(newSVrv($arg, "B::HE"), zptrtable_encode(Perl_xsub_ptrtable,$var));
 
 T_RHE_OBJ
-	sv_setiv(newSVrv($arg, "B::RHE"), PTR2IV($var));
+	sv_setiv(newSVrv($arg, "B::RHE"), zptrtable_encode(Perl_xsub_ptrtable,$var));
 
 T_PL_OBJ
 	sv_setiv(newSVrv($arg, $var ? "B::PADLIST" : "B::NULL"),
-		 PTR2IV($var));
+		 zptrtable_encode(Perl_xsub_ptrtable,$var));
 
 T_PNL_OBJ
 	sv_setiv(newSVrv($arg, $var ? "B::PADNAMELIST" : "B::NULL"),
-		 PTR2IV($var));
+		 zptrtable_encode(Perl_xsub_ptrtable,$var));
 
 T_PN_OBJ
 	sv_setiv(newSVrv($arg, $var ? "B::PADNAME" : "B::SPECIAL"),
-		 PTR2IV($var));
+		 zptrtable_encode(Perl_xsub_ptrtable,$var));
