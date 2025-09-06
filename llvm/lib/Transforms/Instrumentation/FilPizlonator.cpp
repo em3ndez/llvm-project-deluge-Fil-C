@@ -1243,6 +1243,7 @@ class Pizlonator {
                      GlobalVariable*> OptimizedAlignmentContradictionOrigins;
   std::unordered_map<Value*, AllocaInst*> CanonicalPtrAuxBaseVars;
   std::unordered_map<Instruction*, std::vector<AllocaInst*>> AuxBaseVarOperands;
+  bool AuxBaseVarCreationAllowed { false };
 
   std::vector<GlobalVariable*> Globals;
   std::vector<Function*> Functions;
@@ -2706,6 +2707,8 @@ class Pizlonator {
     if (Iter != CanonicalPtrAuxBaseVars.end())
       return Iter->second;
 
+    assert(AuxBaseVarCreationAllowed);
+
     Instruction* InsertBefore = &NewF->getEntryBlock().front();
     AllocaInst* Result = new AllocaInst(RawPtrTy, 0, nullptr, "filc_aux_base_var", InsertBefore);
     new StoreInst(RawNull, Result, InsertBefore);
@@ -3590,11 +3593,13 @@ class Pizlonator {
   }
 
   void captureAuxBaseVars(const std::vector<Instruction*>& Instructions) {
+    AuxBaseVarCreationAllowed = true;
     for (Instruction* I : Instructions) {
       forEachCanonicalPtrOperand(I, [&] (PtrAndOffset PAO) {
         AuxBaseVarOperands[I].push_back(canonicalPtrAuxBaseVar(PAO.HighP));
       });
     }
+    AuxBaseVarCreationAllowed = false;
   }
 
   const CombinedDI* hashConsDI(const CombinedDI& DI) {
