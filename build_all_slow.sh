@@ -80,6 +80,7 @@ test ! -d projects/pizfix
 ./build_libxml2.sh
 ./build_perl.sh
 ./build_git.sh
+./build_m4.sh
 ./build_benchmarks.sh
 
 test ! -d projects/pizfix
