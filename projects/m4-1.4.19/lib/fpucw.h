@@ -18,6 +18,10 @@
 #ifndef _FPUCW_H
 #define _FPUCW_H
 
+#ifdef __FILC__
+# include <pizlonated_math.h>
+#endif
+
 /* The i386 floating point hardware (the 387 compatible FPU, not the modern
    SSE/SSE2 hardware) has a controllable rounding precision.  It is specified
    through the 'PC' bits in the FPU control word ('fctrl' register).  (See
@@ -70,15 +74,20 @@ typedef unsigned short fpucw_t; /* glibc calls this fpu_control_t */
 # define FPU_PC_DOUBLE 0x200    /* glibc calls this _FPU_DOUBLE */
 # define FPU_PC_EXTENDED 0x300  /* glibc calls this _FPU_EXTENDED */
 
-# define GET_FPUCW() __extension__ \
+#ifdef __FILC__
+#  define GET_FPUCW() zmath_getcw ()
+#  define SET_FPUCW(word) zmath_setcw (word)
+#else
+#  define GET_FPUCW() __extension__ \
   ({ fpucw_t _cw;                                               \
      __asm__ __volatile__ ("fnstcw %0" : "=m" (*&_cw));         \
      _cw;                                                       \
    })
-# define SET_FPUCW(word) __extension__ \
+#  define SET_FPUCW(word) __extension__ \
   (void)({ fpucw_t _ncw = (word);                               \
            __asm__ __volatile__ ("fldcw %0" : : "m" (*&_ncw));  \
          })
+#endif
 
 # define DECL_LONG_DOUBLE_ROUNDING \
   fpucw_t oldcw;

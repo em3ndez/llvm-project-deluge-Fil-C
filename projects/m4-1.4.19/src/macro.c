@@ -355,7 +355,8 @@ expand_macro (symbol *sym)
 
   argc = ((obstack_object_size (&argv_stack) - argv_base)
           / sizeof (token_data *));
-  argv = (token_data **) ((uintptr_t) obstack_base (&argv_stack) + argv_base);
+  argv = (token_data **) zmkptr (obstack_base (&argv_stack),
+                                 (uintptr_t) obstack_base (&argv_stack) + argv_base);
 
   loc_close_file = current_file;
   loc_close_line = current_line;

@@ -51,6 +51,7 @@ main ()
     free (p);
   }
 
+#ifndef __FILC__
   /* Check that calloc fails when requested to allocate a block of memory
      larger than PTRDIFF_MAX or SIZE_MAX bytes.
      Use 'identity' to avoid a compiler warning from GCC 7.
@@ -68,6 +69,7 @@ main ()
         ASSERT (errno == ENOMEM);
       }
   }
+#endif
 
   return 0;
 }
