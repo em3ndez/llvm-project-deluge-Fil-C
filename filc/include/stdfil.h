@@ -339,11 +339,8 @@ typedef struct zweak zweak;
 /* Create a new weak pointer. Weak pointers automatically become NULL if the GC was not able to
    establish that the pointed-at object is live via any chain of non-weak pointers starting from GC
    roots.
-
-   Note that if you create a weak pointer to a freed object, then it may or may not become NULL. It's
-   possible for weak pointers to freed object to never become NULL, if the GC had already repointed
-   the pointer's capability to the free singleton, since the free singleton is global and never
-   dies. */
+   
+   Weak pointers also become NULL if the pointed-at object is freed. */
 zweak* zweak_new(void* ptr);
 
 /* Get the value of the weak pointer. This returns exactly the pointer passed to `zweak_new`, or it
@@ -420,6 +417,7 @@ int zisdigit(int chr);
    functions rather than the libc ones, and it has one additional feature:
 
        - '%P', which prints the full filc_ptr (i.e. 0xptr,0xlower,0xupper,...type...).
+       - '%O', which prints the full object contents.
 
    It's not obvious that this code will do the right thing for floating point formats. But this code is
    pizlonated, so if it goes wrong, at least it'll stop your program from causing any more damage. */

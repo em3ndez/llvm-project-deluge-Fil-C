@@ -1198,6 +1198,7 @@ class Pizlonator {
   FunctionCallee Error;
   FunctionCallee RealMemset;
   FunctionCallee RealMemcpy;
+  FunctionCallee RealMemmove;
   FunctionCallee LandingPad;
   FunctionCallee ResumeUnwind;
   FunctionCallee JmpBufCreate;
@@ -5698,46 +5699,9 @@ class Pizlonator {
       // Copy the payload.
       Value* DstP = flightPtrPtr(Dst, I);
       Value* SrcP = flightPtrPtr(Src, I);
-      Instruction* Threshold = CallInst::Create(DoNothing, { }, "", I);
-      size_t Offset = 0;
-      if (ultraVerbose)
-        errs() << "Offset = " << Offset << ", Count = " << Count << "\n";
-      while (Offset < Count) {
-        size_t Remaining = Count - Offset;
-        assert(Remaining);
-        Type* T;
-        size_t ActualOffset = Offset;
-        if (Remaining >= 5 && Count >= 8)
-          T = Int64Ty;
-        else if (Remaining >= 3 && Count >= 4)
-          T = Int32Ty;
-        else if (Remaining >= 2)
-          T = Int16Ty;
-        else
-          T = Int8Ty;
-        size_t AccessSize = DL.getTypeStoreSize(T);
-        if (ultraVerbose) {
-          errs() << "Offset = " << Offset << ", Count = " << Count << ", Remaining = " << Remaining
-                 << ", AccessSize = " << AccessSize << "\n";
-        }
-        if (AccessSize > Remaining) {
-          assert(ActualOffset >= AccessSize - Remaining);
-          ActualOffset -= AccessSize - Remaining;
-        }
-        assert(ActualOffset <= Offset);
-        assert(ActualOffset + AccessSize <= Count);
-        Instruction* LoadPtr = GetElementPtrInst::Create(
-          Int8Ty, SrcP, { ConstantInt::get(IntPtrTy, ActualOffset) }, "filc_memmove_load_ptr",
-          Threshold);
-        LoadPtr->setDebugLoc(I->getDebugLoc());
-        Instruction* Load = new LoadInst(T, LoadPtr, "filc_memmove_load", Threshold);
-        Load->setDebugLoc(I->getDebugLoc());
-        Instruction* StorePtr = GetElementPtrInst::Create(
-          Int8Ty, DstP, { ConstantInt::get(IntPtrTy, ActualOffset) }, "filc_memmove_store_ptr", I);
-        StorePtr->setDebugLoc(I->getDebugLoc());
-        (new StoreInst(Load, StorePtr, I))->setDebugLoc(I->getDebugLoc());
-        Offset = ActualOffset + AccessSize;
-      }
+      CallInst::Create(
+        RealMemmove, { DstP, SrcP, ConstantInt::get(IntPtrTy, Count), ConstantInt::getFalse(Int1Ty) },
+        "", I)->setDebugLoc(I->getDebugLoc());
 
       // Copy the lowers.
       AuxBaseAndPtr DstAux = auxPtrForOperand(Dst, I, 0, I);
@@ -8678,6 +8642,8 @@ public:
       "llvm.memset.p0.i64", VoidTy, RawPtrTy, Int8Ty, IntPtrTy, Int1Ty);
     RealMemcpy = M.getOrInsertFunction(
       "llvm.memcpy.p0.p0.i64", VoidTy, RawPtrTy, RawPtrTy, IntPtrTy, Int1Ty);
+    RealMemmove = M.getOrInsertFunction(
+      "llvm.memmove.p0.p0.i64", VoidTy, RawPtrTy, RawPtrTy, IntPtrTy, Int1Ty);
     LandingPad = M.getOrInsertFunction(
       "filc_landing_pad", Int1Ty, RawPtrTy);
     ResumeUnwind = M.getOrInsertFunction(
