@@ -133,7 +133,7 @@ class Stats
         if data.length <= 1
             "%.4f" % [mean]
         else
-            "%.4f += %.2f%%" % [mean, stdErrPercent]
+            "%.4f +- %.2f%%" % [mean, stdErrPercent]
         end
     end
 end
