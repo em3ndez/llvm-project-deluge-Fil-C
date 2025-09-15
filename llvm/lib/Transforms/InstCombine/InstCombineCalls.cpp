@@ -131,6 +131,8 @@ Instruction *InstCombinerImpl::SimplifyAnyMemTransfer(AnyMemTransferInst *MI) {
   // that the store must be storing the constant value (else the memory
   // wouldn't be constant), and this must be a noop.
   if (!isModSet(AA->getModRefInfoMask(MI->getDest()))) {
+    if (DL.isFilC())
+      return nullptr;
     // Set the size of the copy to 0, it will be deleted on the next iteration.
     MI->setLength(Constant::getNullValue(MI->getLength()->getType()));
     return MI;

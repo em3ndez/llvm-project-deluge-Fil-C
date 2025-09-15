@@ -715,8 +715,11 @@ Constant *llvm::ConstantFoldLoadFromConst(Constant *C, Type *Ty,
   // Explicitly check for out-of-bounds access, so we return poison even if the
   // constant is a uniform value.
   TypeSize Size = DL.getTypeAllocSize(C->getType());
-  if (!Size.isScalable() && Offset.sge(Size.getFixedValue()))
+  if (!Size.isScalable() && Offset.sge(Size.getFixedValue())) {
+    if (DL.isFilC())
+      return nullptr;
     return PoisonValue::get(Ty);
+  }
 
   // Try an offset-independent fold of a uniform value.
   if (Constant *Result = ConstantFoldLoadFromUniformValue(C, Ty, DL))
