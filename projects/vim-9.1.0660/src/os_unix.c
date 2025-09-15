@@ -391,7 +391,7 @@ mch_signal(int sig, sighandler_T func)
 # else
     sa.sa_flags = 0;
 # endif
-    if (sigaction(sig, &sa, &old) == -1)
+    if (sigaction(sig, func == SIG_ERR ? NULL : &sa, &old) == -1)
 	return SIG_ERR;
     return blocked ? SIG_HOLD: old.sa_handler;
 #elif defined(HAVE_SIGSET)

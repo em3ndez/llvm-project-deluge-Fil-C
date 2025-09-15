@@ -13447,18 +13447,18 @@ then :
   printf "%s\n" "#define HAVE_SETSID 1" >>confdefs.h
 
 fi
-ac_fn_c_check_func "$LINENO" "sigaltstack" "ac_cv_func_sigaltstack"
-if test "x$ac_cv_func_sigaltstack" = xyes
-then :
-  printf "%s\n" "#define HAVE_SIGALTSTACK 1" >>confdefs.h
-
-fi
-ac_fn_c_check_func "$LINENO" "sigstack" "ac_cv_func_sigstack"
-if test "x$ac_cv_func_sigstack" = xyes
-then :
-  printf "%s\n" "#define HAVE_SIGSTACK 1" >>confdefs.h
-
-fi
+#ac_fn_c_check_func "$LINENO" "sigaltstack" "ac_cv_func_sigaltstack"
+#if test "x$ac_cv_func_sigaltstack" = xyes
+#then :
+#  printf "%s\n" "#define HAVE_SIGALTSTACK 1" >>confdefs.h
+#
+#fi
+#ac_fn_c_check_func "$LINENO" "sigstack" "ac_cv_func_sigstack"
+#if test "x$ac_cv_func_sigstack" = xyes
+#then :
+#  printf "%s\n" "#define HAVE_SIGSTACK 1" >>confdefs.h
+#
+#fi
 ac_fn_c_check_func "$LINENO" "sigset" "ac_cv_func_sigset"
 if test "x$ac_cv_func_sigset" = xyes
 then :
