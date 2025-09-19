@@ -173,6 +173,9 @@
 #  endif
 #endif
 
+#if !defined(NVALGRIND)
+#  define NVALGRIND 1
+#endif
 
 /* ------------------------------------------------------------------ */
 /* ARCHITECTURE SPECIFICS for SPECIAL INSTRUCTIONS.  There is nothing */
