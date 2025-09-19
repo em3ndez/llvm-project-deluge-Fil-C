@@ -34,6 +34,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "libinput-private-config.h"
 #include "libinput-util.h"
@@ -51,7 +52,10 @@
 struct test_device {
 	const char *name;
 	struct litest_test_device *device;
+	struct test_device *next_test_device;
 } __attribute__((aligned(16)));
+
+extern struct test_device *first_test_device;
 
 #define TEST_DEVICE(which, ...) \
 	static struct litest_test_device _device; \
@@ -61,11 +65,15 @@ struct test_device {
 		litest_set_current_device(d); \
 	} \
 	\
-	static const struct test_device _test_device \
-		__attribute__ ((used)) \
-		__attribute__ ((section ("test_device_section"))) = { \
-		#which, &_device \
-	}; \
+	static void register_##which(void) __attribute__((constructor)); \
+	static void register_##which(void) \
+	{ \
+	        struct test_device *test_device = malloc(sizeof(struct test_device)); \
+		test_device->name = #which; \
+		test_device->device = &_device; \
+		test_device->next_test_device = first_test_device; \
+		first_test_device = test_device; \
+	} \
 	static struct litest_test_device _device = { \
 		.setup = _setup, \
 		.shortname = #which, \
@@ -76,15 +84,22 @@ struct test_device {
 struct test_collection {
 	const char *name;
 	void (*setup)(void);
+	struct test_collection *next_test_collection;
 } __attribute__((aligned(16)));
+
+extern struct test_collection *first_test_collection;
 
 #define TEST_COLLECTION(name_) \
 	static void (CONCAT(name_ , __LINE__))(void); \
-	static const struct test_collection CONCAT(_test_collection_, __LINE__) \
-	__attribute__ ((used)) \
-	__attribute__ ((section ("test_collection_section"))) = { \
-		#name_, CONCAT(name_, __LINE__) \
-	}; \
+	static void CONCAT(register_test_collection_, __LINE__)(void) __attribute__((constructor)); \
+	static void CONCAT(register_test_collection_, __LINE__)(void) \
+	{ \
+	        struct test_collection *test_collection = malloc(sizeof(struct test_collection)); \
+		test_collection->name = #name_; \
+		test_collection->setup = CONCAT(name_, __LINE__); \
+		test_collection->next_test_collection = first_test_collection; \
+		first_test_collection = test_collection; \
+	} \
 	static void (CONCAT(name_, __LINE__))(void)
 
 #define litest_mark_test_start() \

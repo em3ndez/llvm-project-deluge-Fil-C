@@ -28,12 +28,12 @@ extern const struct libevdev_test *first_test;
         static void register_##passed_name(void) __attribute__((constructor)); \
         static void register_##passed_name(void) \
         { \
-            struct libevdev_test* test = malloc(sizeof(struct libevdev_test)); \
-            test->name = #passed_name; \
-            test->setup = passed_name##_setup; \
-            test->needs_root_privileges = root_privs; \
-            test->next_test = first_test; \
-            first_test = test; \
+                struct libevdev_test* test = malloc(sizeof(struct libevdev_test)); \
+                test->name = #passed_name; \
+                test->setup = passed_name##_setup; \
+                test->needs_root_privileges = root_privs; \
+                test->next_test = first_test; \
+                first_test = test; \
         } \
 	static Suite* (passed_name##_setup)(void)
 

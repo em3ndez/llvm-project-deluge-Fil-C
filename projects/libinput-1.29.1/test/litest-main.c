@@ -135,26 +135,25 @@ litest_list_tests(struct list *tests)
 	}
 }
 
-extern const struct test_device __start_test_device_section, __stop_test_device_section;
+struct test_device *first_test_device;
 
 static void
 litest_init_test_devices(void)
 {
 	const struct test_device *t;
-	for (t = &__start_test_device_section; t < &__stop_test_device_section; t++)
+	for (t = first_test_device; t; t = t->next_test_device)
 		litest_add_test_device(&t->device->node);
 }
 
-extern const struct test_collection __start_test_collection_section,
-	__stop_test_collection_section;
+struct test_collection *first_test_collection;
 
 static void
 setup_tests(void)
 {
 	const struct test_collection *c;
 
-	for (c = &__start_test_collection_section; c < &__stop_test_collection_section;
-	     c++) {
+	for (c = first_test_collection; c;
+	     c = c->next_test_collection) {
 		struct suite *s;
 		s = zalloc(sizeof(*s));
 		s->name = safe_strdup(c->name);
