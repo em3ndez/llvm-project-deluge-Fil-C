@@ -125,7 +125,7 @@ host_triplet = @host@
 
 #   Versioned symbols and restricted exports
 @HAVE_LD_VERSION_SCRIPT_TRUE@@HAVE_SOLARIS_LD_TRUE@am__append_8 = -Wl,-M -Wl,libpng.vers
-@HAVE_LD_VERSION_SCRIPT_TRUE@@HAVE_SOLARIS_LD_FALSE@am__append_9 = -Wl,--version-script=libpng.vers
+@HAVE_LD_VERSION_SCRIPT_TRUE@@HAVE_SOLARIS_LD_FALSE@am__append_9 = --version-script=libpng.vers
 #   Only restricted exports when possible
 @HAVE_LD_VERSION_SCRIPT_FALSE@am__append_10 = -export-symbols libpng.sym
 @PNG_LOONGARCH_LSX_TRUE@am__append_11 = libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@lsx.la
