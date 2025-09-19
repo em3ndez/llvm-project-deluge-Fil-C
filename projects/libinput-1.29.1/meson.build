@@ -441,7 +441,7 @@ libinput_version_h = configure_file(
 )
 
 mapfile = dir_src / 'libinput.sym'
-version_flag = '-Wl,--version-script,@0@'.format(mapfile)
+version_flag = '--version-script=@0@'.format(mapfile)
 lib_libinput = shared_library('input',
 		src_libinput,
 		include_directories : [include_directories('.'), includes_include],
