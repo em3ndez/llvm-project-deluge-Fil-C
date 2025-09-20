@@ -47,29 +47,34 @@ struct test_context;
 struct runner_test {
 	const char *name;
 	void (*run)(struct test_context *);
+	struct runner_test *next;
 } __attribute__ ((aligned (64)));
+
+static struct runner_test *first_test;
 
 #define RUNNER_TEST(name)					\
 	static void runner_func_##name(struct test_context *);	\
 								\
-	const struct runner_test runner_test_##name		\
-		__attribute__ ((used, section ("plugin_test_section"))) = \
+	static void register_test_##name(void) __attribute__((constructor)); \
+	static void register_test_##name(void)                  \
 	{							\
-		#name, runner_func_##name			\
-	};							\
+		struct runner_test* test =			\
+			malloc(sizeof(struct runner_test));	\
+		*test = (struct runner_test){			\
+			#name, runner_func_##name, first_test	\
+		};						\
+		first_test = test;				\
+	}							\
 								\
 	static void runner_func_##name(struct test_context *ctx)
-
-extern const struct runner_test __start_plugin_test_section;
-extern const struct runner_test __stop_plugin_test_section;
 
 static const struct runner_test *
 find_runner_test(const char *name)
 {
 	const struct runner_test *t;
 
-	for (t = &__start_plugin_test_section;
-	     t < &__stop_plugin_test_section; t++) {
+	for (t = first_test;
+	     t; t++) {
 		if (strcmp(t->name, name) == 0)
 			return t;
 	}

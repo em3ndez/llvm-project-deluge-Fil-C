@@ -248,6 +248,9 @@ zuc_set_random(int random);
 void
 zuc_set_output_junit(bool enable);
 
+extern struct zuc_registration *first_zuc_reg;
+extern size_t zuc_reg_count;
+
 /**
  * Defines a test case that can be registered to run.
  *
@@ -257,13 +260,20 @@ zuc_set_output_junit(bool enable);
 #define ZUC_TEST(tcase, test) \
 	static void zuctest_##tcase##_##test(void); \
 	\
-	const struct zuc_registration zzz_##tcase##_##test \
-	__attribute__ ((used, section ("zuc_tsect"))) = \
+	static void register_zuctest_##tcase##_##test(void) __attribute__((constructor)); \
+	static void register_zuctest_##tcase##_##test(void) \
 	{ \
-		#tcase, #test, 0,		\
-		zuctest_##tcase##_##test,	\
-		0				\
-	}; \
+		struct zuc_registration *zuc_reg = malloc(sizeof(struct zuc_registration)); \
+		*zuc_reg = (struct zuc_registration){ \
+			#tcase, #test, 0,		\
+			zuctest_##tcase##_##test,	\
+			0,				\
+			first_zuc_reg,			\
+			zuc_reg_count			\
+		}; \
+		first_zuc_reg = zuc_reg; \
+		zuc_reg_count++; \
+	} \
 	\
 	static void zuctest_##tcase##_##test(void)
 

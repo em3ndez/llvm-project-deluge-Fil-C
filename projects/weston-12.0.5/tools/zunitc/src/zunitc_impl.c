@@ -197,21 +197,22 @@ compare_regs(const void *lhs, const void *rhs)
 }
 
 /* gcc-specific markers for auto test case registration: */
-extern const struct zuc_registration __start_zuc_tsect;
-extern const struct zuc_registration __stop_zuc_tsect;
+struct zuc_registration *first_zuc_reg;
+size_t zuc_reg_count;
 
 static void
 register_tests(void)
 {
 	size_t case_count = 0;
-	size_t count = &__stop_zuc_tsect - &__start_zuc_tsect;
+	size_t count = zuc_reg_count;
 	size_t i;
 	int idx = 0;
 	const char *last_name = NULL;
 	void **array = zalloc(sizeof(void *) * count);
+        struct zuc_registration *zuc;
 	ZUC_ASSERT_NOT_NULL(array);
-	for (i = 0; i < count; ++i)
-		array[i] = (void *)(&__start_zuc_tsect + i);
+	for (i = 0, zuc = first_zuc_reg; i < count; ++i, zuc = zuc->next_reg)
+		array[i] = (void *)zuc;
 
 	qsort(array, count, sizeof(array[0]), compare_regs);
 
@@ -266,7 +267,7 @@ register_tests(void)
 	for (i = 0; i < count; ++i) {
 		const struct zuc_registration *reg =
 			(const struct zuc_registration *)array[i];
-		int order = count - (1 + (reg - &__start_zuc_tsect));
+		int order = count - (1 + reg->index);
 
 		if (!last_name || (strcmp(last_name, reg->tcase))) {
 			last_name = reg->tcase;

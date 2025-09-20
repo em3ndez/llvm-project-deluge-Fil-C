@@ -51,7 +51,7 @@
  * \defgroup testharness_private Test harness private
  */
 
-extern const struct weston_test_entry __start_test_section, __stop_test_section;
+struct weston_test_entry *first_test;
 
 struct weston_test_run_info {
 	char name[512];
@@ -142,7 +142,7 @@ find_test(const char *name)
 {
 	const struct weston_test_entry *t;
 
-	for (t = &__start_test_section; t < &__stop_test_section; t++)
+	for (t = first_test; t; t = t->next)
 		if (strcmp(t->name, name) == 0)
 			return t;
 
@@ -196,7 +196,7 @@ list_tests(void)
 	}
 
 	printf("Test names:\n");
-	for (t = &__start_test_section; t < &__stop_test_section; t++) {
+	for (t = first_test; t; t = t->next) {
 		printf("  %s\n", t->name);
 		if (t->n_elements > 1)
 			printf("    with array of %d cases\n", t->n_elements);
@@ -477,9 +477,13 @@ weston_test_harness_create(int argc, char **argv)
 		harness->data.tests_count = 1;
 		harness->data.case_index = harness->case_ind;
 	} else {
-		harness->data.tests = &__start_test_section;
-		harness->data.tests_count =
-			&__stop_test_section - &__start_test_section;
+		struct weston_test_entry *array = malloc(sizeof(struct weston_test_entry) * num_tests);
+		struct weston_test_entry *t;
+		size_t index;
+		for (index = 0, t = first_test; t; index++, t = t->next)
+			array[index] = *t;
+		harness->data.tests = array;
+		harness->data.tests_count = num_tests;
 		harness->data.case_index = -1;
 	}
 

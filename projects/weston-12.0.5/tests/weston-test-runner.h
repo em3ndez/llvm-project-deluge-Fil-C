@@ -55,19 +55,29 @@ struct weston_test_entry {
 	const void *table_data;
 	size_t element_size;
 	int n_elements;
+	struct weston_test_entry *next;
 } __attribute__ ((aligned (64)));
 
 #define TEST_BEGIN(name, arg)						\
 	static void name(arg)
 
+extern struct weston_test_entry *first_test;
+extern size_t num_tests;
+
 #define TEST_COMMON(func, name, data, size, n_elem)			\
 	static void func(void *);					\
 									\
-	const struct weston_test_entry test##name			\
-		__attribute__ ((used, section ("test_section"))) =	\
-	{								\
-		#name, func, data, size, n_elem				\
-	};
+	static void register_test##name(void) __attribute__((constructor)); \
+	static void register_test##name(void)                       	\
+	{                                                               \
+	        struct weston_test_entry *test =			\
+		        malloc(sizeof(struct weston_test_entry));	\
+		*test = (struct weston_test_entry){		     	\
+		        #name, func, data, size, n_elem, first_test	\
+		};    							\
+		first_test = test;					\
+		num_tests++; 						\
+        }
 
 #define NO_ARG_TEST(name)						\
 	TEST_COMMON(wrap##name, name, NULL, 0, 1)			\
