@@ -1,0 +1,14 @@
+./perf/.gitignore
+./.gitignore
+./src/.gitignore
+./doc/tutorial/src/.gitignore
+./doc/tutorial/slides/.gitignore
+./doc/public/.gitignore
+./doc/.gitignore
+./boilerplate/.gitignore
+./test/.gitignore
+./test/pdiff/.gitignore
+./util/.gitignore
+./util/cairo-script/.gitignore
+./util/cairo-trace/.gitignore
+./subprojects/.gitignore
