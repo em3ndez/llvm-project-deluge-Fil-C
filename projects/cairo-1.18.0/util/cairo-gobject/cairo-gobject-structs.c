@@ -42,12 +42,12 @@
 GType \
 underscore_name ## _get_type (void) \
 { \
-   static gsize type_ret = 0; \
-   if (g_once_init_enter (&type_ret)) { \
+   static gpointer type_ret = 0; \
+   if (g_once_init_enter_pointer (&type_ret)) { \
       GType type = g_boxed_type_register_static (g_intern_static_string (Name), \
                                                  (GBoxedCopyFunc)copy_func, \
                                                  (GBoxedFreeFunc)free_func); \
-      g_once_init_leave (&type_ret, type); \
+      g_once_init_leave_pointer (&type_ret, type); \
    } \
    return type_ret; \
 }
