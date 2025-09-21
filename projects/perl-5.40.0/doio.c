@@ -1258,6 +1258,14 @@ S_openindirtemp(pTHX_ GV *gv, SV *orig_name, SV *temp_out_name) {
 #define NotSupported(e) ((e) == ENOSYS)
 #endif
 
+static zptrtable* dir_ptrtable;
+
+static void create_ptrtable(void) __attribute__((constructor));
+static void create_ptrtable(void)
+{
+    dir_ptrtable = zptrtable_new();
+}
+
 static int
 S_argvout_free(pTHX_ SV *io, MAGIC *mg) {
     PERL_UNUSED_ARG(io);
@@ -1275,7 +1283,7 @@ S_argvout_free(pTHX_ SV *io, MAGIC *mg) {
 
         dir_psv = av_fetch((AV*)mg->mg_obj, ARGVMG_ORIG_DIRP, FALSE);
         assert(dir_psv && *dir_psv && SvIOK(*dir_psv));
-        dir = INT2PTR(DIR *, SvIV(*dir_psv));
+        dir = zptrtable_decode(dir_ptrtable, SvIV(*dir_psv));
 #endif
         if (IoIFP(io)) {
             if (PL_phase == PERL_PHASE_DESTRUCT && PL_statusvalue == 0) {
@@ -1544,7 +1552,7 @@ Perl_nextargv(pTHX_ GV *gv, bool nomagicopen)
                 av_store(magic_av, ARGVMG_ORIG_PID, newSViv((IV)PerlProc_getpid()));
 #if defined(ARGV_USE_ATFUNCTIONS)
                 curdir = opendir(".");
-                av_store(magic_av, ARGVMG_ORIG_DIRP, newSViv(PTR2IV(curdir)));
+                av_store(magic_av, ARGVMG_ORIG_DIRP, newSViv(zptrtable_encode(dir_ptrtable, curdir)));
 #elif defined(ARGV_USE_STAT_INO)
                 if (PerlLIO_stat(".", &statbuf) >= 0) {
                     av_store(magic_av, ARGVMG_ORIG_CWD_STAT,
@@ -1705,7 +1713,7 @@ S_argvout_final(pTHX_ MAGIC *mg, IO *io, bool is_explict) {
         assert(pid_psv && *pid_psv);
 #ifdef ARGV_USE_ATFUNCTIONS
         assert(dir_psv && *dir_psv);
-        dir = INT2PTR(DIR *, SvIVX(*dir_psv));
+        dir = zptrtable_decode(dir_ptrtable, SvIVX(*dir_psv));
         dfd = my_dirfd(dir);
 #endif
 
