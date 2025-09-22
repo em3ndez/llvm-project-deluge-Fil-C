@@ -2088,7 +2088,7 @@ libsystemd = shared_library(
         link_args : ['-shared',
                      # Make sure our library is never deleted from memory, so that our open logging fds don't leak on dlopen/dlclose cycles.
                      '-z', 'nodelete',
-                     '-Wl,--version-script=' + libsystemd_sym_path],
+                     '--version-script=' + libsystemd_sym_path],
         link_with : [libbasic_static],
         link_whole : [libsystemd_static],
         dependencies : [librt,
@@ -2135,7 +2135,7 @@ libudev = shared_library(
         version : libudev_version,
         include_directories : includes,
         link_args : ['-shared',
-                     '-Wl,--version-script=' + libudev_sym_path],
+                     '--version-script=' + libudev_sym_path],
         link_with : [libsystemd_static, libshared_static],
         link_whole : libudev_basic,
         dependencies : [threads,
@@ -2579,7 +2579,7 @@ foreach dict : modules
         kwargs += {
                 'link_args' : [
                         kwargs.get('link_args', []),
-                        '-Wl,--version-script=' + dict.get('version-script'),
+                        '--version-script=' + dict.get('version-script'),
                 ],
                 'link_depends' : [
                         kwargs.get('link_depends', []),

@@ -12,6 +12,7 @@
 #include "stdio-util.h"
 #include "string-table.h"
 #include "string-util.h"
+#include <stdfil.h>
 
 int reset_all_signal_handlers(void) {
         static const struct sigaction sa = {
@@ -24,6 +25,9 @@ int reset_all_signal_handlers(void) {
 
                 /* These two cannot be caught... */
                 if (IN_SET(sig, SIGKILL, SIGSTOP))
+                        continue;
+
+                if (zis_unsafe_signal_for_handlers(sig))
                         continue;
 
                 /* On Linux the first two RT signals are reserved by glibc, and sigaction() will return

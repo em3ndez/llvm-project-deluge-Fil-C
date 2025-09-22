@@ -37,21 +37,21 @@ const char* _bus_error_message(const sd_bus_error *e, int error, char buf[static
  * warn for the unknown attribute, so just disable -Wattributes.
  */
 
-#define BUS_ERROR_MAP_ELF_REGISTER                                      \
-        _Pragma("GCC diagnostic ignored \"-Wattributes\"")              \
-        _section_("SYSTEMD_BUS_ERROR_MAP")                              \
-        _used_                                                          \
-        _retain_                                                        \
-        _alignptr_                                                      \
-        _variable_no_sanitize_address_
+//#define BUS_ERROR_MAP_ELF_REGISTER                                      \
+//        _Pragma("GCC diagnostic ignored \"-Wattributes\"")              \
+//        _section_("SYSTEMD_BUS_ERROR_MAP")                              \
+//        _used_                                                          \
+//        _retain_                                                        \
+//        _alignptr_                                                      \
+//        _variable_no_sanitize_address_
 
-#define BUS_ERROR_MAP_ELF_USE(errors)                                   \
-        extern const sd_bus_error_map errors[];                         \
-        _used_                                                          \
-        static const sd_bus_error_map * const CONCATENATE(errors ## _copy_, __COUNTER__) = errors;
+//#define BUS_ERROR_MAP_ELF_USE(errors)                                   \
+//        extern const sd_bus_error_map errors[];                         \
+//        _used_                                                          \
+//        static const sd_bus_error_map * const CONCATENATE(errors ## _copy_, __COUNTER__) = errors;
 
 /* We use something exotic as end marker, to ensure people build the
  * maps using the macsd-ros. */
 #define BUS_ERROR_MAP_END_MARKER -'x'
 
-BUS_ERROR_MAP_ELF_USE(bus_standard_errors);
+//BUS_ERROR_MAP_ELF_USE(bus_standard_errors);
