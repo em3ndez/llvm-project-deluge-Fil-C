@@ -54,7 +54,7 @@ void init_resource_track(struct resource_track *track)
 {
 	struct rusage r;
 
-	track->brk_start = sbrk(0);
+	track->brk_start = NULL;
 	gettimeofday(&track->time_start, 0);
 	getrusage(RUSAGE_SELF, &r);
 	track->user_start = r.ru_utime;
@@ -77,7 +77,7 @@ static void print_resource_track(struct resource_track *track)
 	getrusage(RUSAGE_SELF, &r);
 
 	printf(_("Memory used: %lu, elapsed time: %6.3f/%6.3f/%6.3f\n"),
-	       (unsigned long)((char *)sbrk(0) - (char *)track->brk_start),
+	       (unsigned long)((char *)NULL - (char *)track->brk_start),
 	       timeval_subtract(&time_end, &track->time_start),
 	       timeval_subtract(&r.ru_utime, &track->user_start),
 	       timeval_subtract(&r.ru_stime, &track->system_start));
