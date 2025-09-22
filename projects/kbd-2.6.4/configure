@@ -17715,8 +17715,8 @@ fi
 
 
 case $host_cpu in
-	i?86*)   RESIZECONS_PROGS=yes ;;
-	x86_64*) RESIZECONS_PROGS=yes ;;
+	i?86*)   RESIZECONS_PROGS=no ;;
+	x86_64*) RESIZECONS_PROGS=no ;;
 	*)       RESIZECONS_PROGS=no  ;;
 esac
  if test "$RESIZECONS_PROGS" = "yes"; then
