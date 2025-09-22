@@ -28,9 +28,14 @@
 set -e
 set -x
 
-./build_attr.sh
-./build_elfutils.sh
-./build_check.sh
-./build_diffutils.sh
-./build_bison.sh
+cd projects/elfutils-0.191
+extract_source
+mkdir build
+cd build
+CC=$PWD/../../../../build/bin/clang CXX=$PWD/../../../../build/bin/clang++ ../configure \
+    --prefix=$PWD/../../../../pizfix \
+    --disable-debuginfod \
+    --enable-libdebuginfod=dummy \
+    --disable-symbol-versioning
+make -j $NCPU
 
