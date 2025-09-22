@@ -28,24 +28,23 @@
 set -e
 set -x
 
-# This is the set of programs that I've confirmed build fine with glibc, but haven't confirmed that
-# they build fine with musl. If we confirm that they build with musl we should move the build command
-# to build_all.sh.
-
-./build_gmp.sh
-./build_attr.sh
-./build_shadow.sh
-./build_sed.sh
-./build_gettext.sh
-./build_grep.sh
-./build_elfutils.sh
-./build_check.sh
-./build_diffutils.sh
-./build_bison.sh
-./build_libpipeline.sh
-./build_texinfo.sh
-./build_libcap.sh
-./build_util_linux.sh
-./build_procps.sh
-./build_make.sh
+cd projects/util-linux-2.40.2
+extract_source
+PATH=$PWD/../../../pizfix/bin:$PATH CC=$PWD/../../../build/bin/clang CXX=$PWD/../../../build/bin/clang++ ./configure --prefix=$PWD/../../../pizfix \
+    --disable-chfn-chsh \
+    --disable-login \
+    --disable-nologin \
+    --disable-su \
+    --disable-setpriv \
+    --disable-runuser \
+    --disable-pylibmount \
+    --disable-liblastlog2 \
+    --disable-static \
+    --without-python \
+    --without-systemd \
+    --without-systemdsystemunitdir \
+    --disable-makeinstall-chown \
+    --disable-makeinstall-setuid
+make -j $NCPU
+make -j $NCPU install
 
