@@ -49,7 +49,7 @@ defkeys(struct lk_ctx *ctx, int fd, int kbd_mode)
 				ke.kb_table = (unsigned char) i;
 				ke.kb_value = (unsigned short) value;
 
-				fail = ioctl(fd, KDSKBENT, (unsigned long)&ke);
+				fail = ioctl(fd, KDSKBENT, &ke);
 
 				if (fail) {
 					if (errno == EPERM) {
@@ -86,7 +86,7 @@ defkeys(struct lk_ctx *ctx, int fd, int kbd_mode)
 
 			DBG(ctx, _("deallocate keymap %d"), i);
 
-			if (ioctl(fd, KDSKBENT, (unsigned long)&ke)) {
+			if (ioctl(fd, KDSKBENT, &ke)) {
 				if (errno != EINVAL) {
 					ERR(ctx, _("KDSKBENT: %s: could not deallocate keymap %d"),
 					    strerror(errno), i);
@@ -99,7 +99,7 @@ defkeys(struct lk_ctx *ctx, int fd, int kbd_mode)
 					ke.kb_table = (unsigned char) i;
 					ke.kb_value = K_HOLE;
 
-					if (ioctl(fd, KDSKBENT, (unsigned long)&ke)) {
+					if (ioctl(fd, KDSKBENT, &ke)) {
 						if (errno == EINVAL && i >= 16)
 							break; /* old kernel */
 
@@ -172,7 +172,7 @@ deffuncs(struct lk_ctx *ctx, int fd)
 
 		if (ptr) {
 			strcpy((char *)kbs.kb_string, ptr);
-			if (ioctl(fd, KDSKBSENT, (unsigned long)&kbs)) {
+			if (ioctl(fd, KDSKBSENT, &kbs)) {
 				s = ostr(ctx, (char *)kbs.kb_string);
 				if (s == NULL)
 					return -1;
@@ -185,7 +185,7 @@ deffuncs(struct lk_ctx *ctx, int fd)
 		} else if (ctx->flags & LK_FLAG_CLEAR_STRINGS) {
 			kbs.kb_string[0] = 0;
 
-			if (ioctl(fd, KDSKBSENT, (unsigned long)&kbs)) {
+			if (ioctl(fd, KDSKBSENT, &kbs)) {
 				ERR(ctx, _("failed to clear string %s"),
 				    get_sym(ctx, KT_FN, kbs.kb_func));
 			} else {
@@ -225,7 +225,7 @@ defdiacs(struct lk_ctx *ctx, int fd)
 			j++;
 		}
 
-		if (ioctl(fd, KDSKBDIACRUC, (unsigned long)&kdu)) {
+		if (ioctl(fd, KDSKBDIACRUC, &kdu)) {
 			ERR(ctx, "KDSKBDIACRUC: %s", strerror(errno));
 			return -1;
 		}
@@ -254,7 +254,7 @@ defdiacs(struct lk_ctx *ctx, int fd)
 			j++;
 		}
 
-		if (ioctl(fd, KDSKBDIACR, (unsigned long)&kd)) {
+		if (ioctl(fd, KDSKBDIACR, &kd)) {
 			ERR(ctx, "KDSKBDIACR: %s", strerror(errno));
 			return -1;
 		}
