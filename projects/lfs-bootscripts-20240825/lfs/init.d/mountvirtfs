@@ -90,6 +90,8 @@ case "${1}" in
          ln -sf /proc/kcore  /dev/core   || failed=1
       fi
 
+      mkdir -m 1777 /run/user || failed=1
+
       (exit ${failed})
       evaluate_retval
       exit $failed
