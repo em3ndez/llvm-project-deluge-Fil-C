@@ -28,6 +28,17 @@
 set -e
 set -x
 
-./build_attr.sh
-./build_bison.sh
+cd projects/bison-3.8.2
+extract_source
+CC=$PWD/../../../build/bin/clang CXX=$PWD/../../../build/bin/clang++ ./configure --prefix=$PWD/../../../pizfix
+make -j $NCPU
+make -j $NCPU install
 
+cd fil-tests
+rm -f emp_ematch.output
+rm -f emp_ematch.tab.h
+rm -f emp_ematch.tab.c
+../../../pizfix/bin/bison -d -t -v -p ematch_ -b emp_ematch emp_ematch.y
+rm emp_ematch.output
+rm emp_ematch.tab.h
+rm emp_ematch.tab.c
