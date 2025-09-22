@@ -28,7 +28,8 @@
 set -e
 set -x
 
-./build_attr.sh
-./build_check.sh
-./build_bison.sh
-
+cd projects/check-0.15.2
+extract_source
+CC=$PWD/../../../build/bin/clang ./configure --disable-static --prefix=$PWD/../../../pizfix
+make -j $NCPU
+make -j $NCPU install
