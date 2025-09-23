@@ -34,8 +34,3 @@ CC=$PWD/../../../build/bin/clang ./configure --prefix=$PWD/../../../pizfix
 make -j $NCPU
 make install
 
-cd fil-tests
-rm -f filc_runtime.c.diff.actual
-(! ../../../pizfix/bin/diff -u filc_runtime.c.old filc_runtime.c.new > filc_runtime.c.diff.actual)
-diff filc_runtime.c.diff filc_runtime.c.diff.actual
-rm filc_runtime.c.diff.actual

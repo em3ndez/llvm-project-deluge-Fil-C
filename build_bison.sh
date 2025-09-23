@@ -38,7 +38,7 @@ cd fil-tests
 rm -f emp_ematch.output
 rm -f emp_ematch.tab.h
 rm -f emp_ematch.tab.c
-../../../pizfix/bin/bison -d -t -v -p ematch_ -b emp_ematch emp_ematch.y
+../../../../pizfix/bin/bison -d -t -v -p ematch_ -b emp_ematch emp_ematch.y
 rm emp_ematch.output
 rm emp_ematch.tab.h
 rm emp_ematch.tab.c

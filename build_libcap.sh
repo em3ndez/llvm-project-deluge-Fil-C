@@ -28,7 +28,7 @@
 set -e
 set -x
 
-cd filsec/projects/libcap-2.70
+cd projects/libcap-2.70
 extract_source
 CC=$PWD/../../../build/bin/clang make prefix=$PWD/../../../pizfix lib=lib -j $NCPU
 CC=$PWD/../../../build/bin/clang make prefix=$PWD/../../../pizfix lib=lib -j $NCPU install

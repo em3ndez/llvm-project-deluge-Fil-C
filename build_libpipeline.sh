@@ -35,5 +35,5 @@ make -j $NCPU
 make -j $NCPU install
 
 cd fil-tests
-../../../build/bin/clang -o pipeline pipeline.c -O2 -g -lpipeline
+../../../../build/bin/clang -o pipeline pipeline.c -O2 -g -lpipeline
 ./pipeline
