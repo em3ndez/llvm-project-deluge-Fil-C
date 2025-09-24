@@ -19,6 +19,14 @@ export LFSDEV=`findmnt -nr -o SOURCE $LFS`
 
 test "x$LFSDEV" != x
 
+export FILCSRC=..
+test -d $FILCSRC
+test -d $FILCSRC/projects
+
+FILCOWNER=`stat -c %U $FILCSRC`
+id -u $FILCOWNER
+su $FILCOWNER ./build_prelc_sub0_filc.sh
+
 ./build_unmount.sh
 
 (cd $LFS && rm -rf *)
@@ -29,6 +37,7 @@ chmod -v a+wt $LFS/sources
 echo "prelc-part" > /mnt/lfs/sources/lfsbuildstate
 
 ./build_copy_stuff.sh
+cp -v $FILCSRC/projects/*/pizlonated-*.tar.gz $LFS/sources
 
 mkdir -pv $LFS/{etc,var,usr} $LFS/yolo/{bin,lib,sbin}
 for i in bin lib sbin; do

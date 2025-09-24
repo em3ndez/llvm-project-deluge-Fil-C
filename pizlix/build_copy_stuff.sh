@@ -77,7 +77,6 @@ cp -v \
     libpipeline-1.5.7.tar.gz \
     libtool-2.4.7.tar.xz \
     libxcrypt-4.4.36.tar.xz \
-    linux-6.10.5.tar.xz \
     lz4-1.10.0.tar.gz \
     m4-1.4.19.tar.xz \
     make-4.4.1.tar.gz \

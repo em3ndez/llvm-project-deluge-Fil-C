@@ -90,8 +90,8 @@ cat gcc/limitx.h gcc/glimits.h gcc/limity.h > \
 cd ..
 rm -rf gcc-14.2.0
 
-tar -xf linux-6.10.5.tar.xz
-cd linux-6.10.5
+tar -xf pizlonated-linux.tar.gz
+cd pizlonated-linux
 make mrproper
 make headers
 find usr/include -type f ! -name '*.h' -delete
@@ -99,7 +99,7 @@ cp -rv usr/include $LFS/yolo
 cp -rv usr/include $LFS/yolo/kernel-include
 ln -sv ../yolo/include $LFS/usr/include
 cd ..
-rm -rf linux-6.10.5
+rm -rf pizlonated-linux
 
 # Option #2 (better but still meh?)
 #
