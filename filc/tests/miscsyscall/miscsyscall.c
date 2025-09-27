@@ -28,6 +28,7 @@
 #include <sys/auxv.h>
 #include <sys/times.h>
 #include "utils.h"
+#include <threads.h>
 
 #ifndef SA_RESTORER
 #define SA_RESTORER 0x4000000
@@ -552,6 +553,9 @@ int main(int argc, char** argv)
     ZASSERT(!close(fd));
 
     ZASSERT(sched_getcpu() >= 0);
+
+    sched_yield();
+    thrd_yield();
 
     zprintf("No worries.\n");
     return 0;
