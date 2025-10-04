@@ -584,6 +584,18 @@ void* zcall(void* callee, void* args);
 /* Returns from the calling function, passing the contents of the rets object as the return value. */
 void zreturn(void* rets);
 
+/* Performs an unsafe call to Yolo-land.
+   
+   This barely works! It's not intended for full-blown interop with Yolo code. In particular, right
+   now Fil-C code expects to live in a Fil-C runtime, which precludes the use of a Yolo libc.
+   
+   This function is mostly useful for implementing constant-time crypto libraries or other kernels
+   that need to be written in assembly.
+
+   The first argument is the Yolo symbol name of the function to be called. It must be a string
+   literal. The remaining arguments are passed along using Yolo C ABI conventions. */
+unsigned long zunsafe_call(const char* symbol_name, ...);
+
 /* Tells you if a va_list has another argument. */
 static inline filc_bool zcan_va_arg(__builtin_va_list list)
 {

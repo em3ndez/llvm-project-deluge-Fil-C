@@ -163,7 +163,7 @@ $testDirectory.each_entry {
         outp.puts "touch #{Shellwords.shellescape(compilerOutput)}"
         fullPath.each_entry {
             | entry |
-            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp"
+            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp" or entry.extname == ".s"
             isCpp = entry.extname == ".cpp"
             if isCpp
                 clang = "clang++"
@@ -237,7 +237,7 @@ $testDirectory.each_entry {
         linkerIsCpp = false
         fullPath.each_entry {
             | entry |
-            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp"
+            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp" or entry.extname == ".s"
             next if libraryFiles[entry.to_s]
             linkerIsCpp = true if entry.extname == ".cpp"
         }
@@ -249,7 +249,7 @@ $testDirectory.each_entry {
         outp.print "#{$compilerPrefix}#{$pizfix}/../build/bin/#{clangLinker} -o #{Shellwords.shellescape(binary)}"
         fullPath.each_entry {
             | entry |
-            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp"
+            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp" or entry.extname == ".s"
             next if libraryFiles[entry.to_s]
             outp.print " #{Shellwords.shellescape(outputPath + entry)}.o"
         }

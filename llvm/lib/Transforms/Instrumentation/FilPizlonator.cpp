@@ -1335,6 +1335,16 @@ struct FullMemoryAccessData {
   MemoryAccessData MAD;
 };
 
+struct UnsafeFunc {
+  BitCastInst* Dummy { nullptr };
+  std::string Name;
+
+  UnsafeFunc() = default;
+
+  UnsafeFunc(BitCastInst* Dummy, const std::string& Name):
+    Dummy(Dummy), Name(Name) { }
+};
+
 class Pizlonator {
   static constexpr unsigned TargetAS = 0;
   
@@ -1378,6 +1388,7 @@ class Pizlonator {
   Constant* RawNull;
   Constant* FlightNull;
   BitCastInst* Dummy;
+  FunctionType* UnsafeFuncTy;
 
   // Low-level functions used by codegen.
   FunctionCallee PollcheckSlow;
@@ -1488,6 +1499,8 @@ class Pizlonator {
   std::unordered_map<Function*, Constant*> FunctionToLower;
 
   std::unordered_map<GlobalValue*, Comdat*> GlobalToComdat;
+
+  std::vector<UnsafeFunc> UnsafeFuncs;
 
   std::string FunctionName;
   Function* OldF { nullptr };
@@ -7031,6 +7044,39 @@ class Pizlonator {
           return true;
         }
 
+        if (F->getName() == "zunsafe_call" &&
+            FT->getNumParams() == 1 &&
+            FT->isVarArg() &&
+            FT->getReturnType() == IntPtrTy &&
+            FT->getParamType(0) == RawPtrTy) {
+          GlobalVariable* StrConstGV = cast<GlobalVariable>(CI->getArgOperand(0));
+          assert(StrConstGV->hasInitializer());
+          ConstantDataSequential* StrConstCDS =
+            cast<ConstantDataSequential>(StrConstGV->getInitializer());
+          assert(StrConstCDS->isCString());
+          std::string StrConst = StrConstCDS->getAsCString().str();
+          BitCastInst* Dummy = makeDummy(RawPtrTy);
+          UnsafeFuncs.push_back(UnsafeFunc(Dummy, StrConst));
+          std::vector<Value*> Args;
+          assert(InstTypeVectors.count(CI));
+          std::vector<Type*> ArgTypes = InstTypeVectors[CI];
+          assert(ArgTypes.size() == CI->arg_size());
+          for (unsigned Idx = 1; Idx < CI->arg_size(); ++Idx) {
+            Value* Arg = lowerConstantValue(CI->getArgOperand(Idx), CI);
+            if (ArgTypes[Idx] == RawPtrTy) {
+              Args.push_back(flightPtrPtr(Arg, CI));
+              continue;
+            }
+            assert(!hasPtrs(ArgTypes[Idx]));
+            Args.push_back(Arg);
+          }
+          CallInst* Result = CallInst::Create(UnsafeFuncTy, Dummy, Args, "filc_unsafe_call", CI);
+          Result->setDebugLoc(CI->getDebugLoc());
+          CI->replaceAllUsesWith(Result);
+          CI->eraseFromParent();
+          return true;
+        }
+
         if (F->getName() == "zcallee" &&
             !FT->getNumParams() &&
             FT->getReturnType() == RawPtrTy) {
@@ -9586,6 +9632,7 @@ public:
       { RawPtrTy, Int32Ty, Int32Ty, RawPtrTy }, "filc_origin_with_eh");
     ObjectTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_object");
     FrameTy = StructType::create({ RawPtrTy, RawPtrTy, RawPtrTy }, "filc_frame");
+    UnsafeFuncTy = FunctionType::get(IntPtrTy, true);
 
     std::vector<Type*> ThreadMembers;
     ThreadMembers.push_back(IntPtrTy); // stack_limit, index 0
@@ -10597,6 +10644,13 @@ public:
             NewPtrG,
             flightPtrForLocalFunction(ResolveF, Return) },
           "filc_call_ifunc_slow", Return);
+    }
+
+    for (UnsafeFunc UF : UnsafeFuncs) {
+      assert(!M.getNamedValue(UF.Name));
+      UF.Dummy->replaceAllUsesWith(
+        Function::Create(UnsafeFuncTy, GlobalVariable::ExternalLinkage, 0, UF.Name, &M));
+      UF.Dummy->deleteValue();
     }
 
     Dummy->deleteValue();
