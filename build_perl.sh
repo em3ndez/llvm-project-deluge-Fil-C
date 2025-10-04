@@ -52,7 +52,7 @@ sh ./Configure -der \
     -Dsiteman3dir="$PWD/../../../pizfix/share/man/man3" \
     -D usethreads
 make -j $NCPU
-make install
+make -j $NCPU install
 
 # Do my own tests
 cd fil-tests
