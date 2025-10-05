@@ -4016,7 +4016,7 @@ class Pizlonator {
           // did then we don't want to optimize them since the optimizations strongly (but subtly)
           // assume that the count is not zero. Also return zero for any count that might
           // overflow.
-          return Count && (uint32_t)(int32_t)Count == Count;
+          return Count && (int32_t)Count >= 0 && (uint32_t)(int32_t)Count == Count;
         }
       }
     }
