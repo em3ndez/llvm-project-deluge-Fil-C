@@ -108,6 +108,14 @@ __libc_start_main (int (*main) (int, char **, char ** MAIN_AUXVEC_DECL),
   __environ = ev;
   GLRO(dl_auxv) = auxvec;
 
+  ElfW(auxv_t) *av;
+  for (av = auxvec; av->a_type != AT_NULL; av++)
+    if (av->a_type == AT_SECURE)
+      {
+        __libc_enable_secure = av->a_un.a_val;
+        break;
+      }
+
   /* Initialize libpthread if linked in.  */
   if (__pthread_initialize_minimal != NULL)
     __pthread_initialize_minimal ();

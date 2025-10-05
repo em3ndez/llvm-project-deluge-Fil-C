@@ -29,6 +29,7 @@
 #include <sys/times.h>
 #include "utils.h"
 #include <threads.h>
+#include <stdlib.h>
 
 #ifndef SA_RESTORER
 #define SA_RESTORER 0x4000000
@@ -556,6 +557,8 @@ int main(int argc, char** argv)
 
     sched_yield();
     thrd_yield();
+
+    ZASSERT(secure_getenv("PATH"));
 
     zprintf("No worries.\n");
     return 0;
