@@ -42,25 +42,27 @@ int main(int argc, char** argv)
     unsigned zid;
     unsigned id;
     int res;
+    bool is_root;
     
     zid = zsys_getuid();
     id = getuid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
+    is_root = !id;
     
     zid = zsys_geteuid();
     id = geteuid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
     
     zid = zsys_getgid();
     id = getgid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
     
     zid = zsys_getpid();
     id = getpid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
 
     struct timespec ts;
@@ -85,7 +87,7 @@ int main(int argc, char** argv)
     ZASSERT(st.st_mode == (0644 | S_IFREG) ||
             st.st_mode == (0664 | S_IFREG)); /* on my Linux install, I get 0664. */
     ZASSERT(st.st_nlink == 1);
-    ZASSERT(st.st_uid);
+    ZASSERT(st.st_uid >= 0);
     ZASSERT(st.st_size == 86);
 
     ZASSERT(zthread_self());
@@ -246,19 +248,32 @@ int main(int argc, char** argv)
     ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", F_OK));
     ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", F_OK));
     ZASSERT(!access("filc/test-output/miscsyscall/readonly.txt", R_OK));
-    ZASSERT(access("filc/test-output/miscsyscall/readonly.txt", W_OK));
-    ZASSERT(errno == EACCES);
+    if (is_root)
+        ZASSERT(!access("filc/test-output/miscsyscall/readonly.txt", W_OK));
+    else {
+        ZASSERT(access("filc/test-output/miscsyscall/readonly.txt", W_OK));
+        ZASSERT(errno == EACCES);
+    }
     ZASSERT(access("filc/test-output/miscsyscall/readonly.txt", X_OK));
     ZASSERT(errno == EACCES);
-    ZASSERT(access("filc/test-output/miscsyscall/writeonly.txt", R_OK));
-    ZASSERT(errno == EACCES);
+    if (is_root)
+        ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", R_OK));
+    else {
+        ZASSERT(access("filc/test-output/miscsyscall/writeonly.txt", R_OK));
+        ZASSERT(errno == EACCES);
+    }
     ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", W_OK));
     ZASSERT(access("filc/test-output/miscsyscall/writeonly.txt", X_OK));
     ZASSERT(errno == EACCES);
-    ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", R_OK));
-    ZASSERT(errno == EACCES);
-    ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", W_OK));
-    ZASSERT(errno == EACCES);
+    if (is_root) {
+        ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", R_OK));
+        ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", W_OK));
+    } else {
+        ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", R_OK));
+        ZASSERT(errno == EACCES);
+        ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", W_OK));
+        ZASSERT(errno == EACCES);
+    }
     ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", X_OK));
     ZASSERT(!faccessat(AT_FDCWD, "filc/test-output/miscsyscall/execonly.txt", X_OK, 0));
 
