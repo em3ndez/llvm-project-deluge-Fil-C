@@ -9744,7 +9744,8 @@ public:
     for (GlobalObject& G : M.global_objects()) {
       if (Comdat* OldComdat = G.getComdat()) {
         assert(G.getLinkage() == GlobalValue::LinkOnceAnyLinkage ||
-               G.getLinkage() == GlobalValue::WeakAnyLinkage);
+               G.getLinkage() == GlobalValue::WeakAnyLinkage ||
+               G.getLinkage() == GlobalValue::InternalLinkage);
         std::string str = ("pizlonatedC_" + OldComdat->getName()).str();
         Comdat* NewComdat = M.getOrInsertComdat(str);
         NewComdat->setSelectionKind(OldComdat->getSelectionKind());
