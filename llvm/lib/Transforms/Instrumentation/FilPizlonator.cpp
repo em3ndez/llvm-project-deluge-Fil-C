@@ -1504,6 +1504,7 @@ class Pizlonator {
   std::unordered_map<Function*, Constant*> FunctionToLower;
 
   std::unordered_map<GlobalValue*, Comdat*> GlobalToComdat;
+  std::unordered_map<Comdat*, Comdat*> ComdatMap;
 
   std::unordered_map<std::string, BitCastInst*> UnsafeFuncs;
   std::unordered_set<GlobalVariable*> UnsafeExportGVs;
@@ -9768,8 +9769,14 @@ public:
         assert(G.getLinkage() == GlobalValue::LinkOnceAnyLinkage ||
                G.getLinkage() == GlobalValue::WeakAnyLinkage ||
                G.getLinkage() == GlobalValue::InternalLinkage);
-        std::string str = ("pizlonatedC_" + OldComdat->getName()).str();
-        Comdat* NewComdat = M.getOrInsertComdat(str);
+        Comdat* NewComdat;
+        if (ComdatMap.count(OldComdat))
+          NewComdat = ComdatMap[OldComdat];
+        else {
+          std::string str = ("pizlonatedC_" + OldComdat->getName()).str();
+          NewComdat = M.getOrInsertComdat(str);
+          ComdatMap[OldComdat] = NewComdat;
+        }
         NewComdat->setSelectionKind(OldComdat->getSelectionKind());
         GlobalToComdat[&G] = NewComdat;
       } else if (G.hasLinkOnceLinkage()) {
@@ -10065,6 +10072,16 @@ public:
         errs() << " " << GV->getName();
       errs() << "\n";
     }
+
+    auto HandleThingy = [&] (Value* Thingy) -> Constant* {
+      if (Thingy == RawNull)
+        return RawNull;
+      GlobalValue* G = cast<GlobalValue>(Thingy);
+      assert(GlobalToGetter.count(G));
+      Function* Getter = GlobalToGetter[G];
+      assert(Getter);
+      return Getter;
+    };
     
     if (GlobalVariable* GlobalCtors = M.getGlobalVariable("llvm.global_ctors")) {
       ConstantArray* Array = cast<ConstantArray>(GlobalCtors->getInitializer());
@@ -10074,11 +10091,15 @@ public:
         Function* Ctor = cast<Function>(Struct->getOperand(1));
         Function* NewF = Function::Create(
           CtorDtorTy, GlobalValue::InternalLinkage, 0, "filc_ctor_forwarder", &M);
+        PutImplIntoComdat(Ctor, NewF);
         BasicBlock* RootBB = BasicBlock::Create(C, "filc_ctor_forwarder_root", NewF);
         ReturnInst* Return = ReturnInst::Create(C, RootBB);
         CallInst::Create(
           DeferOrRunGlobalCtor, { flightPtrForLocalFunction(Ctor, Return) }, "", Return);
-        Args.push_back(ConstantStruct::get(Struct->getType(), Struct->getOperand(0), NewF, RawNull));
+        Args.push_back(ConstantStruct::get(Struct->getType(),
+                                           Struct->getOperand(0),
+                                           NewF,
+                                           HandleThingy(Struct->getOperand(2))));
       }
       GlobalCtors->setInitializer(ConstantArray::get(Array->getType(), Args));
     }
@@ -10093,10 +10114,14 @@ public:
         Function* Dtor = cast<Function>(Struct->getOperand(1));
         Function* NewF = Function::Create(
           CtorDtorTy, GlobalValue::InternalLinkage, 0, "filc_dtor_forwarder", &M);
+        PutImplIntoComdat(Dtor, NewF);
         BasicBlock* RootBB = BasicBlock::Create(C, "filc_dtor_forwarder_root", NewF);
         ReturnInst* Return = ReturnInst::Create(C, RootBB);
         CallInst::Create(RunGlobalDtor, { flightPtrForLocalFunction(Dtor, Return) }, "", Return);
-        Args.push_back(ConstantStruct::get(Struct->getType(), Struct->getOperand(0), NewF, RawNull));
+        Args.push_back(ConstantStruct::get(Struct->getType(),
+                                           Struct->getOperand(0),
+                                           NewF,
+                                           HandleThingy(Struct->getOperand(2))));
       }
       GlobalDtors->setInitializer(ConstantArray::get(Array->getType(), Args));
     }
