@@ -118,8 +118,8 @@ cd ..
 rm -rf pizlonated-curl
 hash -r
 
-tar -xf openssh-9.8p1.tar.gz
-cd openssh-9.8p1
+tar -xf pizlonated-openssh.tar.gz
+cd pizlonated-openssh
 install -v -g sys -m700 -d /var/lib/sshd &&
 groupadd -g 50 sshd
 useradd  -c 'sshd PrivSep' \
@@ -142,7 +142,7 @@ install -v -m755 -d /usr/share/doc/openssh-9.8p1
 install -v -m644    INSTALL LICENCE OVERVIEW README* \
                     /usr/share/doc/openssh-9.8p1
 cd ..
-rm -rf openssh-9.8p1
+rm -rf pizlonated-openssh
 hash -r
 
 tar -xf pizlonated-emacs.tar.gz

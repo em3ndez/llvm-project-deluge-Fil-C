@@ -26,4 +26,5 @@ cd $FILCSRC
 ./package-source.sh projects/libxml2-2.14.4 pizlonated-libxml2
 ./package-source.sh projects/libarchive-3.7.4 pizlonated-libarchive
 ./package-source.sh projects/dhcpcd-10.0.8 pizlonated-dhcpcd
+./package-source.sh projects/openssh-9.8p1 pizlonated-openssh
 

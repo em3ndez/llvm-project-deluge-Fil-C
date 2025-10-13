@@ -40,7 +40,6 @@ cp -v libunistring-1.2.tar.xz $LFS/sources
 cp -v libpsl-0.21.5.tar.gz $LFS/sources
 cp -v make-ca-1.16.1.tar.gz $LFS/sources
 cp -v nghttp2-1.62.1.tar.xz $LFS/sources
-cp -v openssh-9.8p1.tar.gz $LFS/sources
 cp -v pcre2-10.44.tar.bz2 $LFS/sources
 cp -v wget-1.24.5.tar.gz $LFS/sources
 cp -v blfs-bootscripts-20240416.tar.xz $LFS/sources
