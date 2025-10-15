@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,11 +28,10 @@
 set -e
 set -x
 
-# This is needed because otherwise at least on Linux, clang's rpath is something like
-# '$ORIGIN/../lib:', which means that the current directory is included. Then the zlib
-# build fails as soon as clang running in the zlib directory finds the pizlonated
-# zlib.
-if test $OS = linux
-then
-    patchelf --set-rpath '$ORIGIN/../lib' build/bin/clang-20
-fi
+patchelf --remote-rpath build/bin/clang-20
+
+cd build/bin
+ln -fs clang-20 filcc
+ln -fs clang-20 fil++
+ln -fs clang-20 filcpp
+

@@ -43,7 +43,10 @@ cp build/bin/clang-20 $build_name/build/bin/
 strip $build_name/build/bin/clang-20
 (cd $build_name/build/bin/ &&
      ln -s clang-20 clang &&
-     ln -s clang-20 clang++)
+     ln -s clang-20 clang++ &&
+     ln -s clang-20 filcc &&
+     ln -s clang-20 fil++ &&
+     ln -s clang-20 filcpp)
 
 mkdir -p $build_name/build/include/
 cp -R build/include/c++ $build_name/build/include/

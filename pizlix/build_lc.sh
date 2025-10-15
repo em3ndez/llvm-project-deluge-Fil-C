@@ -129,6 +129,9 @@ ln -s clang-20 $LFS/usr/bin/gcc
 ln -s clang-20 $LFS/usr/bin/g++
 ln -s clang-20 $LFS/usr/bin/cc
 ln -s clang-20 $LFS/usr/bin/c++
+ln -s clang-20 $LFS/usr/bin/filcc
+ln -s clang-20 $LFS/usr/bin/fil++
+ln -s clang-20 $LFS/usr/bin/filcpp
 
 ./build_chroot.sh /sources/build_lc_sub3_user_chroot.sh
 
