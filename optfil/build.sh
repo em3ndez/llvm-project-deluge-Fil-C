@@ -143,6 +143,12 @@ cp -v $FILCSRC/build/bin/clang-20 fil/bin/filcc-clang-20
 strip fil/bin/filcc-clang-20
 patchelf --remove-rpath fil/bin/filcc-clang-20
 
+# This hack only works so long as the host system's glibc is *older* than the glibc that Fil-C uses.
+patchelf --set-interpreter /opt/fil/lib/ld-yolo-x86_64.so fil/bin/filcc-clang-20
+patchelf --replace-needed ld-linux-x86-64.so.2 ld-yolo-x86_64.so fil/bin/filcc-clang-20
+patchelf --replace-needed libc.so.6 libyolocimpl.so fil/bin/filcc-clang-20
+patchelf --replace-needed libm.so.6 libyolomimpl.so fil/bin/filcc-clang-20
+
 cp -rv $FILCSRC/build/lib/clang fil/lib
 
 ln -s filcc-clang-20 fil/bin/filcc
