@@ -55,7 +55,7 @@ echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
 echo "********************************************************************************"
 echo
 
-if [ "$EUID" -ne 0 ]; then
+if [ `id -u` -ne 0 ]; then
     echo "ERROR: This installer must be run as root (use sudo or run as root user)."
     exit 1
 fi
