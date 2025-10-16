@@ -373,13 +373,13 @@ tar -xf $FILCSRC/projects/openssh-9.8p1/pizlonated-openssh.tar.gz
 cd pizlonated-openssh
 install -v -m700 -d /opt/fil/var/lib/sshd &&
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil \
-            --sysconfdir=/opt/fil/etc/ssh \
+            --sysconfdir=/etc/ssh \
             --with-privsep-path=/opt/fil/var/lib/sshd \
             --with-default-path=/opt/fil/bin:/usr/bin:/bin \
             --with-superuser-path=/opt/fil/sbin:/opt/fil/bin:/usr/sbin:/usr/bin:/bin \
             --with-pid-dir=/run
 make -j `nproc`
-make -j `nproc` install
+make -j `nproc` install-nosysconf
 install -v -m755    contrib/ssh-copy-id /opt/fil/bin
 install -v -m644    contrib/ssh-copy-id.1 \
                     /opt/fil/share/man/man1
@@ -392,4 +392,18 @@ cd ..
 test -d build
 test -d ../fil
 rm -rf build
+
+for x in $(find lib -type f -name \*.so*)
+         $(find lib -type f -name \*a)
+         $(find {bin,sbin,libexec} -type f)
+do
+    strip --strip-unneeded $x || echo whatever
+done
+
+cd ..
+tar -cJf fil.tar fil
+
+cd $FILCSRC/optfil
+su $FILCOWNER ./build_finish.sh
+
 

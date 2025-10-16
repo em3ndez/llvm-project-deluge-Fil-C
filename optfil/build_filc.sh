@@ -36,6 +36,7 @@ test -d $FILCSRC/libpas
 test -d $FILCSRC/llvm
 test -d $FILCSRC/clang
 test -d $FILCSRC/filc
+test -d $FILCSRC/optfil
 
 # FIXME: It would be super cool to avoid building yolo glibc an extra time here. We do that only
 # because I don't feel like fucking with the libpas build right now.

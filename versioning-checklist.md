@@ -3,4 +3,5 @@
 - clang/lib/Basic/Version.cpp
 - filc/include/stdfil.h
 - package-build.sh
+- optfil/build_finish.sh
 - the website
