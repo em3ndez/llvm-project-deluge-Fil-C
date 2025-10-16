@@ -4,4 +4,5 @@
 - filc/include/stdfil.h
 - package-build.sh
 - optfil/build_finish.sh
+- optfil/setup.sh
 - the website

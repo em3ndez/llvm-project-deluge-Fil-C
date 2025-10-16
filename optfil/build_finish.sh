@@ -53,4 +53,22 @@ cp ../LLVM-LICENSE.txt $package_name/
 cp ../libpas/LICENSE.txt $package_name/PAS-LICENSE.txt
 cp -v setup.sh $package_name/
 
+# Copy all project license files
+cp bash-LICENSE.txt $package_name/
+cp bzip2-LICENSE.txt $package_name/
+cp coreutils-LICENSE.txt $package_name/
+cp glibc-LICENSE.txt $package_name/
+cp libffi-LICENSE.txt $package_name/
+cp libxcrypt-LICENSE.txt $package_name/
+cp lz4-LICENSE.txt $package_name/
+cp mg-LICENSE.txt $package_name/
+cp ncurses-LICENSE.txt $package_name/
+cp openssh-LICENSE.txt $package_name/
+cp openssl-LICENSE.txt $package_name/
+cp pkgconf-LICENSE.txt $package_name/
+cp readline-LICENSE.txt $package_name/
+cp xz-LICENSE.txt $package_name/
+cp zlib-LICENSE.txt $package_name/
+cp zstd-LICENSE.txt $package_name/
+
 tar -cJf $package_name.tar.xz $package_name

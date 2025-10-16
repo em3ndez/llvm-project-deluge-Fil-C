@@ -36,25 +36,44 @@ echo "Fil-C is a memory-safe implementation of C and C++ that prevents all memor
 echo "safety errors through concurrent garbage collection and invisible capabilities."
 echo
 echo "This distribution includes:"
-echo "  - Fil-C compiler (filcc, fil++)"
-echo "  - Basic libraries (glibc, C++ standard library)"
-echo "  - GNU Bash (memory-safe)"
-echo "  - GNU Coreutils (memory-safe)"
-echo "  - Compression utilities (bzip2, xz, lz4, zstd)"
-echo "  - OpenSSL cryptographic library"
-echo "  - OpenSSH client and server"
+echo "  - Fil-C compiler version $VERSION (filcc, fil++) and its runtime (libpizlo.so)"
+echo "  - Basic libraries compiled with Fil-C (glibc 2.40, LLVM libc++ 20.1.8)"
+echo "  - Memory safe programs compiled with Fil-C:"
+echo "    - GNU Bash"
+echo "    - GNU Coreutils"
+echo "    - Compression utilities (bzip2, xz, lz4, zstd)"
+echo "    - OpenSSL cryptographic library"
+echo "    - OpenSSH client and server"
 echo
 echo "********************************************************************************"
 echo "                                  WARNING!"
 echo "********************************************************************************"
-echo "This is an EXPERIMENTAL RELEASE version $VERSION"
+echo "THIS IS THE FIRST RELEASE of the /opt/fil binary distribution! Take appropriate"
+echo "precautions before using! This distribution is still under active development!"
 echo
-echo "Fil-C is still under active development. Performance is currently 1.5x-5x"
-echo "slower than standard C. This software should NOT be used in production"
-echo "environments without thorough testing."
+echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
 echo "********************************************************************************"
 echo
-echo "This installer will extract fil.tar to /opt, creating /opt/fil"
+
+if [ "$EUID" -ne 0 ]; then
+    echo "ERROR: This installer must be run as root (use sudo or run as root user)."
+    exit 1
+fi
+
+if [ -e /opt/fil ]; then
+    echo "ERROR: /opt/fil already exists!"
+    echo "Please remove or move it before running this installer:"
+    echo "  rm -rf /opt/fil"
+    echo "    or"
+    echo "  mv /opt/fil /opt/fil.backup"
+    exit 1
+fi
+
+echo "This installer will:"
+if [ ! -d /opt ]; then
+    echo "  - Create /opt directory (doesn't currently exist)"
+fi
+echo "  - Extract fil.tar to /opt, creating /opt/fil"
 echo
 echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
 read response
@@ -70,6 +89,11 @@ echo "Extracting fil.tar to /opt..."
 if [ ! -f fil.tar ]; then
     echo "Error: fil.tar not found in current directory"
     exit 1
+fi
+
+if [ ! -d /opt ]; then
+    echo "Creating /opt directory..."
+    mkdir -p /opt
 fi
 
 cd /opt
@@ -89,7 +113,7 @@ echo
 echo "To compile C programs with Fil-C:"
 echo "  filcc -o program program.c -g -O"
 echo
-echo "To compile C++ programs with Fil-C:"
+echo "To compile C++ programs with Fil-C++:"
 echo "  fil++ -o program program.cpp -g -O -std=c++20"
 echo
 echo "For more information, see README.md in the distribution directory."

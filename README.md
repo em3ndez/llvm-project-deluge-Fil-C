@@ -37,14 +37,18 @@ Fil-C is special because:
 
 The compiler (clang + LLVM) is covered by LLVM-LICENSE.txt. The runtime is
 covered by PAS-LICENSE.txt (see libpas/LICENSE.txt in the source distribution).
-The libc is covered by MUSL-LICENSE.txt (see projects/yolomusl/COPYRIGHT and
-projects/usermusl/COPYRIGHT in the source distribution). The libc++/libc++abi
-are covered by LLVM-LICENSE.txt.
+In the case of the classic musl-based Fil-C distribution, the musl libc is
+covered by MUSL-LICENSE.txt (see projects/yolomusl/COPYRIGHT and
+projects/usermusl/COPYRIGHT in the source distribution). In the case of the
+/opt/fil distribution, glibc is covered by glibc-LICENSE.txt, and all other
+included programs are covered by the respective <program-name>-LICENSE.txt
+files. The C++ libraries (libc++/libc++abi) are covered by LLVM-LICENSE.txt.
 
-You can fetch the compiler, runtime, libc++/libc++abi, and libc (musl) source
-from https://github.com/pizlonator/fil-c. The source distribution also includes
-many programs that have been ported to Fil-C in the projects/ directory, and
-they have a variety of licenses.
+You can fetch the source for the compiler, runtime, libc++/libc++abi, libc
+(musl and glibc), and all included programs from
+https://github.com/pizlonator/fil-c. The source distribution also includes
+many additional programs that have been ported to Fil-C in the projects/
+and pizlix/ directories, and they have a variety of licenses.
 
 ## Requirements
 
@@ -60,6 +64,16 @@ other than Linux.
 If you downloaded Fil-C binaries, run:
 
     ./setup.sh
+
+This has a different effect depending on which binary distribution you
+selected:
+
+- In case of the classic musl-based distribution
+  (`filc-0.673-linux-x86_64.tar.xz`), this sets up Fil-C to run in the current
+  directory.
+
+- In case of the /opt/fil glibc-based distribution
+  (`optfil-0.673-linux-x86_64.tar.xz`), this sets up Fil-C in `/opt/fil`.
 
 If you downloaded Fil-C source, run:
 
@@ -79,6 +93,11 @@ If you are using source, then you can also:
 
 - `./build_all_glibc.sh` - full glibc-based build (builds even more software
   that was ported to Fil-C).
+
+- `cd pizlix && sudo ./build.sh` - builds the [Pizlix](https://fil-c.org/pizlix)
+  Linux distribution.
+
+- `cd optfil && sudo ./build.sh` - builds the `/opt/fil` distribution.
 
 ## Things That Work
 
