@@ -221,6 +221,9 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
 
   Generic_GCC::PushPPaths(PPaths);
 
+  if (D.HasOptfil)
+    PPaths.push_back("/opt/fil/bin");
+
   Distro Distro(D.getVFS(), Triple);
 
   if (Distro.IsAlpineLinux() || Triple.isAndroid()) {

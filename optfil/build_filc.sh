@@ -83,6 +83,7 @@ cd ../..
 ./package-source.sh projects/libffi-3.4.6 pizlonated-libffi
 ./package-source.sh projects/sudo-1.9.15p5 pizlonated-sudo
 ./package-source.sh projects/openssh-9.8p1 pizlonated-openssh
+./package-source.sh projects/binutils-2.43.1 pizlonated-binutils
 
 test -d filc
 test -d llvm

@@ -193,6 +193,7 @@ mkdir -p include/x86_64-unknown-linux-gnu
 cp -rv $FILCSRC/build/include/x86_64-unknown-linux-gnu/c++ include/x86_64-unknown-linux-gnu
 
 cd build
+
 tar -xf $FILCSRC/pizlix/zlib-1.3.1.tar.gz
 cd zlib-1.3.1
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
@@ -201,6 +202,28 @@ make -j `nproc` install
 rm -fv /opt/fil/lib/libz.a
 cd ..
 rm -rf zlib-1.3.1
+
+tar -xf $FILCSRC/projects/binutils-2.43.1/pizlonated-binutils.tar.gz
+cd pizlonated-binutils
+mkdir -v build
+cd build
+../configure --prefix=/opt/fil \
+    --sysconfdir=/opt/fil/etc \
+    --disable-gold \
+    --enable-ld=default \
+    --enable-plugins \
+    --enable-shared \
+    --disable-werror \
+    --enable-64-bit-bfd \
+    --enable-new-dtags \
+    --with-system-zlib \
+    --enable-default-hash-style=gnu \
+    --disable-gprofng
+make tooldir=/opt/fil
+make tooldir=/opt/fil install
+rm -fv /opt/fil/lib/lib{bfd,ctf,ctf-nobfd,gprofng,opcodes,sframe}.a
+cd ../..
+rm -rf pizlonated-binutils
 
 tar -xf $FILCSRC/pizlix/bzip2-1.0.8.tar.gz
 cd bzip2-1.0.8
@@ -379,13 +402,13 @@ tar -xf $FILCSRC/projects/openssh-9.8p1/pizlonated-openssh.tar.gz
 cd pizlonated-openssh
 install -v -m700 -d /opt/fil/var/lib/sshd &&
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil \
-            --sysconfdir=/etc/ssh \
+            --sysconfdir=/opt/fil/etc/ssh \
             --with-privsep-path=/opt/fil/var/lib/sshd \
             --with-default-path=/opt/fil/bin:/usr/bin:/bin \
             --with-superuser-path=/opt/fil/sbin:/opt/fil/bin:/usr/sbin:/usr/bin:/bin \
             --with-pid-dir=/run
 make -j `nproc`
-make -j `nproc` install-nosysconf
+make -j `nproc` install-nokeys
 install -v -m755    contrib/ssh-copy-id /opt/fil/bin
 install -v -m644    contrib/ssh-copy-id.1 \
                     /opt/fil/share/man/man1
@@ -407,7 +430,7 @@ do
 done
 
 cd ..
-tar -cJf fil.tar fil
+tar -cf fil.tar fil
 
 cd $FILCSRC/optfil
 su $FILCOWNER ./build_finish.sh

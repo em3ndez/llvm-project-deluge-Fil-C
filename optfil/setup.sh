@@ -100,6 +100,25 @@ cd /opt
 tar -xf "$OLDPWD/fil.tar"
 
 echo
+echo "Setting up SSH host keys..."
+# Check if SSH host keys exist in /etc/ssh
+if [ -f /etc/ssh/ssh_host_rsa_key ] \
+       || [ -f /etc/ssh/ssh_host_ecdsa_key ] \
+       || [ -f /etc/ssh/ssh_host_ed25519_key ]; then
+    echo "Found existing SSH host keys in /etc/ssh"
+    echo "Copying them to /opt/fil/etc/ssh..."
+    mkdir -p /opt/fil/etc/ssh
+    cp -v /etc/ssh/ssh_host_* /opt/fil/etc/ssh/ 2>/dev/null || true
+    echo "SSH host keys copied successfully."
+else
+    echo "No existing SSH host keys found in /etc/ssh"
+    echo "Generating new SSH host keys for /opt/fil..."
+    /opt/fil/bin/ssh-keygen -A
+    echo "New SSH host keys generated."
+fi
+echo
+
+echo
 echo "================================================================================"
 echo "                         Installation Complete!"
 echo "================================================================================"
