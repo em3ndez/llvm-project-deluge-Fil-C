@@ -161,7 +161,6 @@ else
 	echo "Not creating sshd privsep user."
     fi
 fi
-echo
 
 echo
 echo "================================================================================"
