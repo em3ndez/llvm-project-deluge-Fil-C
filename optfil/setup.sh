@@ -103,12 +103,25 @@ echo
 echo "Setting up SSH host keys..."
 # Check if SSH host keys exist in /etc/ssh
 if [ -f /etc/ssh/ssh_host_rsa_key ] \
-       || [ -f /etc/ssh/ssh_host_ecdsa_key ] \
-       || [ -f /etc/ssh/ssh_host_ed25519_key ]; then
+       && [ -f /etc/ssh/ssh_host_ecdsa_key ] \
+       && [ -f /etc/ssh/ssh_host_ed25519_key ] \
+       && [ -f /etc/ssh/ssh_host_rsa_key.pub ] \
+       && [ -f /etc/ssh/ssh_host_ecdsa_key.pub ] \
+       && [ -f /etc/ssh/ssh_host_ed25519_key.pub ]; then
     echo "Found existing SSH host keys in /etc/ssh"
     echo "Copying them to /opt/fil/etc/ssh..."
-    mkdir -p /opt/fil/etc/ssh
-    cp -v /etc/ssh/ssh_host_* /opt/fil/etc/ssh/ 2>/dev/null || true
+    cp -v /etc/ssh/ssh_host_rsa_key /opt/fil/etc/ssh/
+    cp -v /etc/ssh/ssh_host_ecdsa_key /opt/fil/etc/ssh/
+    cp -v /etc/ssh/ssh_host_ed25519_key /opt/fil/etc/ssh/
+    cp -v /etc/ssh/ssh_host_rsa_key.pub /opt/fil/etc/ssh/
+    cp -v /etc/ssh/ssh_host_ecdsa_key.pub /opt/fil/etc/ssh/
+    cp -v /etc/ssh/ssh_host_ed25519_key.pub /opt/fil/etc/ssh/
+    chmod -v 600 /etc/ssh/ssh_host_rsa_key
+    chmod -v 600 /etc/ssh/ssh_host_ecdsa_key
+    chmod -v 600 /etc/ssh/ssh_host_ed25519_key
+    chmod -v 644 /etc/ssh/ssh_host_rsa_key.pub
+    chmod -v 644 /etc/ssh/ssh_host_ecdsa_key.pub
+    chmod -v 644 /etc/ssh/ssh_host_ed25519_key.pub
     echo "SSH host keys copied successfully."
 else
     echo "No existing SSH host keys found in /etc/ssh"

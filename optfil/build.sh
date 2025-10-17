@@ -207,7 +207,7 @@ tar -xf $FILCSRC/projects/binutils-2.43.1/pizlonated-binutils.tar.gz
 cd pizlonated-binutils
 mkdir -v build
 cd build
-../configure --prefix=/opt/fil \
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ../configure --prefix=/opt/fil \
     --sysconfdir=/opt/fil/etc \
     --disable-gold \
     --enable-ld=default \
@@ -219,8 +219,8 @@ cd build
     --with-system-zlib \
     --enable-default-hash-style=gnu \
     --disable-gprofng
-make tooldir=/opt/fil
-make tooldir=/opt/fil install
+make -j `nproc` tooldir=/opt/fil
+make -j `nproc` tooldir=/opt/fil install
 rm -fv /opt/fil/lib/lib{bfd,ctf,ctf-nobfd,gprofng,opcodes,sframe}.a
 cd ../..
 rm -rf pizlonated-binutils
