@@ -116,12 +116,12 @@ if [ -f /etc/ssh/ssh_host_rsa_key ] \
     cp -v /etc/ssh/ssh_host_rsa_key.pub /opt/fil/etc/ssh/
     cp -v /etc/ssh/ssh_host_ecdsa_key.pub /opt/fil/etc/ssh/
     cp -v /etc/ssh/ssh_host_ed25519_key.pub /opt/fil/etc/ssh/
-    chmod -v 600 /etc/ssh/ssh_host_rsa_key
-    chmod -v 600 /etc/ssh/ssh_host_ecdsa_key
-    chmod -v 600 /etc/ssh/ssh_host_ed25519_key
-    chmod -v 644 /etc/ssh/ssh_host_rsa_key.pub
-    chmod -v 644 /etc/ssh/ssh_host_ecdsa_key.pub
-    chmod -v 644 /etc/ssh/ssh_host_ed25519_key.pub
+    chmod -v 600 /opt/fil/etc/ssh/ssh_host_rsa_key
+    chmod -v 600 /opt/fil/etc/ssh/ssh_host_ecdsa_key
+    chmod -v 600 /opt/fil/etc/ssh/ssh_host_ed25519_key
+    chmod -v 644 /opt/fil/etc/ssh/ssh_host_rsa_key.pub
+    chmod -v 644 /opt/fil/etc/ssh/ssh_host_ecdsa_key.pub
+    chmod -v 644 /opt/fil/etc/ssh/ssh_host_ed25519_key.pub
     echo "SSH host keys copied successfully."
 else
     echo "No existing SSH host keys found in /etc/ssh"
