@@ -48,7 +48,7 @@ package_name=optfil-0.673-$OS-$ARCH
 rm -rf $package_name
 mkdir -v $package_name
 
-cp -v /opt/fil.tar $package_name/
+cp -v fil.tar $package_name/
 cp -v ../README.md $package_name/
 cp -v ../LLVM-LICENSE.txt $package_name/
 cp -v ../libpas/LICENSE.txt $package_name/PAS-LICENSE.txt

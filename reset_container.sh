@@ -25,19 +25,76 @@
 
 set -e
 
+# Parse command-line options
+ROOTFUL=false
+
+print_help() {
+    cat <<EOF
+Usage: $0 [-r] [-h]
+
+Delete the container image for this checkout, forcing a rebuild on next run.
+
+Options:
+  -r    Reset rootful mode image (requires sudo)
+  -h    Show this help message
+
+EOF
+    exit 0
+}
+
+while getopts "rh" opt; do
+    case $opt in
+        r)
+            ROOTFUL=true
+            ;;
+        h)
+            print_help
+            ;;
+        \?)
+            echo "Invalid option: -$OPTARG" >&2
+            echo "Use -h for help" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Check if rootful mode requires sudo
+if [ "$ROOTFUL" = true ] && [ $EUID -ne 0 ]; then
+    echo "Error: Rootful mode (-r) requires running with sudo"
+    echo "Run: sudo $0 -r"
+    exit 1
+fi
+
 # Get the directory where this script lives
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Create the same image tag that enter_container.sh uses
 CHECKOUT_HASH=$(echo -n "${SCRIPT_DIR}" | sha256sum | cut -c1-8)
 IMAGE_NAME="fil-c-dev"
-IMAGE_TAG="${CHECKOUT_HASH}"
+
+# Compute image tag based on mode (same logic as enter_container.sh)
+if [ "$ROOTFUL" = true ]; then
+    FILE_OWNER_UID=$(stat -c %u "${SCRIPT_DIR}")
+    IMAGE_TAG="${CHECKOUT_HASH}-rootful-uid${FILE_OWNER_UID}"
+    PODMAN_CMD="podman"  # Already running as root via sudo
+    DOCKERFILE_PATH="${SCRIPT_DIR}/.dockerfile-${IMAGE_TAG}"
+else
+    IMAGE_TAG="${CHECKOUT_HASH}"
+    PODMAN_CMD="podman"  # Rootless
+    DOCKERFILE_PATH="${SCRIPT_DIR}/.dockerfile-${IMAGE_TAG}"
+fi
 
 # Check if the image exists
-if podman image exists "${IMAGE_NAME}:${IMAGE_TAG}"; then
+if $PODMAN_CMD image exists "${IMAGE_NAME}:${IMAGE_TAG}"; then
     echo "Removing ${IMAGE_NAME}:${IMAGE_TAG} container image..."
-    podman rmi "${IMAGE_NAME}:${IMAGE_TAG}"
+    $PODMAN_CMD rmi "${IMAGE_NAME}:${IMAGE_TAG}"
     echo "Image removed successfully!"
+
+    # Clean up generated Dockerfile if it exists
+    if [ -f "${DOCKERFILE_PATH}" ]; then
+        echo "Removing generated Dockerfile ${DOCKERFILE_PATH}..."
+        rm -f "${DOCKERFILE_PATH}"
+    fi
 else
     echo "Image ${IMAGE_NAME}:${IMAGE_TAG} does not exist. Nothing to do."
 fi

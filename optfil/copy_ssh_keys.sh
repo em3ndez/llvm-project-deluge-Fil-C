@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #
 # Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
 #
@@ -21,10 +21,20 @@
 # PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
 # OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 set -e
 set -x
 
-./build_local.sh
-./build_package.sh
+cp -v /etc/ssh/ssh_host_rsa_key /opt/fil/etc/ssh/
+cp -v /etc/ssh/ssh_host_ecdsa_key /opt/fil/etc/ssh/
+cp -v /etc/ssh/ssh_host_ed25519_key /opt/fil/etc/ssh/
+cp -v /etc/ssh/ssh_host_rsa_key.pub /opt/fil/etc/ssh/
+cp -v /etc/ssh/ssh_host_ecdsa_key.pub /opt/fil/etc/ssh/
+cp -v /etc/ssh/ssh_host_ed25519_key.pub /opt/fil/etc/ssh/
+chmod -v 600 /opt/fil/etc/ssh/ssh_host_rsa_key
+chmod -v 600 /opt/fil/etc/ssh/ssh_host_ecdsa_key
+chmod -v 600 /opt/fil/etc/ssh/ssh_host_ed25519_key
+chmod -v 644 /opt/fil/etc/ssh/ssh_host_rsa_key.pub
+chmod -v 644 /opt/fil/etc/ssh/ssh_host_ecdsa_key.pub
+chmod -v 644 /opt/fil/etc/ssh/ssh_host_ed25519_key.pub
