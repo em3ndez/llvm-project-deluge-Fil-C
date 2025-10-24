@@ -6956,6 +6956,9 @@ class Pizlonator {
       }
 
       default: {
+        for (Use& U : II->data_ops())
+          lowerConstantOperand(U, I);
+
         IntrinsicAccessDetails IAD = analyzeIntrinsicLoadStore(II);
         
         if (!IAD
@@ -6972,8 +6975,8 @@ class Pizlonator {
           CallInst::Create(Error, { getString(str), getOrigin(I->getDebugLoc()) }, "", II)
             ->setDebugLoc(II->getDebugLoc());
         }
+
         for (Use& U : II->data_ops()) {
-          lowerConstantOperand(U, I);
           if (hasPtrs(U->getType()))
             U = flightPtrPtr(U, II);
         }
@@ -10788,6 +10791,9 @@ public:
             flightPtrForLocalFunction(ResolveF, Return) },
           "filc_call_ifunc_slow", Return);
     }
+
+    if (lightVerbose || verbose)
+      errs() << "Here's the pizlonated module before the final replace/delete pass:\n" << M << "\n";
 
     Dummy->deleteValue();
 
