@@ -181,6 +181,7 @@ public:
 
   bool HasPizfix;
   bool HasOptfil;
+  std::string PizfixRoot;
 
   /// The original path to the clang executable.
   std::string ClangExecutable;

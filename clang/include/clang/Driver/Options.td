@@ -834,6 +834,24 @@ def gcc_toolchain : Joined<["--"], "gcc-toolchain=">, Flags<[NoXarchOption]>,
     "Flang will use the GCC installation with the largest version">;
 def gcc_triple_EQ : Joined<["--"], "gcc-triple=">,
   HelpText<"Search for the GCC installation with the specified triple.">;
+def filc_resource_dir : Joined<["--"], "filc-resource-dir=">, Flags<[NoXarchOption]>,
+  Visibility<[ClangOption]>,
+  HelpText<"Override Fil-C pizfix directory location (default: <binary>/../../../pizfix)">;
+def filc_dynamic_linker : Joined<["--"], "filc-dynamic-linker=">, Flags<[NoXarchOption]>,
+  Visibility<[ClangOption]>,
+  HelpText<"Override Fil-C dynamic linker path (default: pizfix/lib/ld-yolo-x86_64.so)">;
+def filc_crt_path : Joined<["--"], "filc-crt-path=">, Flags<[NoXarchOption]>,
+  Visibility<[ClangOption]>,
+  HelpText<"Override Fil-C CRT object files directory (default: pizfix/lib)">;
+def filc_stdfil_include : Joined<["--"], "filc-stdfil-include=">, Flags<[NoXarchOption]>,
+  Visibility<[ClangOption]>,
+  HelpText<"Override Fil-C stdfil include directory (default: pizfix/stdfil-include)">;
+def filc_os_include : Joined<["--"], "filc-os-include=">, Flags<[NoXarchOption]>,
+  Visibility<[ClangOption]>,
+  HelpText<"Override Fil-C OS include directory (default: pizfix/os-include)">;
+def filc_include : Joined<["--"], "filc-include=">, Flags<[NoXarchOption]>,
+  Visibility<[ClangOption]>,
+  HelpText<"Override Fil-C libc include directory (default: pizfix/include)">;
 def CC : Flag<["-"], "CC">, Visibility<[ClangOption, CC1Option]>,
   Group<Preprocessor_Group>,
     HelpText<"Include comments from within macros in preprocessed output">,
