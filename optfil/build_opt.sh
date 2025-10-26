@@ -299,12 +299,12 @@ cd readline-8.2.13
 sed -i '/MV.*old/d' Makefile.in
 sed -i '/{OLDSUFF}/c:' support/shlib-install
 sed -i 's/-Wl,-rpath,[^ ]*//' support/shobj-conf
-./configure --prefix=/opt/fil \
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil \
     --disable-static \
     --with-curses \
     --docdir=/opt/fil/share/doc/readline-8.2.13
-make SHLIB_LIBS="-lncursesw"
-make SHLIB_LIBS="-lncursesw" install
+make -j `nproc` SHLIB_LIBS="-lncursesw"
+make -j `nproc` SHLIB_LIBS="-lncursesw" install
 install -v -m644 doc/*.{ps,pdf,html,dvi} /opt/fil/share/doc/readline-8.2.13
 cd ..
 rm -rf readline-8.2.13
