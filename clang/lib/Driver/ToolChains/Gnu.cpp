@@ -596,7 +596,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     if (ToolChain.getDriver().HasPizfix) {
       std::string BasePath;
       if (Arg *A = Args.getLastArg(options::OPT_filc_crt_path))
-        BasePath = A->getValue().str();
+        BasePath = A->getValue();
       else {
         SmallString<128> P(ToolChain.getDriver().PizfixRoot);
         llvm::sys::path::append(P, "lib");
@@ -690,7 +690,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   if (ToolChain.getDriver().HasPizfix) {
     std::string BasePath;
     if (Arg *A = Args.getLastArg(options::OPT_filc_crt_path))
-      BasePath = A->getValue().str();
+      BasePath = A->getValue();
     else {
       SmallString<128> P(ToolChain.getDriver().PizfixRoot);
       llvm::sys::path::append(P, "lib");
