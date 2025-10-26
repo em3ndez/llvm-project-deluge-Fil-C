@@ -1495,10 +1495,13 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
 
   // Check for Fil-C resource directory override
   if (Arg *A = Args.getLastArg(options::OPT_filc_resource_dir)) {
+    A->claim();
     PizfixRoot = A->getValue();
-    HasPizfix = llvm::sys::fs::is_directory(PizfixRoot);
-    if (!HasPizfix)
-      Diag(diag::err_drv_no_such_file) << PizfixRoot;
+    HasPizfix = true;  // Trust the user-provided path
+  } else if (Arg *A = Args.getLastArg(options::OPT_filc_crt_path)) {
+    // If any filc flag is set, we're in filc mode
+    A->claim();
+    HasPizfix = true;
   }
 
   // Check for missing include directories.
