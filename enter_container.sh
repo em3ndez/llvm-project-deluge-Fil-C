@@ -219,7 +219,7 @@ RUN cd /usr/local/src && \
 # Install development dependencies required for building Fil-C and related projects
 RUN apt-get install -y \
     pkg-config \
-    clang cmake ninja-build ruby \
+    clang lld cmake ninja-build ruby \
     patchelf bison flex texinfo gettext autopoint
 
 # Install basic utilities for development and version control
