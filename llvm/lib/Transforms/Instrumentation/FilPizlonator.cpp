@@ -9016,7 +9016,7 @@ class Pizlonator {
     // those lifetime markers that we would then know how to pizlonate.
     //
     // Also, I kinda suspect this lifetime analysis is faster. And it's less code. Vive
-    // l'interprétation abstraite!
+    // l'interprÃ©tation abstraite!
 
     std::unordered_map<BasicBlock*, std::unordered_map<AllocaInst*, LifetimeState>> LifetimeAtTail;
     for (BasicBlock& BB : F) {
