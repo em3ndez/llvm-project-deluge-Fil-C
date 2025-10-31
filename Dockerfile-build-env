@@ -13,7 +13,7 @@ RUN apt install -y build-essential
 # Install development dependencies required for building Fil-C and related projects
 RUN apt install -y \
     pkg-config autotools-dev automake autoconf libtool \
-    clang cmake ninja-build ruby \
+    clang lld cmake ninja-build ruby \
     patchelf bison flex texinfo gettext
 
 # Install basic utilities for development and version control
