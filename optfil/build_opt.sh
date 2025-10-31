@@ -266,6 +266,21 @@ rm -v /opt/fil/lib/libzstd.a
 cd ..
 rm -rf zstd-1.5.6
 
+tar -xf $FILCSRC/pizlix/pcre2-10.44.tar.bz2
+cd pcre2-10.44
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil \
+            --enable-unicode                    \
+            --disable-jit                       \
+            --enable-pcre2-16                   \
+            --enable-pcre2-32                   \
+            --enable-pcre2grep-libz             \
+            --enable-pcre2grep-libbz2           \
+            --disable-static
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pcre2-10.44
+
 tar -xf $FILCSRC/pizlix/ncurses-6.5.tar.gz
 cd ncurses-6.5
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil \
@@ -410,6 +425,20 @@ cd pizlonated-keyutils
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ make -j `nproc` NO_ARLIB=1 LIBDIR=/opt/fil/lib BINDIR=/opt/fil/bin SBINDIR=/opt/fil/sbin USRLIBDIR=/opt/fil/lib SHAREDIR=/opt/fil/share/keyutils INCLUDEDIR=/opt/fil/include PREFIX=/opt/fil install-optfil
 cd ..
 rm -rf pizlonated-keyutils
+
+tar -xf $FILCSRC/projects/libsepol-3.9/pizlonated-sepol.tar.gz
+cd pizlonated-sepol
+PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/
+PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
+cd ..
+rm -rf pizlonated-sepol
+
+tar -xf $FILCSRC/projects/libselinux-3.9/pizlonated-selinux.tar.gz
+cd pizlonated-selinux
+PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/
+PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
+cd ..
+rm -rf pizlonated-selinux
 
 tar -xf $FILCSRC/projects/Linux-PAM-1.7.1/pizlonated-pam.tar.gz
 cd pizlonated-pam
