@@ -428,15 +428,15 @@ rm -rf pizlonated-keyutils
 
 tar -xf $FILCSRC/projects/libsepol-3.9/pizlonated-sepol.tar.gz
 cd pizlonated-sepol
-PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/
-PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
+PATH=/opt/fil/bin:$PATH make -j `nproc` CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/
+PATH=/opt/fil/bin:$PATH make -j `nproc` CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
 cd ..
 rm -rf pizlonated-sepol
 
 tar -xf $FILCSRC/projects/libselinux-3.9/pizlonated-selinux.tar.gz
 cd pizlonated-selinux
-PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/
-PATH=/opt/fil/bin:$PATH make -j 32 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
+PATH=/opt/fil/bin:$PATH make -j `nproc` CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/
+PATH=/opt/fil/bin:$PATH make -j `nproc` CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
 cd ..
 rm -rf pizlonated-selinux
 

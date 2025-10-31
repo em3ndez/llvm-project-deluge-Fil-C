@@ -39,12 +39,11 @@ echo "This distribution includes:"
 echo "  - Fil-C compiler version $VERSION (filcc, fil++) and its runtime (libpizlo.so)"
 echo "  - Basic libraries compiled with Fil-C (glibc 2.40, LLVM libc++ 20.1.8)"
 echo "  - Memory safe programs compiled with Fil-C:"
-echo "    - GNU Bash                       - Compression utilities"
-echo "    - GNU Coreutils                  - OpenSSL cryptographic library"
-echo "    - GNU Binutils                   - OpenSSH client and server"
-echo "    - audit                          - keyutils"
-echo "    - PAM                            - Kerberos 5"
-echo "    - Mg text editor                 - pkgconf"
+echo "    - GNU Bash              - Compression libraries       - libaudit"
+echo "    - GNU Coreutils         - OpenSSL                     - keyutils"
+echo "    - GNU Binutils          - OpenSSH client and server   - PAM"
+echo "    - libsepol/libselinux   - mg text editor              - pkgconf"
+echo "    - Kerberos 5            - PCRE2"
 echo
 echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
 echo "********************************************************************************"
@@ -159,16 +158,45 @@ else
         fi
     fi
 
+    # Check host key permissions
+    KEYS_TO_FIX=""
+    KEYS_WITH_BAD_PERMS=""
+    for keyfile in /etc/ssh/ssh_host_*_key; do
+        # Skip if file doesn't exist or ends in .pub
+        [ -f "$keyfile" ] || continue
+        case "$keyfile" in
+            *.pub) continue ;;
+        esac
+
+        # Get file permissions and group
+        if [ -f "$keyfile" ]; then
+            mode=$(stat -c '%a' "$keyfile" 2>/dev/null)
+            group=$(stat -c '%G' "$keyfile" 2>/dev/null)
+
+            if [ "$mode" != "600" ]; then
+                if [ "$mode" = "640" ] && [ "$group" = "ssh_keys" ]; then
+                    # Red Hat quirk - safe to fix
+                    KEYS_TO_FIX="$KEYS_TO_FIX $keyfile"
+                else
+                    # Unknown permission issue - warn but don't fix
+                    KEYS_WITH_BAD_PERMS="$KEYS_WITH_BAD_PERMS $keyfile"
+                fi
+            fi
+        fi
+    done
+
     # Phase 2: Reporting and Prompting
     # =================================
 
     if [ -z "$MISSING_FILES" ] && [ "$MISSING_KEYS" = false ] \
-           && [ "$MISSING_SSHD_USER" = false ] && [ "$MISSING_SSHD_GROUP" = false ]; then
+           && [ "$MISSING_SSHD_USER" = false ] && [ "$MISSING_SSHD_GROUP" = false ] \
+           && [ -z "$KEYS_TO_FIX" ] && [ -z "$KEYS_WITH_BAD_PERMS" ]; then
         # Everything is ready
         echo "Found complete SSH configuration in /etc/ssh:"
         echo "  - Configuration files (ssh_config, sshd_config, moduli)"
         echo "  - Host keys (RSA, ECDSA, ED25519)"
         echo "  - sshd privilege separation user"
+        echo "  - Host key permissions are correct (mode 0600)"
         echo "No SSH setup needed."
     else
         # Something is missing - report what we'll do
@@ -195,6 +223,30 @@ else
 
         if [ "$MISSING_SSHD_USER" = true ]; then
             echo "  - sshd privilege separation user"
+        fi
+
+        if [ -n "$KEYS_TO_FIX" ]; then
+            echo
+            echo "  Host key permissions (will fix Red Hat quirk - changing mode to 0600):"
+            echo "    The following keys are currently mode 0640 with group ssh_keys."
+            echo "    This is an old Red Hat configuration that has been tested and works"
+            echo "    fine with mode 0600. Changing to 0600 is more secure and compatible."
+            for keyfile in $KEYS_TO_FIX; do
+                echo "    - $keyfile"
+            done
+        fi
+
+        if [ -n "$KEYS_WITH_BAD_PERMS" ]; then
+            echo
+            echo "  WARNING: Host keys with unexpected permissions (will NOT modify):"
+            echo "    The following keys do not have mode 0600 and do not match the known"
+            echo "    Red Hat pattern (0640 with group ssh_keys). You should manually change"
+            echo "    these to mode 0600 if you want sshd to accept them:"
+            for keyfile in $KEYS_WITH_BAD_PERMS; do
+                mode=$(stat -c '%a' "$keyfile" 2>/dev/null)
+                group=$(stat -c '%G' "$keyfile" 2>/dev/null)
+                echo "    - $keyfile (mode $mode, group $group)"
+            done
         fi
 
         echo
@@ -253,6 +305,28 @@ else
                 else
                     echo "WARNING: Failed to create sshd user"
                 fi
+            fi
+
+            # Fix host key permissions
+            if [ -n "$KEYS_TO_FIX" ]; then
+                echo "Fixing host key permissions..."
+                for keyfile in $KEYS_TO_FIX; do
+                    if chmod 0600 "$keyfile" 2>/dev/null; then
+                        echo "  Changed $keyfile to mode 0600"
+                    else
+                        echo "  WARNING: Failed to change permissions on $keyfile"
+                    fi
+                done
+            fi
+
+            # Display warning about unfixable permissions
+            if [ -n "$KEYS_WITH_BAD_PERMS" ]; then
+                echo
+                echo "WARNING: Some host keys have unexpected permissions that were not modified."
+                echo "Please manually fix the following keys by running:"
+                for keyfile in $KEYS_WITH_BAD_PERMS; do
+                    echo "  chmod 0600 $keyfile"
+                done
             fi
 
             # Re-enable exit-on-error

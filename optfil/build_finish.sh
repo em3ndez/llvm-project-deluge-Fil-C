@@ -76,5 +76,7 @@ cp -v audit-LICENSE.txt $package_name/
 cp -v PAM-LICENSE.txt $package_name/
 cp -v keyutils-LICENSE.txt $package_name/
 cp -v krb5-LICENSE.txt $package_name/
+cp -v libsepol-LICSENSE.txt $package_name/
+cp -v libselinux-LICENSE.txt $package_name/
 
 tar -cJf $package_name.tar.xz $package_name
