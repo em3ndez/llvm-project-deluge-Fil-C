@@ -457,9 +457,14 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
   const llvm::Triple &Triple = getTriple();
 
   if ((true)) {
+    // Check for explicit override flag
+    if (Arg *A = Args.getLastArg(options::OPT_filc_dynamic_linker)) {
+      A->claim();
+      return std::string(A->getValue());
+    }
+    
     if (getDriver().HasPizfix) {
-      SmallString<128> P(getDriver().Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix");
+      SmallString<128> P(getDriver().PizfixRoot);
       llvm::sys::path::append(P, "lib", "ld-yolo-x86_64.so");
       return std::string(P);
     }
@@ -656,21 +661,42 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   if (D.HasPizfix) {
     {
-      SmallString<128> P(D.Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix", "stdfil-include");
+      std::string P;
+      if (Arg *A = DriverArgs.getLastArg(options::OPT_filc_stdfil_include)) {
+        A->claim();
+        P = A->getValue();
+      } else {
+        SmallString<128> Path(D.PizfixRoot);
+        llvm::sys::path::append(Path, "stdfil-include");
+        P = std::string(Path);
+      }
       addSystemInclude(DriverArgs, CC1Args, P);
     }
     
     {
-      SmallString<128> P(D.Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix", "os-include");
+      std::string P;
+      if (Arg *A = DriverArgs.getLastArg(options::OPT_filc_os_include)) {
+        A->claim();
+        P = A->getValue();
+      } else {
+        SmallString<128> Path(D.PizfixRoot);
+        llvm::sys::path::append(Path, "os-include");
+        P = std::string(Path);
+      }
       addSystemInclude(DriverArgs, CC1Args, P);
     }
     
     if (!DriverArgs.hasArg(clang::driver::options::OPT_nostdinc)
         && !DriverArgs.hasArg(options::OPT_nostdlibinc)) {
-      SmallString<128> P(D.Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix", "include");
+      std::string P;
+      if (Arg *A = DriverArgs.getLastArg(options::OPT_filc_include)) {
+        A->claim();
+        P = A->getValue();
+      } else {
+        SmallString<128> Path(D.PizfixRoot);
+        llvm::sys::path::append(Path, "include");
+        P = std::string(Path);
+      }
       addSystemInclude(DriverArgs, CC1Args, P);
     }
   } else if (D.HasOptfil)

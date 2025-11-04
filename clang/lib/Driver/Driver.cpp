@@ -266,6 +266,8 @@ Driver::Driver(StringRef ClangExecutable, StringRef TargetTriple,
     SmallString<128> P(Dir);
     llvm::sys::path::append(P, "..", "..", "pizfix");
     HasPizfix = llvm::sys::fs::is_directory(P);
+    if (HasPizfix)
+      PizfixRoot = std::string(P);
   }
   if (!HasPizfix) {
     SmallString<128> RealPath;
@@ -1490,6 +1492,17 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   if (Arg *WD = Args.getLastArg(options::OPT_working_directory))
     if (VFS->setCurrentWorkingDirectory(WD->getValue()))
       Diag(diag::err_drv_unable_to_set_working_directory) << WD->getValue();
+
+  // Check for Fil-C resource directory override
+  if (Arg *A = Args.getLastArg(options::OPT_filc_resource_dir)) {
+    A->claim();
+    PizfixRoot = A->getValue();
+    HasPizfix = true;  // Trust the user-provided path
+  } else if (Arg *A = Args.getLastArg(options::OPT_filc_crt_path)) {
+    // If any filc flag is set, we're in filc mode
+    A->claim();
+    HasPizfix = true;
+  }
 
   // Check for missing include directories.
   if (!Diags.isIgnored(diag::warn_missing_include_dirs, SourceLocation())) {
