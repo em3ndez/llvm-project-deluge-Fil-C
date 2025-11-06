@@ -64,6 +64,7 @@ long double zmath_nearbyintl(long double value);
 unsigned zmath_getcw(void);
 void zmath_setcw(unsigned cw);
 void zmath_feclearexcept(int excepts);
+int zmath_feenableexcept(int excepts);
 
 #ifdef __cplusplus
 }

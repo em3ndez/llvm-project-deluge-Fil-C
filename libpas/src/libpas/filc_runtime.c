@@ -13173,6 +13173,18 @@ void filc_native_zmath_feclearexcept(filc_thread* my_thread, int excepts)
     PAS_ASSERT(!feclearexcept(excepts));
 }
 
+int filc_native_zmath_feenableexcept(filc_thread* my_thread, int excepts)
+{
+    PAS_UNUSED_PARAM(my_thread);
+#ifdef __USE_GNU
+    return feenableexcept(excepts);
+#else
+    PAS_UNUSED_PARAM(excepts);
+    filc_internal_panic(NULL, "feenableexcept not implemented.");
+    return 0;
+#endif
+}
+
 #endif /* PAS_ENABLE_FILC */
 
 #endif /* LIBPAS_ENABLED */
