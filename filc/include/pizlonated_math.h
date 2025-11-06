@@ -63,6 +63,7 @@ long double zmath_log1pl(long double value);
 long double zmath_nearbyintl(long double value);
 unsigned zmath_getcw(void);
 void zmath_setcw(unsigned cw);
+void zmath_feclearexcept(int excepts);
 
 #ifdef __cplusplus
 }

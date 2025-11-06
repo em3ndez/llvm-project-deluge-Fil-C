@@ -103,6 +103,7 @@
 #include <sys/statvfs.h>
 #include <sys/reboot.h>
 #include <linux/keyctl.h>
+#include <fenv.h>
 
 #if PAS_GLIBC
 #include <sys/pidfd.h>
@@ -13164,6 +13165,12 @@ void filc_native_zmath_setcw(filc_thread* my_thread, unsigned cw)
 {
     PAS_UNUSED_PARAM(my_thread);
     asm volatile ("fldcw %0" : : "m"(cw));
+}
+
+void filc_native_zmath_feclearexcept(filc_thread* my_thread, int excepts)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_ASSERT(!feclearexcept(excepts));
 }
 
 #endif /* PAS_ENABLE_FILC */
