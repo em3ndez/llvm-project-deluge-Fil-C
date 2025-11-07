@@ -129,7 +129,7 @@ $testDirectory.each_entry {
     expectedReturn = manifest["return"]
     raise unless expectedReturn == "success" or expectedReturn == "failure" or
         expectedReturn == "crash" or expectedReturn == "compileFailure" or
-        expectedReturn == "dontCrash" or expectedReturn == "exit13"
+        expectedReturn == "dontCrash" or expectedReturn == "exit13" or expectedReturn == "compileOnly"
     expectedOutputs = handleArray(manifest["output-includes"])
     forbiddenOutputs = handleArray(manifest["output-excludes"])
     optFlags = manifest["optFlags"]
@@ -189,7 +189,7 @@ $testDirectory.each_entry {
                 outp.puts "fi"
             end
         }
-        break if expectedReturn == "compileFailure"
+        break if expectedReturn == "compileFailure" or expectedReturn == "compileOnly"
         if libraries
             libraries.each_pair {
                 | libname, data |
@@ -264,7 +264,7 @@ $testDirectory.each_entry {
         outp.puts "    exit 1"
         outp.puts "fi"
     }
-    if expectedReturn != "compileFailure"
+    if expectedReturn != "compileFailure" and expectedReturn != "compileOnly"
         extraArgs = handleArray(manifest["extraArgs"]).map {
             | arg |
             Shellwords.shellescape(arg)
@@ -378,7 +378,7 @@ $testDirectory.each_entry {
         outp.puts "#!/bin/sh"
         outp.puts "set -e"
         outp.puts "#{Shellwords.shellescape(compileScript)}"
-        if expectedReturn != "compileFailure"
+        if expectedReturn != "compileFailure" and expectedReturn != "compileOnly"
             subRuns = manifest["subRuns"]
             if not subRuns or subRuns["default"]
                 outp.puts "#{Shellwords.shellescape(subRunScript)}"
@@ -395,7 +395,7 @@ $testDirectory.each_entry {
         end
     }
     compileScript.chmod(0755)
-    if expectedReturn != "compileFailure"
+    if expectedReturn != "compileFailure" and expectedReturn != "compileOnly"
         justRunScript.chmod(0755)
         justRunReleaseScript.chmod(0755)
         subRunScript.chmod(0755)

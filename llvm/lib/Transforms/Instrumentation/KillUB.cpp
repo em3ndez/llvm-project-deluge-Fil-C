@@ -16,6 +16,8 @@
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Operator.h>
+#include <llvm/IR/Instructions.h>
+#include <vector>
 
 using namespace llvm;
 
@@ -61,13 +63,43 @@ PreservedAnalyses KillUBPass::run(Module &M, ModuleAnalysisManager&) {
     F.removeRetAttrs(AM);
     for (size_t Idx = F.arg_size(); Idx--;)
       F.removeParamAttrs(Idx, AM);
+    std::vector<Instruction*> ToErase;
     for (BasicBlock& BB : F) {
       for (Instruction& I : BB) {
         I.dropUnknownNonDebugMetadata();
         I.dropPoisonGeneratingAnnotations();
         I.dropUBImplyingAttrsAndUnknownMetadata();
+        CallBase* CI = dyn_cast<CallBase>(&I);
+        if (!CI)
+          continue;
+        Function* Callee = dyn_cast<Function>(CI->getCalledOperand());
+        if (!Callee || !Callee->isIntrinsic())
+          continue;
+        bool ShouldErase = false;
+        switch (Callee->getIntrinsicID()) {
+        case Intrinsic::assume:
+        case Intrinsic::experimental_noalias_scope_decl:
+        case Intrinsic::invariant_start:
+        case Intrinsic::invariant_end:
+          ShouldErase = true;
+          break;
+        case Intrinsic::launder_invariant_group:
+        case Intrinsic::strip_invariant_group:
+          CI->replaceAllUsesWith(CI->getArgOperand(0));
+          ShouldErase = true;
+          break;
+        default:
+          break;
+        }
+        if (ShouldErase) {
+          if (InvokeInst* II = dyn_cast<InvokeInst>(CI))
+            BranchInst::Create(II->getNormalDest(), CI)->setDebugLoc(CI->getDebugLoc());
+          ToErase.push_back(CI);
+        }
       }
     }
+    for (Instruction* I : ToErase)
+      I->eraseFromParent();
   }
   
   return PreservedAnalyses::none();

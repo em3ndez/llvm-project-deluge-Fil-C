@@ -9224,8 +9224,11 @@ class Pizlonator {
           case Intrinsic::experimental_noalias_scope_decl:
           case Intrinsic::invariant_start:
           case Intrinsic::invariant_end:
+            ShouldErase = true;
+            break;
           case Intrinsic::launder_invariant_group:
           case Intrinsic::strip_invariant_group:
+            CI->replaceAllUsesWith(CI->getArgOperand(0));
             ShouldErase = true;
             break;
           case Intrinsic::stacksave:
@@ -9241,8 +9244,11 @@ class Pizlonator {
             ToErase.push_back(CI);
           }
         }
-        for (Instruction* I : ToErase)
+        for (Instruction* I : ToErase) {
+          if (verbose)
+            errs() << "Removing " << *I << "\n";
           I->eraseFromParent();
+        }
       }
     }
   }
