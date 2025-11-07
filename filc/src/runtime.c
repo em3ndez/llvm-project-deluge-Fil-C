@@ -30,6 +30,8 @@
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 #include <pizlonated_runtime.h>
+#include <linux/futex.h>
+#include <linux/time.h>
 
 unsigned zversion(void)
 {
@@ -465,14 +467,10 @@ struct futex_args {
 	volatile void* uaddr;
 	long futex_op;
 	unsigned long val;
-	const void* timeout;
+	const struct timespec* timeout;
 	volatile void* uaddr2;
 	unsigned long val3;
 };
-
-#define FUTEX_WAIT    0
-#define FUTEX_WAKE    1
-#define FUTEX_PRIVATE 128
 
 long zsys_syscall(long n, ...)
 {
@@ -493,13 +491,38 @@ long zsys_syscall(long n, ...)
         struct futex_args* args = (struct futex_args*)syscall_args;
         switch (args->futex_op) {
         case FUTEX_WAIT:
-        case FUTEX_WAIT | FUTEX_PRIVATE:
-            ZASSERT(!args->timeout);
-            zsys_futex_wait(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
+        case FUTEX_WAIT | FUTEX_PRIVATE_FLAG:
+        case FUTEX_WAIT | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT_BITSET:
+        case FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG:
+        case FUTEX_WAIT_BITSET | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME: {
+            if (args->futex_op & FUTEX_WAIT_BITSET)
+                ZASSERT(args->val3 == FUTEX_BITSET_MATCH_ANY);
+            int clock_id = (args->futex_op & FUTEX_CLOCK_REALTIME) ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+            struct timespec timeout = {};
+            if (args->timeout) {
+                if (!(args->futex_op & FUTEX_WAIT_BITSET))
+                    zsys_clock_gettime(clock_id, &timeout);
+                timeout.tv_sec += args->timeout->tv_sec;
+                timeout.tv_nsec += args->timeout->tv_nsec;
+                if (timeout.tv_nsec >= 1000000000) {
+                    timeout.tv_sec++;
+                    timeout.tv_nsec -= 1000000000;
+                }
+            }
+            int err = zsys_futex_timedwait(args->uaddr, args->val, clock_id,
+                args->timeout ? &timeout : 0, args->futex_op & FUTEX_PRIVATE_FLAG);
+            if (err > 0) {
+                zset_errno(err);
+                return -1;
+            }
             return 0;
+        }
         case FUTEX_WAKE:
-        case FUTEX_WAKE | FUTEX_PRIVATE:
-            zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
+        case FUTEX_WAKE | FUTEX_PRIVATE_FLAG:
+            zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE_FLAG);
             return 0;
         default:
             zerrorf("unsupported futex op: %d.", args->futex_op);

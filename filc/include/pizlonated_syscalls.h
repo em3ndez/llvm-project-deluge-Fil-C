@@ -221,7 +221,7 @@ int zsys_uname(void* buf);
 int zsys_sendfile(int out_fd, int in_fd, long* offset, __SIZE_TYPE__ count);
 void zsys_futex_wake(volatile int* addr, int cnt, int priv);
 void zsys_futex_wait(volatile int* addr, int val, int priv);
-/* These futex calls return the errno as a negative value. They do not set errno.
+/* These futex calls return the errno as a positive value. They do not set errno.
  
    NOTE: the futex_timedwait uses an absolute timeout, which is not what the real futex syscall
    uses! */
