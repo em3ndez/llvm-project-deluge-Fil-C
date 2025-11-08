@@ -338,6 +338,884 @@ size_mul_add_mul_or_raise(size_t x, size_t y, size_t z, size_t w, VALUE exc)
     }
 }
 
+#ifdef __FILC__
+
+/* FIXME: I started out writing this chunk thinking that I'd just replace some simple API with calls
+   to malloc. But then I learned that the GC also provides functionality that isn't about GC itself,
+   like telling you the sizes of objects. So, I ended up copy-pasting a decent amount of code from the
+   !defined(__FILC__) case into here.
+
+   That kinda sucks but then again, maybe it's not even as bad as the rest of the carnage I have done
+   to Ruby. */
+
+typedef struct RVALUE {
+    union {
+        struct RBasic  basic;
+        struct RObject object;
+        struct RClass  klass;
+        struct RFloat  flonum;
+        struct RString string;
+        struct RArray  array;
+        struct RRegexp regexp;
+        struct RHash   hash;
+        struct RData   data;
+        struct RTypedData   typeddata;
+        struct RStruct rstruct;
+        struct RBignum bignum;
+        struct RFile   file;
+        struct RMatch  match;
+        struct RRational rational;
+        struct RComplex complex;
+        struct RSymbol symbol;
+        union {
+            rb_cref_t cref;
+            struct vm_svar svar;
+            struct vm_throw_data throw_data;
+            struct vm_ifunc ifunc;
+            struct MEMO memo;
+            struct rb_method_entry_struct ment;
+            const rb_iseq_t iseq;
+            rb_env_t env;
+            struct rb_imemo_tmpbuf_struct alloc;
+            rb_ast_t ast;
+        } imemo;
+        struct {
+            struct RBasic basic;
+            VALUE v1;
+            VALUE v2;
+            VALUE v3;
+        } values;
+    } as;
+} RVALUE;
+
+#define RANY(o) ((RVALUE*)(o))
+
+struct rb_objspace *
+rb_objspace_alloc(void)
+{
+    return malloc(0);
+}
+
+void
+rb_objspace_free(struct rb_objspace *objspace)
+{
+    free(objspace);
+}
+
+void
+rb_objspace_set_event_hook(const rb_event_flat_t event)
+{
+}
+
+size_t
+rb_size_pool_slot_size(unsigned char pool_id)
+{
+    GC_ASSERT(pool_id < SIZE_POOL_COUNT);
+
+    return (1 << pool_id) * sizeof(RVALUE);
+}
+
+bool
+rb_gc_size_allocatable_p(size_t size)
+{
+    return size <= size_pool_slot_size(SIZE_POOL_COUNT - 1);
+}
+
+static inline VALUE newobj(VALUE klass, uintptr_t flags, VALUE v1, VALUE v2, VALUE v3, size_t size)
+{
+    RVALUE *p = malloc(size);
+    p->as.basic.flags = flags;
+    *(VALUE*)&p->as.basic.klass = klass;
+    p->as.values.v1 = v1;
+    p->as.values.v2 = v2;
+    p->as.values.v3 = v3;
+    return (VALUE)p;
+}
+
+VALUE
+rb_wb_unprotected_newobj_of(VALUE klass, uintptr_t flags, size_t size)
+{
+    return newobj(klass, flags, 0, 0, 0, size);
+}
+
+VALUE
+rb_wb_protected_newobj_of(rb_execution_context_t *ec VALUE klass, uintptr_t flags, size_t size)
+{
+    return newobj(klass, flags, 0, 0, 0, size);
+}
+
+VALUE
+rb_newobj(void)
+{
+    return newobj(0, T_NONE, 0, 0, 0, RVALUE_SIZE);
+}
+
+static VALUE
+rb_class_instance_allocate_internal(VALUE klass, uintptr_t flags)
+{
+    GC_ASSERT((flags & RUBY_T_MASK) == T_OBJECT);
+    GC_ASSERT(flags & ROBJECT_EMBED);
+
+    size_t size;
+    uint32_t index_tbl_num_entries = RCLASS_EXT(klass)->max_iv_count;
+
+    size = rb_obj_embedded_size(index_tbl_num_entries);
+    if (!rb_gc_size_allocatable_p(size)) {
+        size = sizeof(struct RObject);
+    }
+
+    VALUE obj = newobj(klass, flags, 0, 0, 0, size);
+    RUBY_ASSERT(rb_shape_get_shape(obj)->type == SHAPE_ROOT);
+
+    // Set the shape to the specific T_OBJECT shape which is always
+    // SIZE_POOL_COUNT away from the root shape.
+    ROBJECT_SET_SHAPE_ID(obj, ROBJECT_SHAPE_ID(obj) + SIZE_POOL_COUNT);
+
+    return obj;
+}
+
+VALUE
+rb_newobj_of(VALUE klass, uintptr_t flags)
+{
+    if ((flags & RUBY_T_MASK) == T_OBJECT) {
+        return rb_class_instance_allocate_internal(klass, (flags | ROBJECT_EMBED) & ~FL_WB_PROTECTED);
+    }
+    else {
+        return newobj(klass, flags & ~FL_WB_PROTECTED, 0, 0, 0, sizeof(RVALUE));
+    }
+}
+
+const char *
+rb_imemo_name(enum imemo_type type)
+{
+    // put no default case to get a warning if an imemo type is missing
+    switch (type) {
+#define IMEMO_NAME(x) case imemo_##x: return #x;
+        IMEMO_NAME(env);
+        IMEMO_NAME(cref);
+        IMEMO_NAME(svar);
+        IMEMO_NAME(throw_data);
+        IMEMO_NAME(ifunc);
+        IMEMO_NAME(memo);
+        IMEMO_NAME(ment);
+        IMEMO_NAME(iseq);
+        IMEMO_NAME(tmpbuf);
+        IMEMO_NAME(ast);
+        IMEMO_NAME(parser_strterm);
+        IMEMO_NAME(callinfo);
+        IMEMO_NAME(callcache);
+        IMEMO_NAME(constcache);
+#undef IMEMO_NAME
+    }
+    return "unknown";
+}
+
+VALUE
+rb_imemo_new(enum imemo_type type, VALUE v1, VALUE v2, VALUE v3, VALUE v0)
+{
+    size_t size = sizeof(RVALUE);
+    uintptr_t flags = T_IMEMO | (type << FL_USHIFT);
+    return newobj(v0, flags, v1, v2, v3, size);
+}
+
+static VALUE
+rb_imemo_tmpbuf_new(VALUE v1, VALUE v2, VALUE v3, VALUE v0)
+{
+    size_t size = sizeof(struct rb_imemo_tmpbuf_struct);
+    uintptr_t flags = T_IMEMO | (imemo_tmpbuf << FL_USHIFT);
+    return newobj(v0, flags, v1, v2, v3, FALSE, size);
+}
+
+static VALUE
+rb_imemo_tmpbuf_auto_free_maybe_mark_buffer(void *buf, size_t cnt)
+{
+    return rb_imemo_tmpbuf_new((VALUE)buf, 0, (VALUE)cnt, 0);
+}
+
+rb_imemo_tmpbuf_t *
+rb_imemo_tmpbuf_parser_heap(void *buf, rb_imemo_tmpbuf_t *old_heap, size_t cnt)
+{
+    return (rb_imemo_tmpbuf_t *)rb_imemo_tmpbuf_new((VALUE)buf, (VALUE)old_heap, (VALUE)cnt, 0);
+}
+
+static size_t
+imemo_memsize(VALUE obj)
+{
+    size_t size = 0;
+    switch (imemo_type(obj)) {
+      case imemo_ment:
+        size += sizeof(RANY(obj)->as.imemo.ment.def);
+        break;
+      case imemo_iseq:
+        size += rb_iseq_memsize((rb_iseq_t *)obj);
+        break;
+      case imemo_env:
+        size += RANY(obj)->as.imemo.env.env_size * sizeof(VALUE);
+        break;
+      case imemo_tmpbuf:
+        size += RANY(obj)->as.imemo.alloc.cnt * sizeof(VALUE);
+        break;
+      case imemo_ast:
+        size += rb_ast_memsize(&RANY(obj)->as.imemo.ast);
+        break;
+      case imemo_cref:
+      case imemo_svar:
+      case imemo_throw_data:
+      case imemo_ifunc:
+      case imemo_memo:
+      case imemo_parser_strterm:
+        break;
+      default:
+        /* unreachable */
+        break;
+    }
+    return size;
+}
+
+VALUE
+rb_class_allocate_instance(VALUE klass)
+{
+    return rb_class_instance_allocate_internal(klass, T_OBJECT | ROBJECT_EMBED);
+}
+
+static inline void
+rb_data_object_check(VALUE klass)
+{
+    if (klass != rb_cObject && (rb_get_alloc_func(klass) == rb_class_allocate_instance)) {
+        rb_undef_alloc_func(klass);
+        rb_warn("undefining the allocator of T_DATA class %"PRIsVALUE, klass);
+    }
+}
+
+VALUE
+rb_data_object_wrap(VALUE klass, void *datap, RUBY_DATA_FUNC dmark, RUBY_DATA_FUNC dfree)
+{
+    RUBY_ASSERT_ALWAYS(dfree != (RUBY_DATA_FUNC)1);
+    if (klass) rb_data_object_check(klass);
+    return newobj(klass, T_DATA, (VALUE)dmark, (VALUE)dfree, (VALUE)datap, sizeof(struct RTypedData));
+}
+
+VALUE
+rb_data_object_zalloc(VALUE klass, size_t size, RUBY_DATA_FUNC dmark, RUBY_DATA_FUNC dfree)
+{
+    VALUE obj = rb_data_object_wrap(klass, 0, dmark, dfree);
+    DATA_PTR(obj) = xcalloc(1, size);
+    return obj;
+}
+
+static VALUE
+typed_data_alloc(VALUE klass, VALUE typed_flag, void *datap, const rb_data_type_t *type, size_t size)
+{
+    RBIMPL_NONNULL_ARG(type);
+    if (klass) rb_data_object_check(klass);
+    return newobj(klass, T_DATA, (VALUE)type, 1 | typed_flag, (VALUE)datap, size);
+}
+
+VALUE
+rb_data_typed_object_wrap(VALUE klass, void *datap, const rb_data_type_t *type)
+{
+    if (UNLIKELY(type->flags & RUBY_TYPED_EMBEDDABLE)) {
+        rb_raise(rb_eTypeError, "Cannot wrap an embeddable TypedData");
+    }
+
+    return typed_data_alloc(klass, 0, datap, type, sizeof(struct RTypedData));
+}
+
+VALUE
+rb_data_typed_object_zalloc(VALUE klass, size_t size, const rb_data_type_t *type)
+{
+    if (type->flags & RUBY_TYPED_EMBEDDABLE) {
+        if (!(type->flags & RUBY_TYPED_FREE_IMMEDIATELY)) {
+            rb_raise(rb_eTypeError, "Embeddable TypedData must be freed immediately");
+        }
+
+        size_t embed_size = offsetof(struct RTypedData, data) + size;
+        if (rb_gc_size_allocatable_p(embed_size)) {
+            VALUE obj = typed_data_alloc(klass, TYPED_DATA_EMBEDDED, 0, type, embed_size);
+            memset((char *)obj + offsetof(struct RTypedData, data), 0, size);
+            return obj;
+        }
+    }
+
+    VALUE obj = typed_data_alloc(klass, 0, NULL, type, sizeof(struct RTypedData));
+    DATA_PTR(obj) = xcalloc(1, size);
+    return obj;
+}
+
+size_t
+rb_objspace_data_type_memsize(VALUE obj)
+{
+    size_t size = 0;
+    if (RTYPEDDATA_P(obj)) {
+        const rb_data_type_t *type = RTYPEDDATA_TYPE(obj);
+        const void *ptr = RTYPEDDATA_GET_DATA(obj);
+
+        if (RTYPEDDATA_TYPE(obj)->flags & RUBY_TYPED_EMBEDDABLE && !RTYPEDDATA_EMBEDDED_P(obj)) {
+#ifdef HAVE_MALLOC_USABLE_SIZE
+            size += malloc_usable_size((void *)ptr);
+#endif
+        }
+
+        if (ptr && type->function.dsize) {
+            size += type->function.dsize(ptr);
+        }
+    }
+
+    return size;
+}
+
+const char *
+rb_objspace_data_type_name(VALUE obj)
+{
+    if (RTYPEDDATA_P(obj)) {
+        return RTYPEDDATA_TYPE(obj)->wrap_struct_name;
+    }
+    else {
+        return 0;
+    }
+}
+
+static enum rb_id_table_iterator_result
+free_const_entry_i(VALUE value, void *data)
+{
+    rb_const_entry_t *ce = (rb_const_entry_t *)value;
+    xfree(ce);
+    return ID_TABLE_CONTINUE;
+}
+
+void
+rb_free_const_table(struct rb_id_table *tbl)
+{
+    rb_id_table_foreach_values(tbl, free_const_entry_i, 0);
+    rb_id_table_free(tbl);
+}
+
+static void
+vm_ccs_free(struct rb_class_cc_entries *ccs)
+{
+    if (ccs->entries) {
+        for (int i=0; i<ccs->len; i++) {
+            const struct rb_callcache *cc = ccs->entries[i].cc;
+            VM_ASSERT(!vm_cc_super_p(cc) && !vm_cc_refinement_p(cc));
+            vm_cc_invalidate(cc);
+        }
+        ruby_xfree(ccs->entries);
+    }
+    ruby_xfree(ccs);
+}
+
+void
+rb_vm_ccs_free(struct rb_class_cc_entries *ccs)
+{
+    RB_DEBUG_COUNTER_INC(ccs_free);
+    vm_ccs_free(ccs);
+}
+
+static enum rb_id_table_iterator_result
+cc_table_free_i(VALUE ccs_ptr, void *data_ptr)
+{
+    struct rb_class_cc_entries *ccs = (struct rb_class_cc_entries *)ccs_ptr;
+    VM_ASSERT(vm_ccs_p(ccs));
+    vm_ccs_free(ccs);
+    return ID_TABLE_CONTINUE;
+}
+
+static void
+cc_table_free(VALUE klass)
+{
+    struct rb_id_table *cc_tbl = RCLASS_CC_TBL(klass);
+
+    if (cc_tbl) {
+        rb_id_table_foreach_values(cc_tbl, cc_table_free_i, NULL);
+        rb_id_table_free(cc_tbl);
+    }
+}
+
+static enum rb_id_table_iterator_result
+cvar_table_free_i(VALUE value, void * ctx)
+{
+    xfree((void *) value);
+    return ID_TABLE_CONTINUE;
+}
+
+void
+rb_cc_table_free(VALUE klass)
+{
+    cc_table_free(klass);
+}
+
+void Init_heap(void)
+{
+}
+
+void Init_gc_stress(void)
+{
+}
+
+void
+rb_objspace_each_objects(each_obj_callback *callback, void *data)
+{
+    zerror("rb_objspace_each_objects not implemented");
+}
+
+int
+rb_objspace_internal_object_p(VALUE obj)
+{
+    zerror("rb_objspace_internal_object_p not implemented");
+}
+
+VALUE
+rb_undefine_finalizer(VALUE obj)
+{
+    /* FIXME: Actually implement finalization. */
+    FL_UNSET(obj, FL_FINALIZE);
+    return obj;
+}
+
+static void
+should_be_callable(VALUE block)
+{
+    if (!rb_obj_respond_to(block, idCall, TRUE)) {
+        rb_raise(rb_eArgError, "wrong type argument %"PRIsVALUE" (should be callable)",
+                 rb_obj_class(block));
+    }
+}
+
+static void
+should_be_finalizable(VALUE obj)
+{
+    if (!FL_ABLE(obj)) {
+        rb_raise(rb_eArgError, "cannot define finalizer for %s",
+                 rb_obj_classname(obj));
+    }
+    rb_check_frozen(obj);
+}
+
+VALUE
+rb_define_finalizer_no_check(VALUE obj, VALUE block)
+{
+    RBASIC(obj)->flags |= FL_FINALIZE;
+
+    /* FIXME: Actually implement finalization. */
+
+    return Qnil;
+}
+
+static VALUE
+define_final(int argc, VALUE *argv, VALUE os)
+{
+    VALUE obj, block;
+
+    rb_scan_args(argc, argv, "11", &obj, &block);
+    should_be_finalizable(obj);
+    if (argc == 1) {
+        block = rb_block_proc();
+    }
+    else {
+        should_be_callable(block);
+    }
+
+    if (rb_callable_receiver(block) == obj) {
+        rb_warn("finalizer references object to be finalized");
+    }
+
+    return rb_define_finalizer_no_check(obj, block);
+}
+
+VALUE
+rb_define_finalizer(VALUE obj, VALUE block)
+{
+    should_be_finalizable(obj);
+    should_be_callable(block);
+    return rb_define_finalizer_no_check(obj, block);
+}
+
+void
+rb_gc_copy_finalizer(VALUE dest, VALUE obj)
+{
+    if (!FL_TEST(obj, FL_FINALIZE)) return;
+
+    /* FIXME: Actually implement finalization. */
+
+    FL_SET(dest, FL_FINALIZE);
+}
+
+void
+rb_objspace_free_objects(struct rb_objspace *objspace)
+{
+}
+
+void
+rb_objspace_call_finalizer(struct rb_objspace *objspace)
+{
+    /* FIXME: Actually do stuff here? */
+}
+
+int
+rb_objspace_markable_object_p(VALUE obj)
+{
+    zerror("rb_objspace_markable_object_p not implemented");
+    return 0;
+}
+
+int
+rb_objspace_garbage_object_p(VALUE obj)
+{
+    zerror("rb_objspace_garbage_object_p not implemented");
+    return 0;
+}
+
+bool
+rb_gc_is_ptr_to_obj(void *ptr)
+{
+    zerror("rb_gc_is_ptr_to_obj not implemented");
+    return false;
+}
+
+VALUE
+rb_gc_id2ref_obj_tbl(VALUE objid)
+{
+    zerror("rb_gc_id2ref_obj_tbl not implemented");
+    return Qnil;
+}
+
+static VALUE
+os_id2ref(VALUE os, VALUE objid)
+{
+    zerror("id2ref not implemented");
+    return Qnil;
+}
+
+static VALUE
+rb_find_object_id(VALUE obj, VALUE (*get_heap_object_id)(VALUE))
+{
+    if (STATIC_SYM_P(obj)) {
+        return (SYM2ID(obj) * sizeof(RVALUE) + (4 << 2)) | FIXNUM_FLAG;
+    }
+    else if (FLONUM_P(obj)) {
+#if SIZEOF_LONG == SIZEOF_VOIDP
+        return LONG2NUM((SIGNED_VALUE)obj);
+#else
+        return LL2NUM((SIGNED_VALUE)obj);
+#endif
+    }
+    else if (SPECIAL_CONST_P(obj)) {
+        return LONG2NUM((SIGNED_VALUE)obj);
+    }
+
+#if SIZEOF_LONG == SIZEOF_VOIDP
+    return (VALUE)((SIGNED_VALUE)(obj)|FIXNUM_FLAG);
+#elif SIZEOF_LONG_LONG == SIZEOF_VOIDP
+    return LL2NUM((SIGNED_VALUE)(obj) / 2);
+#else
+# error not supported
+#endif
+}
+
+VALUE
+rb_memory_id(VALUE obj)
+{
+    return rb_find_object_id(obj);
+}
+
+VALUE
+rb_obj_id(VALUE obj)
+{
+    /*
+     *                32-bit VALUE space
+     *          MSB ------------------------ LSB
+     *  false   00000000000000000000000000000000
+     *  true    00000000000000000000000000000010
+     *  nil     00000000000000000000000000000100
+     *  undef   00000000000000000000000000000110
+     *  symbol  ssssssssssssssssssssssss00001110
+     *  object  oooooooooooooooooooooooooooooo00        = 0 (mod sizeof(RVALUE))
+     *  fixnum  fffffffffffffffffffffffffffffff1
+     *
+     *                    object_id space
+     *                                       LSB
+     *  false   00000000000000000000000000000000
+     *  true    00000000000000000000000000000010
+     *  nil     00000000000000000000000000000100
+     *  undef   00000000000000000000000000000110
+     *  symbol   000SSSSSSSSSSSSSSSSSSSSSSSSSSS0        S...S % A = 4 (S...S = s...s * A + 4)
+     *  object   oooooooooooooooooooooooooooooo0        o...o % A = 0
+     *  fixnum  fffffffffffffffffffffffffffffff1        bignum if required
+     *
+     *  where A = sizeof(RVALUE)/4
+     *
+     *  sizeof(RVALUE) is
+     *  20 if 32-bit, double is 4-byte aligned
+     *  24 if 32-bit, double is 8-byte aligned
+     *  40 if 64-bit
+     */
+
+    return rb_find_object_id(obj);
+}
+
+static enum rb_id_table_iterator_result
+cc_table_memsize_i(VALUE ccs_ptr, void *data_ptr)
+{
+    size_t *total_size = data_ptr;
+    struct rb_class_cc_entries *ccs = (struct rb_class_cc_entries *)ccs_ptr;
+    *total_size += sizeof(*ccs);
+    *total_size += sizeof(ccs->entries[0]) * ccs->capa;
+    return ID_TABLE_CONTINUE;
+}
+
+static size_t
+cc_table_memsize(struct rb_id_table *cc_table)
+{
+    size_t total = rb_id_table_memsize(cc_table);
+    rb_id_table_foreach_values(cc_table, cc_table_memsize_i, &total);
+    return total;
+}
+
+static size_t
+obj_memsize_of(VALUE obj, int use_all_types)
+{
+    size_t size = 0;
+
+    if (SPECIAL_CONST_P(obj)) {
+        return 0;
+    }
+
+    if (FL_TEST(obj, FL_EXIVAR)) {
+        size += rb_generic_ivar_memsize(obj);
+    }
+
+    switch (BUILTIN_TYPE(obj)) {
+      case T_OBJECT:
+        if (rb_shape_obj_too_complex(obj)) {
+            size += rb_st_memsize(ROBJECT_IV_HASH(obj));
+        }
+        else if (!(RBASIC(obj)->flags & ROBJECT_EMBED)) {
+            size += ROBJECT_IV_CAPACITY(obj) * sizeof(VALUE);
+        }
+        break;
+      case T_MODULE:
+      case T_CLASS:
+        if (RCLASS_M_TBL(obj)) {
+            size += rb_id_table_memsize(RCLASS_M_TBL(obj));
+        }
+        // class IV sizes are allocated as powers of two
+        size += SIZEOF_VALUE << bit_length(RCLASS_IV_COUNT(obj));
+        if (RCLASS_CVC_TBL(obj)) {
+            size += rb_id_table_memsize(RCLASS_CVC_TBL(obj));
+        }
+        if (RCLASS_EXT(obj)->const_tbl) {
+            size += rb_id_table_memsize(RCLASS_EXT(obj)->const_tbl);
+        }
+        if (RCLASS_CC_TBL(obj)) {
+            size += cc_table_memsize(RCLASS_CC_TBL(obj));
+        }
+        if (FL_TEST_RAW(obj, RCLASS_SUPERCLASSES_INCLUDE_SELF)) {
+            size += (RCLASS_SUPERCLASS_DEPTH(obj) + 1) * sizeof(VALUE);
+        }
+        break;
+      case T_ICLASS:
+        if (RICLASS_OWNS_M_TBL_P(obj)) {
+            if (RCLASS_M_TBL(obj)) {
+                size += rb_id_table_memsize(RCLASS_M_TBL(obj));
+            }
+        }
+        if (RCLASS_CC_TBL(obj)) {
+            size += cc_table_memsize(RCLASS_CC_TBL(obj));
+        }
+        break;
+      case T_STRING:
+        size += rb_str_memsize(obj);
+        break;
+      case T_ARRAY:
+        size += rb_ary_memsize(obj);
+        break;
+      case T_HASH:
+        if (RHASH_ST_TABLE_P(obj)) {
+            VM_ASSERT(RHASH_ST_TABLE(obj) != NULL);
+            /* st_table is in the slot */
+            size += st_memsize(RHASH_ST_TABLE(obj)) - sizeof(st_table);
+        }
+        break;
+      case T_REGEXP:
+        if (RREGEXP_PTR(obj)) {
+            size += onig_memsize(RREGEXP_PTR(obj));
+        }
+        break;
+      case T_DATA:
+        if (use_all_types) size += rb_objspace_data_type_memsize(obj);
+        break;
+      case T_MATCH:
+        {
+            rb_matchext_t *rm = RMATCH_EXT(obj);
+            size += onig_region_memsize(&rm->regs);
+            size += sizeof(struct rmatch_offset) * rm->char_offset_num_allocated;
+        }
+        break;
+      case T_FILE:
+        if (RFILE(obj)->fptr) {
+            size += rb_io_memsize(RFILE(obj)->fptr);
+        }
+        break;
+      case T_RATIONAL:
+      case T_COMPLEX:
+        break;
+      case T_IMEMO:
+        size += imemo_memsize(obj);
+        break;
+
+      case T_FLOAT:
+      case T_SYMBOL:
+        break;
+
+      case T_BIGNUM:
+        if (!(RBASIC(obj)->flags & BIGNUM_EMBED_FLAG) && BIGNUM_DIGITS(obj)) {
+            size += BIGNUM_LEN(obj) * sizeof(BDIGIT);
+        }
+        break;
+
+      case T_NODE:
+        UNEXPECTED_NODE(obj_memsize_of);
+        break;
+
+      case T_STRUCT:
+        if ((RBASIC(obj)->flags & RSTRUCT_EMBED_LEN_MASK) == 0 &&
+            RSTRUCT(obj)->as.heap.ptr) {
+            size += sizeof(VALUE) * RSTRUCT_LEN(obj);
+        }
+        break;
+
+      case T_ZOMBIE:
+      case T_MOVED:
+        break;
+
+      default:
+        rb_bug("objspace/memsize_of(): unknown data type 0x%x(%p)",
+               BUILTIN_TYPE(obj), (void*)obj);
+    }
+
+    return size + rb_gc_obj_slot_size(obj);
+}
+
+size_t
+rb_obj_memsize_of(VALUE obj)
+{
+    return obj_memsize_of(obj, TRUE);
+}
+
+static VALUE
+count_objects(int argc, VALUE *argv, VALUE os)
+{
+    return Qnil;
+}
+
+size_t
+ruby_stack_length(VALUE **p)
+{
+    zerror("ruby_stack_length unimplemented");
+    return 0;
+}
+
+int
+rb_ec_stack_check(rb_execution_context_t *ec)
+{
+    return FALSE;
+}
+
+int
+ruby_stack_check(void)
+{
+    return FALSE;
+}
+
+void
+rb_gc_mark_locations(const VALUE *start, const VALUE *end)
+{
+    zerror("rb_gc_mark_locations not supported");
+}
+
+void
+rb_gc_mark_values(long n, const VALUE *values)
+{
+    zerror("rb_gc_mark_values not supported");
+}
+
+void
+rb_gc_mark_vm_stack_values(long n, const VALUE *values)
+{
+    zerror("rb_gc_mark_vm_stack_values not supported");
+}
+
+void
+rb_mark_set(st_table *tbl)
+{
+    zerror("rb_mark_set not supported");
+}
+
+void
+rb_mark_hash(st_table *tbl)
+{
+    zerror("rb_mark_hash not supported");
+}
+
+void
+rb_mark_tbl(st_table *tbl)
+{
+    zerror("rb_mark_tbl not supported");
+}
+
+void
+rb_mark_tbl_no_pin(st_table *tbl)
+{
+    zerror("rb_mark_tbl_no_pin not supported");
+}
+
+void
+rb_gc_mark_maybe(VALUE obj)
+{
+    zerror("rb_gc_mark_maybe not supported");
+}
+
+
+void
+rb_gc_mark_movable(VALUE ptr)
+{
+    zerror("rb_gc_mark_movable not supported");
+}
+
+void
+rb_gc_mark(VALUE ptr)
+{
+    zerror("rb_gc_mark not supported");
+}
+
+void
+rb_gc_mark_and_move(VALUE *ptr)
+{
+    zerror("rb_gc_mark_and_move not supported");
+}
+
+void
+rb_gc_mark_weak(VALUE *ptr)
+{
+    zerror("rb_gc_mark_weak not supported");
+}
+
+void
+rb_gc_remove_weak(VALUE parent_obj, VALUE *ptr)
+{
+    zerror("rb_gc_remove_weak not supported");
+}
+
+int
+rb_objspace_marked_object_p(VALUE obj)
+{
+    zerror("rb_objspace_marked_object_p not supported");
+    return 0;
+}
+
+
+#else /* defined(__FILC__) -> so !defined(__FILC__) */
+
 #if defined(HAVE_RB_GC_GUARDED_PTR_VAL) && HAVE_RB_GC_GUARDED_PTR_VAL
 /* trick the compiler into thinking a external signal handler uses this */
 volatile VALUE rb_gc_guarded_val;
@@ -14468,3 +15346,5 @@ ruby_xrealloc2(void *ptr, size_t n, size_t new_size)
 #endif
     return ruby_xrealloc2_body(ptr, n, new_size);
 }
+
+#endif /* defined(__FILC__) -> so end of !defined(__FILC__) */

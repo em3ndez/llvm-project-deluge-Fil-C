@@ -1706,7 +1706,7 @@ gc_for_fd_with_gvl(int e)
     if (vm_initialized)
         return (int)(VALUE)rb_thread_call_with_gvl(with_gvl_gc_for_fd, &e);
     else
-        return RBOOL(rb_gc_for_fd(e));
+        return (int)RBOOL(rb_gc_for_fd(e));
 }
 
 static void *

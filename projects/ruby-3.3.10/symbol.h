@@ -15,7 +15,7 @@
 #include "ruby/encoding.h"
 
 #define DYNAMIC_ID_P(id) (!(id&ID_STATIC_SYM)&&id>tLAST_OP_ID)
-#define STATIC_ID2SYM(id)  (((VALUE)(id)<<RUBY_SPECIAL_SHIFT)|SYMBOL_FLAG)
+#define STATIC_ID2SYM(id)  ((VALUE)(((uintptr_t)(id)<<RUBY_SPECIAL_SHIFT)|SYMBOL_FLAG))
 
 #ifdef HAVE_BUILTIN___BUILTIN_CONSTANT_P
 #define rb_id2sym(id) \

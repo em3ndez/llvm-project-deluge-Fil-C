@@ -879,32 +879,7 @@ RBIMPL_ATTR_NONNULL((1))
 static inline void *
 rbimpl_atomic_ptr_cas(void **ptr, const void *oldval, const void *newval)
 {
-#if 0
-
-#elif defined(InterlockedExchangePointer)
-    /* ... Can we say that InterlockedCompareExchangePtr surly exists when
-     * InterlockedExchangePointer is defined?  Seems so but...?*/
-    PVOID *pptr = RBIMPL_CAST((PVOID *)ptr);
-    PVOID pold = RBIMPL_CAST((PVOID)oldval);
-    PVOID pnew = RBIMPL_CAST((PVOID)newval);
-    return InterlockedCompareExchangePointer(pptr, pnew, pold);
-
-#elif defined(__sun) && defined(HAVE_ATOMIC_H)
-    void *pold = RBIMPL_CAST((void *)oldval);
-    void *pnew = RBIMPL_CAST((void *)newval);
-    return atomic_cas_ptr(ptr, pold, pnew);
-
-
-#else
-    RBIMPL_STATIC_ASSERT(sizeof_voidp, sizeof *ptr == sizeof(size_t));
-
-    const size_t snew = RBIMPL_CAST((size_t)newval);
-    const size_t sold = RBIMPL_CAST((size_t)oldval);
-    volatile size_t *const sptr = RBIMPL_CAST((volatile size_t *)ptr);
-    const size_t sret = rbimpl_atomic_size_cas(sptr, sold, snew);
-    return RBIMPL_CAST((void *)sret);
-
-#endif
+    return zstrong_cas_ptr(ptr, oldval, newval);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()
@@ -929,13 +904,7 @@ RBIMPL_ATTR_NONNULL((1))
 static inline VALUE
 rbimpl_atomic_value_cas(volatile VALUE *ptr, VALUE oldval, VALUE newval)
 {
-    RBIMPL_STATIC_ASSERT(sizeof_value, sizeof *ptr == sizeof(size_t));
-
-    const size_t snew = RBIMPL_CAST((size_t)newval);
-    const size_t sold = RBIMPL_CAST((size_t)oldval);
-    volatile size_t *const sptr = RBIMPL_CAST((volatile size_t *)ptr);
-    const size_t sret = rbimpl_atomic_size_cas(sptr, sold, snew);
-    return RBIMPL_CAST((VALUE)sret);
+    return zstrong_cas_ptr((void**)ptr, oldval, newval);
 }
 /** @endcond */
 #endif /* RUBY_ATOMIC_H */

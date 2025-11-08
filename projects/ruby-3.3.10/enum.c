@@ -1170,7 +1170,7 @@ tally_up(st_data_t *group, st_data_t *value, st_data_t arg, int existing)
         tally = INT2FIX(1);
     }
     else if (FIXNUM_P(tally) && tally < INT2FIX(FIXNUM_MAX)) {
-        tally += INT2FIX(1) & ~FIXNUM_FLAG;
+        tally += (uintptr_t)INT2FIX(1) & ~FIXNUM_FLAG;
     }
     else {
         Check_Type(tally, T_BIGNUM);
@@ -4770,7 +4770,7 @@ enum_sum(int argc, VALUE* argv, VALUE obj)
         memo.c = 0.0;
     }
 
-    if (RTEST(rb_range_values(obj, &beg, &end, &excl))) {
+    if (RTEST((VALUE)rb_range_values(obj, &beg, &end, &excl))) {
         if (!memo.block_given && !memo.float_value &&
                 (FIXNUM_P(beg) || RB_BIGNUM_TYPE_P(beg)) &&
                 (FIXNUM_P(end) || RB_BIGNUM_TYPE_P(end))) {

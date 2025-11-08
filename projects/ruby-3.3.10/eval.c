@@ -304,9 +304,9 @@ ruby_executable_node(void *n, int *status)
     VALUE v = (VALUE)n;
     int s;
 
-    switch (v) {
-      case Qtrue:  s = EXIT_SUCCESS; break;
-      case Qfalse: s = EXIT_FAILURE; break;
+    switch ((uintptr_t)v) {
+      case (uintptr_t)Qtrue:  s = EXIT_SUCCESS; break;
+      case (uintptr_t)Qfalse: s = EXIT_FAILURE; break;
       default:
         if (!FIXNUM_P(v)) return TRUE;
         s = FIX2INT(v);

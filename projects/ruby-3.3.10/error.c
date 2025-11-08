@@ -171,7 +171,7 @@ rb_warning_category_from_name(VALUE category)
     ID cat_id;
     Check_Type(category, T_SYMBOL);
     if (!(cat_id = rb_check_id(&category)) ||
-        !st_lookup(warning_categories.id2enum, cat_id, &cat_value)) {
+        !st_lookup(warning_categories.id2enum, (st_data_t)cat_id, &cat_value)) {
         rb_raise(rb_eArgError, "unknown category: %"PRIsVALUE, category);
     }
     return (rb_warning_category_t)cat_value;
@@ -181,10 +181,10 @@ static VALUE
 rb_warning_category_to_name(rb_warning_category_t category)
 {
     st_data_t id;
-    if (!st_lookup(warning_categories.enum2id, category, &id)) {
+    if (!st_lookup(warning_categories.enum2id, (st_data_t)category, &id)) {
         rb_raise(rb_eArgError, "invalid category: %d", (int)category);
     }
-    return id ? ID2SYM(id) : Qnil;
+    return id ? ID2SYM((ID)id) : Qnil;
 }
 
 void
@@ -1178,10 +1178,10 @@ rb_builtin_type_name(int t)
 static VALUE
 displaying_class_of(VALUE x)
 {
-    switch (x) {
-      case Qfalse: return rb_fstring_cstr("false");
-      case Qnil:   return rb_fstring_cstr("nil");
-      case Qtrue:  return rb_fstring_cstr("true");
+    switch ((uintptr_t)x) {
+      case (uintptr_t)Qfalse: return rb_fstring_cstr("false");
+      case (uintptr_t)Qnil:   return rb_fstring_cstr("nil");
+      case (uintptr_t)Qtrue:  return rb_fstring_cstr("true");
       default:     return rb_obj_class(x);
     }
 }
@@ -1515,11 +1515,11 @@ check_highlight_keyword(VALUE opt, int auto_tty_detect)
     if (!NIL_P(opt)) {
         highlight = rb_hash_lookup(opt, sym_highlight);
 
-        switch (highlight) {
+        switch ((uintptr_t)highlight) {
           default:
             rb_bool_expected(highlight, "highlight", TRUE);
             UNREACHABLE;
-          case Qtrue: case Qfalse: case Qnil: break;
+          case (uintptr_t)Qtrue: case (uintptr_t)Qfalse: case (uintptr_t)Qnil: break;
         }
     }
 
@@ -1547,7 +1547,7 @@ check_order_keyword(VALUE opt)
             else if (id == id_top) order = Qfalse;
             else {
                 rb_raise(rb_eArgError, "expected :top or :bottom as "
-                        "order: %+"PRIsVALUE, order);
+                        "order: %"PRIsVALUE, order);
             }
         }
     }
@@ -1690,7 +1690,7 @@ exc_inspect(VALUE exc)
     rb_str_buf_append(str, klass);
 
     if (RTEST(rb_str_include(exc, rb_str_new2("\n")))) {
-        rb_str_catf(str, ":%+"PRIsVALUE, exc);
+        rb_str_catf(str, ":%"PRIsVALUE, exc);
     }
     else {
         rb_str_buf_cat(str, ": ", 2);
@@ -1921,13 +1921,13 @@ exit_initialize(int argc, VALUE *argv, VALUE exc)
     if (argc > 0) {
         status = *argv;
 
-        switch (status) {
-          case Qtrue:
+        switch ((uintptr_t)status) {
+          case (uintptr_t)Qtrue:
             status = INT2FIX(EXIT_SUCCESS);
             ++argv;
             --argc;
             break;
-          case Qfalse:
+          case (uintptr_t)Qfalse:
             status = INT2FIX(EXIT_FAILURE);
             ++argv;
             --argc;
@@ -2329,14 +2329,14 @@ name_err_mesg_to_str(VALUE obj)
 #define FAKE_CSTR(v, str) rb_setup_fake_str((v), (str), rb_strlen_lit(str), usascii)
         c = s = FAKE_CSTR(&s_str, "");
         obj = ptr->recv;
-        switch (obj) {
-          case Qnil:
+        switch ((uintptr_t)obj) {
+          case (uintptr_t)Qnil:
             c = d = FAKE_CSTR(&d_str, "nil");
             break;
-          case Qtrue:
+          case (uintptr_t)Qtrue:
             c = d = FAKE_CSTR(&d_str, "true");
             break;
-          case Qfalse:
+          case (uintptr_t)Qfalse:
             c = d = FAKE_CSTR(&d_str, "false");
             break;
           default:
@@ -2477,7 +2477,7 @@ rb_invalid_str(const char *str, const char *type)
 {
     VALUE s = rb_str_new2(str);
 
-    rb_raise(rb_eArgError, "invalid value for %s: %+"PRIsVALUE, type, s);
+    rb_raise(rb_eArgError, "invalid value for %s: %"PRIsVALUE, type, s);
 }
 
 /*
@@ -2707,7 +2707,7 @@ set_syserr(int n, const char *name)
 {
     st_data_t error;
 
-    if (!st_lookup(syserr_tbl, n, &error)) {
+    if (!st_lookup(syserr_tbl, (st_data_t)n, &error)) {
         error = rb_define_class_under(rb_mErrno, name, rb_eSystemCallError);
 
         /* capture nonblock errnos for WaitReadable/WaitWritable subclasses */
@@ -2728,7 +2728,7 @@ set_syserr(int n, const char *name)
         }
 
         rb_define_const(error, "Errno", INT2NUM(n));
-        st_add_direct(syserr_tbl, n, error);
+        st_add_direct(syserr_tbl, (st_data_t)n, error);
     }
     else {
         rb_define_const(rb_mErrno, name, error);
@@ -2741,7 +2741,7 @@ get_syserr(int n)
 {
     st_data_t error;
 
-    if (!st_lookup(syserr_tbl, n, &error)) {
+    if (!st_lookup(syserr_tbl, (st_data_t)n, &error)) {
         char name[8];	/* some Windows' errno have 5 digits. */
 
         snprintf(name, sizeof(name), "E%03d", n);
@@ -2773,7 +2773,7 @@ syserr_initialize(int argc, VALUE *argv, VALUE self)
         if (argc == 1 && FIXNUM_P(mesg)) {
             error = mesg; mesg = Qnil;
         }
-        if (!NIL_P(error) && st_lookup(syserr_tbl, NUM2LONG(error), &data)) {
+        if (!NIL_P(error) && st_lookup(syserr_tbl, (st_data_t)NUM2LONG(error), &data)) {
             klass = (VALUE)data;
             /* change class */
             if (!RB_TYPE_P(self, T_OBJECT)) { /* insurance to avoid type crash */
@@ -3421,15 +3421,15 @@ Init_Exception(void)
     sym_highlight = ID2SYM(rb_intern_const("highlight"));
 
     warning_categories.id2enum = rb_init_identtable();
-    st_add_direct(warning_categories.id2enum, id_deprecated, RB_WARN_CATEGORY_DEPRECATED);
-    st_add_direct(warning_categories.id2enum, id_experimental, RB_WARN_CATEGORY_EXPERIMENTAL);
-    st_add_direct(warning_categories.id2enum, id_performance, RB_WARN_CATEGORY_PERFORMANCE);
+    st_add_direct(warning_categories.id2enum, (st_data_t)id_deprecated, (st_data_t)RB_WARN_CATEGORY_DEPRECATED);
+    st_add_direct(warning_categories.id2enum, (st_data_t)id_experimental, (st_data_t)RB_WARN_CATEGORY_EXPERIMENTAL);
+    st_add_direct(warning_categories.id2enum, (st_data_t)id_performance, (st_data_t)RB_WARN_CATEGORY_PERFORMANCE);
 
     warning_categories.enum2id = rb_init_identtable();
-    st_add_direct(warning_categories.enum2id, RB_WARN_CATEGORY_NONE, 0);
-    st_add_direct(warning_categories.enum2id, RB_WARN_CATEGORY_DEPRECATED, id_deprecated);
-    st_add_direct(warning_categories.enum2id, RB_WARN_CATEGORY_EXPERIMENTAL, id_experimental);
-    st_add_direct(warning_categories.enum2id, RB_WARN_CATEGORY_PERFORMANCE, id_performance);
+    st_add_direct(warning_categories.enum2id, (st_data_t)RB_WARN_CATEGORY_NONE, (st_data_t)0);
+    st_add_direct(warning_categories.enum2id, (st_data_t)RB_WARN_CATEGORY_DEPRECATED, (st_data_t)id_deprecated);
+    st_add_direct(warning_categories.enum2id, (st_data_t)RB_WARN_CATEGORY_EXPERIMENTAL, (st_data_t)id_experimental);
+    st_add_direct(warning_categories.enum2id, (st_data_t)RB_WARN_CATEGORY_PERFORMANCE, (st_data_t)id_performance);
 }
 
 void

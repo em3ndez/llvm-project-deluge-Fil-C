@@ -107,69 +107,8 @@ typedef uint128_t DSIZE_T;
 # define RUBY_ALLOCV_LIMIT 1024
 #endif
 
-/**
- * Prevents premature  destruction of local objects.   Ruby's garbage collector
- * is conservative; it  scans the C level machine stack  as well.  Possible in-
- * use Ruby  objects must  remain visible  on stack, to  be properly  marked as
- * such.  However  contemporary C  compilers do not  interface well  with this.
- * Consider the following example:
- *
- * ```CXX
- * auto s = rb_str_new_cstr(" world");
- * auto sptr = RSTRING_PTR(s);
- * auto t = rb_str_new_cstr("hello,"); // Possible GC invocation
- * auto u = rb_str_cat_cstr(t, sptr);
- *
- * RB_GC_GUARD(s); // ensure `s` (and thus `sptr`) do not get GC-ed
- * ```
- *
- * Here, without the #RB_GC_GUARD, the last use of `s` is _before_ the last use
- * of `sptr`.  Compilers  could thus think `s` and `t`  are allowed to overlap.
- * That would eliminate `s`  from the stack, while `sptr` is  still in use.  If
- * our GC  ran at  that very moment,  `s` gets swept  out, which  also destroys
- * `sptr`.  Boom!  You got a SEGV.
- *
- * In order  to prevent this scenario  #RB_GC_GUARD must be placed  _after_ the
- * last use of `sptr`.  Placing  #RB_GC_GUARD before dereferencing `sptr` would
- * be of no use.
- *
- * #RB_GC_GUARD would  not be  necessary at  all in the  above example  if non-
- * inlined  function  calls are  made  on  the  `s`  variable after  `sptr`  is
- * dereferenced.  Thus, in  the above example, calling  any un-inlined function
- * on `s`  such as `rb_str_modify(s);`  will ensure `s`  stays on the  stack or
- * register to prevent a GC invocation from prematurely freeing it.
- *
- * Using the #RB_GC_GUARD  macro is preferable to using  the `volatile` keyword
- * in C.  #RB_GC_GUARD has the following advantages:
- *
- *  - the intent of the macro use is clear.
- *
- *  - #RB_GC_GUARD only affects its call  site.  OTOH `volatile` generates some
- *    extra code every time the variable is used, hurting optimisation.
- *
- *  - `volatile` implementations  may be  buggy/inconsistent in  some compilers
- *    and   architectures.     #RB_GC_GUARD   is   customisable    for   broken
- *    systems/compilers without negatively affecting other systems.
- *
- *  - C++  since C++20  deprecates  `volatile`.  If  you  write your  extension
- *    library in that language there is no escape but to use this macro.
- *
- * @param  v  A variable of ::VALUE type.
- * @post   `v` is still alive.
- */
-#ifdef __GNUC__
-#define RB_GC_GUARD(v) \
-    (*__extension__ ({ \
-        volatile VALUE *rb_gc_guarded_ptr = &(v); \
-        __asm__("" : : "m"(rb_gc_guarded_ptr)); \
-        rb_gc_guarded_ptr; \
-    }))
-#elif defined _MSC_VER
-#define RB_GC_GUARD(v) (*rb_gc_guarded_ptr(&(v)))
-#else
-#define HAVE_RB_GC_GUARDED_PTR_VAL 1
-#define RB_GC_GUARD(v) (*rb_gc_guarded_ptr_val(&(v),(v)))
-#endif
+/* Fil-C GC is accurate, so we don't need to do anything special here. */
+#define RB_GC_GUARD(v) (v)
 
 /* Casts needed because void* is NOT compatible with others in C++. */
 
