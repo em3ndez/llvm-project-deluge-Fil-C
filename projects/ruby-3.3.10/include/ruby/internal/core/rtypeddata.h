@@ -306,7 +306,7 @@ struct rb_data_type_struct {
      *
      * Why it has to be a ::VALUE?  @shyouhei doesn't understand the design.
      */
-    VALUE flags;       /* RUBY_FL_WB_PROTECTED */
+    uintptr_t flags;       /* RUBY_FL_WB_PROTECTED */
 };
 
 /**
@@ -364,7 +364,7 @@ struct RTypedData {
      *
      * @internal
      */
-    const VALUE typed_flag;
+    const uintptr_t typed_flag;
 
     /** Pointer to the actual C level struct that you want to wrap. */
     void *data;
@@ -561,7 +561,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline bool
 rbimpl_rtypeddata_p(VALUE obj)
 {
-    VALUE typed_flag = RTYPEDDATA(obj)->typed_flag;
+    uintptr_t typed_flag = RTYPEDDATA(obj)->typed_flag;
     return typed_flag != 0 && typed_flag <= 3;
 }
 

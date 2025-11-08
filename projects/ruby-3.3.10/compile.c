@@ -40,6 +40,7 @@
 #include "vm_callinfo.h"
 #include "vm_debug.h"
 #include "yjit.h"
+#include <stdfil.h>
 
 #include "builtin.h"
 #include "insns.inc"
@@ -308,8 +309,8 @@ static void iseq_add_setlocal(rb_iseq_t *iseq, LINK_ANCHOR *const seq, const NOD
     ((label) ? (LABEL_REF(label), (label)->unremovable=1) : 0)
 #define ADD_CATCH_ENTRY(type, ls, le, iseqv, lc) do {				\
     VALUE _e = rb_ary_new3(5, (type),						\
-                           (VALUE)(ls) | 1, (VALUE)(le) | 1,			\
-                           (VALUE)(iseqv), (VALUE)(lc) | 1);			\
+                           zorptr((ls), 1), zorptr((le), 1),            \
+                           (VALUE)(iseqv), zorptr((lc), 1));           \
     LABEL_UNREMOVABLE(ls);							\
     LABEL_REF(le);								\
     LABEL_REF(lc);								\
@@ -622,7 +623,7 @@ decl_branch_base(rb_iseq_t *iseq, const NODE *node, const char *type)
      */
 
     VALUE structure = RARRAY_AREF(ISEQ_BRANCH_COVERAGE(iseq), 0);
-    VALUE key = (VALUE)node | 1; // FIXNUM for hash key
+    VALUE key = zorptr(node, 1); // FIXNUM for hash key
     VALUE branch_base = rb_hash_aref(structure, key);
     VALUE branches;
 
@@ -844,7 +845,7 @@ rb_iseq_compile_callback(rb_iseq_t *iseq, const struct rb_iseq_new_with_callback
     ADD_INSN(ret, &dummy_line_node, leave);
 
     CHECK(iseq_setup_insn(iseq, ret));
-    return iseq_setup(iseq, ret);
+    return (VALUE)iseq_setup(iseq, ret);
 }
 
 VALUE

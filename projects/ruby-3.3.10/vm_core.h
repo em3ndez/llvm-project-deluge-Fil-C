@@ -50,6 +50,7 @@
 #include <stddef.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdfil.h>
 
 #include "ruby_assert.h"
 
@@ -137,7 +138,7 @@ extern int ruby_assert_critical_section_entered;
 #  define RUBY_SIGCHLD (SIGCHLD)
 #endif
 
-#if defined(SIGSEGV) && defined(HAVE_SIGALTSTACK) && defined(SA_SIGINFO) && !defined(__NetBSD__)
+#if defined(SIGSEGV) && defined(HAVE_SIGALTSTACK) && defined(SA_SIGINFO) && !defined(__NetBSD__) && !defined(__FILC__)
 #  define USE_SIGALTSTACK
 void *rb_allocate_sigaltstack(void);
 void *rb_register_sigaltstack(void *);
@@ -532,7 +533,7 @@ struct rb_iseq_constant_body {
 /* T_IMEMO/iseq */
 /* typedef rb_iseq_t is in method.h */
 struct rb_iseq_struct {
-    VALUE flags; /* 1 */
+    uintptr_t flags; /* 1 */
     VALUE wrapper; /* 2 */
 
     struct rb_iseq_constant_body *body;  /* 3 */
@@ -1297,8 +1298,8 @@ typedef VALUE CDHASH;
 typedef rb_control_frame_t *
   (FUNC_FASTCALL(*rb_insn_func_t))(rb_execution_context_t *, rb_control_frame_t *);
 
-#define VM_TAGGED_PTR_SET(p, tag)  ((VALUE)(p) | (tag))
-#define VM_TAGGED_PTR_REF(v, mask) ((void *)((v) & ~mask))
+#define VM_TAGGED_PTR_SET(p, tag)  (zorptr((VALUE)(p), (tag)))
+#define VM_TAGGED_PTR_REF(v, mask) ((void *)(zandptr((v),  ~mask)))
 
 #define GC_GUARDED_PTR(p)     VM_TAGGED_PTR_SET((p), 0x01)
 #define GC_GUARDED_PTR_REF(p) VM_TAGGED_PTR_REF((p), 0x03)
@@ -1355,19 +1356,19 @@ enum vm_frame_env_flags {
 static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);
 
 static inline void
-VM_ENV_FLAGS_SET(const VALUE *ep, VALUE flag)
+VM_ENV_FLAGS_SET(const VALUE *ep, uintptr_t flag)
 {
     VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     VM_ASSERT(FIXNUM_P(flags));
-    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_FLAGS], flags | flag);
+    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_FLAGS], zorptr(flags, flag));
 }
 
 static inline void
-VM_ENV_FLAGS_UNSET(const VALUE *ep, VALUE flag)
+VM_ENV_FLAGS_UNSET(const VALUE *ep, uintptr_t flag)
 {
     VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     VM_ASSERT(FIXNUM_P(flags));
-    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_FLAGS], flags & ~flag);
+    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_FLAGS], zandptr(flags, ~flag));
 }
 
 static inline unsigned long
@@ -1375,7 +1376,7 @@ VM_ENV_FLAGS(const VALUE *ep, long flag)
 {
     VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     VM_ASSERT(FIXNUM_P(flags));
-    return flags & flag;
+    return (uintptr_t)flags & flag;
 }
 
 static inline unsigned long
@@ -1553,7 +1554,7 @@ RUBY_VM_CONTROL_FRAME_STACK_OVERFLOW_P(const rb_execution_context_t *ec, const r
 static inline int
 VM_BH_ISEQ_BLOCK_P(VALUE block_handler)
 {
-    if ((block_handler & 0x03) == 0x01) {
+    if (((uintptr_t)block_handler & 0x03) == 0x01) {
 #if VM_CHECK_MODE > 0
         struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
         VM_ASSERT(imemo_type_p(captured->code.val, imemo_iseq));
@@ -1584,7 +1585,7 @@ VM_BH_TO_ISEQ_BLOCK(VALUE block_handler)
 static inline int
 VM_BH_IFUNC_P(VALUE block_handler)
 {
-    if ((block_handler & 0x03) == 0x03) {
+    if (((uintptr_t)block_handler & 0x03) == 0x03) {
 #if VM_CHECK_MODE > 0
         struct rb_captured_block *captured = (void *)(block_handler & ~0x03);
         VM_ASSERT(imemo_type_p(captured->code.val, imemo_ifunc));

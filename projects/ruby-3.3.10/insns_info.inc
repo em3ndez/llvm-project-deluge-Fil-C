@@ -73,7 +73,7 @@ ISEQ_IS_ENTRY_START(const struct rb_iseq_constant_body *body, char op_type)
     return &body->is_entries[relative_ic_offset];
 }
 
-CONSTFUNC(MAYBE_UNUSED(static const char *insn_name(VALUE insn)));
+CONSTFUNC(MAYBE_UNUSED(static const char *insn_name(uintptr_t insn)));
 
 RUBY_SYMBOL_EXPORT_BEGIN /* for debuggers */
 extern const int rb_vm_max_insn_name_size;
@@ -315,12 +315,12 @@ ASSERT_VM_INSTRUCTION_SIZE(rb_vm_insn_name_offset);
 #endif
 
 const char *
-insn_name(VALUE i)
+insn_name(uintptr_t i)
 {
     return &rb_vm_insn_name_base[rb_vm_insn_name_offset[i]];
 }
 
-CONSTFUNC(MAYBE_UNUSED(static int insn_len(VALUE insn)));
+CONSTFUNC(MAYBE_UNUSED(static int insn_len(uintptr_t insn)));
 
 RUBY_SYMBOL_EXPORT_BEGIN /* for debuggers */
 extern const uint8_t rb_vm_insn_len_info[VM_INSTRUCTION_SIZE];
@@ -343,7 +343,7 @@ ASSERT_VM_INSTRUCTION_SIZE(rb_vm_insn_len_info);
 #endif
 
 int
-insn_len(VALUE i)
+insn_len(uintptr_t i)
 {
     return rb_vm_insn_len_info[i];
 }

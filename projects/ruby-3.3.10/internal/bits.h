@@ -175,8 +175,8 @@ static inline unsigned rb_popcount_intptr(uintptr_t x);
 static inline int ntz_int32(uint32_t x);
 static inline int ntz_int64(uint64_t x);
 static inline int ntz_intptr(uintptr_t x);
-static inline VALUE RUBY_BIT_ROTL(VALUE, int);
-static inline VALUE RUBY_BIT_ROTR(VALUE, int);
+static inline uintptr_t RUBY_BIT_ROTL(uintptr_t, int);
+static inline uintptr_t RUBY_BIT_ROTR(uintptr_t, int);
 
 static inline uint16_t
 ruby_swap16(uint16_t x)
@@ -517,8 +517,8 @@ ntz_intptr(uintptr_t x)
     }
 }
 
-static inline VALUE
-RUBY_BIT_ROTL(VALUE v, int n)
+static inline uintptr_t
+RUBY_BIT_ROTL(uintptr_t v, int n)
 {
 #if __has_builtin(__builtin_rotateleft32) && (SIZEOF_VALUE * CHAR_BIT == 32)
     return __builtin_rotateleft32(v, n);
@@ -541,8 +541,8 @@ RUBY_BIT_ROTL(VALUE v, int n)
 #endif
 }
 
-static inline VALUE
-RUBY_BIT_ROTR(VALUE v, int n)
+static inline uintptr_t
+RUBY_BIT_ROTR(uintptr_t v, int n)
 {
 #if __has_builtin(__builtin_rotateright32) && (SIZEOF_VALUE * CHAR_BIT == 32)
     return __builtin_rotateright32(v, n);

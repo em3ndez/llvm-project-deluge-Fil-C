@@ -3216,11 +3216,11 @@ VALUE
 rb_int2big(intptr_t n)
 {
     long neg = 0;
-    VALUE u;
+    uintptr_t u;
     VALUE big;
 
     if (n < 0) {
-        u = 1 + (VALUE)(-(n + 1)); /* u = -n avoiding overflow */
+        u = 1 + (uintptr_t)(-(n + 1)); /* u = -n avoiding overflow */
         neg = 1;
     }
     else {
@@ -3756,7 +3756,7 @@ invalid_radix(int base)
 static inline void
 invalid_integer(VALUE s)
 {
-    rb_raise(rb_eArgError, "invalid value for Integer(): %+"PRIsVALUE, s);
+    rb_raise(rb_eArgError, "invalid value for Integer(): %"PRIsVALUE, s);
 }
 
 static int

@@ -18,13 +18,15 @@ extern "C" {
 
 RUBY_SYMBOL_EXPORT_BEGIN
 
-#if SIZEOF_LONG == SIZEOF_VOIDP
-typedef unsigned long st_data_t;
-#elif SIZEOF_LONG_LONG == SIZEOF_VOIDP
-typedef unsigned LONG_LONG st_data_t;
-#else
-# error ---->> st.c requires sizeof(void*) == sizeof(long) or sizeof(LONG_LONG) to be compiled. <<----
+#ifndef RB_VALUE_UNIT_STRUCT
+struct rb_value_unit_struct {
+    char c;
+};
+
+typedef struct rb_value_unit_struct rb_value_unit;
+#define RB_VALUE_UNIT_STRUCT
 #endif
+typedef rb_value_unit* st_data_t;
 #define ST_DATA_T_DEFINED
 
 #ifndef CHAR_BIT
@@ -47,7 +49,7 @@ typedef unsigned LONG_LONG st_data_t;
 
 typedef struct st_table st_table;
 
-typedef st_data_t st_index_t;
+typedef uintptr_t st_index_t;
 
 /* Maximal value of unsigned integer type st_index_t.  */
 #define MAX_ST_INDEX_VAL (~(st_index_t) 0)

@@ -336,12 +336,12 @@ static const struct {
 ""/* Some examples on this page use this simple file tree: */
 ""/*  */
 ""/*   example/ */
-""/*   \xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 config.h */
-""/*   \xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 lib/ */
-""/*   \xE2\x94\x82   \xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80 song/ */
-""/*   \xE2\x94\x82   \xE2\x94\x82   \xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 karaoke.rb */
-""/*   \xE2\x94\x82   \xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 song.rb */
-""/*   \xE2\x94\x94\xE2\x94\x80\xE2\x94\x80 main.rb */
+""/*   \u251C\u2500\u2500 config.h */
+""/*   \u251C\u2500\u2500 lib/ */
+""/*   \u2502   \u251C\u2500\u2500 song/ */
+""/*   \u2502   \u2502   \u2514\u2500\u2500 karaoke.rb */
+""/*   \u2502   \u2514\u2500\u2500 song.rb */
+""/*   \u2514\u2500\u2500 main.rb */
 ""/*  */
 ""/* Others use the file tree for the */
 ""/* {Ruby project itself}[https://github.com/ruby/ruby]. */

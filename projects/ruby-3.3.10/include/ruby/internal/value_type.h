@@ -187,7 +187,7 @@ RB_BUILTIN_TYPE(VALUE obj)
      * RB_SPECIAL_CONST_P check. */
     __asm volatile("": : :"memory");
 #endif
-    VALUE ret = RBASIC(obj)->flags & RUBY_T_MASK;
+    uintptr_t ret = RBASIC(obj)->flags & RUBY_T_MASK;
     return RBIMPL_CAST((enum ruby_value_type)ret);
 }
 

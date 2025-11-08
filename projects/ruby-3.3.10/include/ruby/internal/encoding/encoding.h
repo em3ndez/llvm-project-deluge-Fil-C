@@ -79,7 +79,7 @@ enum ruby_encoding_consts {
 static inline void
 RB_ENCODING_SET_INLINED(VALUE obj, int encindex)
 {
-    VALUE f = /* upcast */ encindex;
+    uintptr_t f = /* upcast */ encindex;
 
     f <<= RUBY_ENCODING_SHIFT;
     RB_FL_UNSET_RAW(obj, RUBY_ENCODING_MASK);
@@ -97,7 +97,7 @@ RB_ENCODING_SET_INLINED(VALUE obj, int encindex)
 static inline int
 RB_ENCODING_GET_INLINED(VALUE obj)
 {
-    VALUE ret = RB_FL_TEST_RAW(obj, RUBY_ENCODING_MASK) >> RUBY_ENCODING_SHIFT;
+    uintptr_t ret = RB_FL_TEST_RAW(obj, RUBY_ENCODING_MASK) >> RUBY_ENCODING_SHIFT;
 
     return RBIMPL_CAST((int)ret);
 }

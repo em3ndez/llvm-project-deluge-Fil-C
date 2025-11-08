@@ -257,12 +257,12 @@ struct iseq_insn_info_entry {
  *     NULL.
  */
 enum rb_catch_type {
-    CATCH_TYPE_RESCUE = INT2FIX(1),
-    CATCH_TYPE_ENSURE = INT2FIX(2),
-    CATCH_TYPE_RETRY  = INT2FIX(3),
-    CATCH_TYPE_BREAK  = INT2FIX(4),
-    CATCH_TYPE_REDO   = INT2FIX(5),
-    CATCH_TYPE_NEXT   = INT2FIX(6)
+    CATCH_TYPE_RESCUE = (uintptr_t)INT2FIX(1),
+    CATCH_TYPE_ENSURE = (uintptr_t)INT2FIX(2),
+    CATCH_TYPE_RETRY  = (uintptr_t)INT2FIX(3),
+    CATCH_TYPE_BREAK  = (uintptr_t)INT2FIX(4),
+    CATCH_TYPE_REDO   = (uintptr_t)INT2FIX(5),
+    CATCH_TYPE_NEXT   = (uintptr_t)INT2FIX(6)
 };
 
 struct iseq_catch_table_entry {

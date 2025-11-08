@@ -42,7 +42,7 @@ typedef struct rb_scope_visi_struct {
 
 /*! CREF (Class REFerence) */
 typedef struct rb_cref_struct {
-    VALUE flags;
+    uintptr_t flags;
     VALUE refinements;
     VALUE klass_or_self;
     struct rb_cref_struct * next;
@@ -52,7 +52,7 @@ typedef struct rb_cref_struct {
 /* method data type */
 
 typedef struct rb_method_entry_struct {
-    VALUE flags;
+    uintptr_t flags;
     VALUE defined_class;
     struct rb_method_definition_struct * const def;
     ID called_id;
@@ -60,7 +60,7 @@ typedef struct rb_method_entry_struct {
 } rb_method_entry_t;
 
 typedef struct rb_callable_method_entry_struct { /* same fields with rb_method_entry_t */
-    VALUE flags;
+    uintptr_t flags;
     const VALUE defined_class;
     struct rb_method_definition_struct * const def;
     ID called_id;

@@ -56,7 +56,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * Fixnums.  This function is used for that purpose.
  */
 static inline VALUE
-RB_ST2FIX(st_data_t i)
+RB_ST2FIX(st_index_t i)
 {
     SIGNED_VALUE x = i;
 

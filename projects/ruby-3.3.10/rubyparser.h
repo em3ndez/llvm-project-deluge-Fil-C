@@ -164,7 +164,7 @@ typedef struct rb_code_location_struct {
 
 /* Header part of AST Node */
 typedef struct RNode {
-    VALUE flags;
+    uintptr_t flags;
     rb_code_location_t nd_loc;
     int node_id;
 } NODE;
@@ -1070,7 +1070,7 @@ typedef struct RNode_RIPPER_VALUES {
 #define NODE_FL_NEWLINE              (((VALUE)1)<<7)
 
 #define NODE_TYPESHIFT 8
-#define NODE_TYPEMASK  (((VALUE)0x7f)<<NODE_TYPESHIFT)
+#define NODE_TYPEMASK  (((uintptr_t)0x7f)<<NODE_TYPESHIFT)
 
 #define nd_fl_newline(n) (n)->flags & NODE_FL_NEWLINE
 #define nd_set_fl_newline(n) (n)->flags |= NODE_FL_NEWLINE

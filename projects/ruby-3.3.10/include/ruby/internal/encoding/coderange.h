@@ -94,7 +94,7 @@ RBIMPL_ATTR_PURE_UNLESS_DEBUG()
 static inline enum ruby_coderange_type
 RB_ENC_CODERANGE(VALUE obj)
 {
-    VALUE ret = RB_FL_TEST_RAW(obj, RUBY_ENC_CODERANGE_MASK);
+    uintptr_t ret = RB_FL_TEST_RAW(obj, RUBY_ENC_CODERANGE_MASK);
 
     return RBIMPL_CAST((enum ruby_coderange_type)ret);
 }

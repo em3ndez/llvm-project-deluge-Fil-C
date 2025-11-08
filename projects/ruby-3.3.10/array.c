@@ -1854,10 +1854,10 @@ rb_ary_aref1(VALUE ary, VALUE arg)
         return rb_ary_entry(ary, FIX2LONG(arg));
     }
     /* check if idx is Range or ArithmeticSequence */
-    switch (rb_arithmetic_sequence_beg_len_step(arg, &beg, &len, &step, RARRAY_LEN(ary), 0)) {
-      case Qfalse:
+    switch ((uintptr_t)rb_arithmetic_sequence_beg_len_step(arg, &beg, &len, &step, RARRAY_LEN(ary), 0)) {
+      case (uintptr_t)Qfalse:
         break;
-      case Qnil:
+      case (uintptr_t)Qnil:
         return Qnil;
       default:
         return rb_ary_subseq_step(ary, beg, len, step);
@@ -4190,11 +4190,11 @@ rb_ary_slice_bang(int argc, VALUE *argv, VALUE ary)
     }
 
     if (!FIXNUM_P(arg1)) {
-        switch (rb_range_beg_len(arg1, &pos, &len, RARRAY_LEN(ary), 0)) {
-          case Qtrue:
+        switch ((uintptr_t)rb_range_beg_len(arg1, &pos, &len, RARRAY_LEN(ary), 0)) {
+          case (uintptr_t)Qtrue:
             /* valid range */
             return ary_slice_bang_by_rb_ary_splice(ary, pos, len);
-          case Qnil:
+          case (uintptr_t)Qnil:
             /* invalid range */
             return Qnil;
           default:
@@ -6613,7 +6613,7 @@ ary_sample(rb_execution_context_t *ec, VALUE ary, VALUE randgen, VALUE nv, VALUE
         RARRAY_PTR_USE(result, ptr_result, {
             for (i=0; i<n; i++) {
                 long r = RAND_UPTO(len-i) + i;
-                ptr_result[i] = r;
+                ptr_result[i] = (VALUE)r;
                 if (r > max_idx) max_idx = r;
             }
             len = RARRAY_LEN(ary);
@@ -6621,7 +6621,7 @@ ary_sample(rb_execution_context_t *ec, VALUE ary, VALUE randgen, VALUE nv, VALUE
             else if (n > len) n = len;
             RARRAY_PTR_USE(ary, ptr_ary, {
                 for (i=0; i<n; i++) {
-                    long j2 = j = ptr_result[i];
+                    long j2 = j = (long)ptr_result[i];
                     long i2 = i;
                     st_data_t value;
                     if (st_lookup(memo, (st_data_t)i, &value)) i2 = (long)value;

@@ -156,7 +156,7 @@ RB_TEST(VALUE obj)
      *
      *  RTEST(v) can be 0 if and only if (v == Qfalse || v == Qnil).
      */
-    return obj & ~RUBY_Qnil;
+    return (uintptr_t)obj & ~RUBY_Qnil;
 }
 
 RBIMPL_ATTR_CONST()
@@ -172,7 +172,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline bool
 RB_NIL_P(VALUE obj)
 {
-    return obj == RUBY_Qnil;
+    return (uintptr_t)obj == RUBY_Qnil;
 }
 
 RBIMPL_ATTR_CONST()
@@ -188,7 +188,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline bool
 RB_UNDEF_P(VALUE obj)
 {
-    return obj == RUBY_Qundef;
+    return (uintptr_t)obj == RUBY_Qundef;
 }
 
 RBIMPL_ATTR_CONST()
@@ -226,9 +226,9 @@ RB_NIL_OR_UNDEF_P(VALUE obj)
      *
      *  NIL_OR_UNDEF_P(v) can be true only when v is Qundef or Qnil.
      */
-    const VALUE mask = ~(RUBY_Qundef ^ RUBY_Qnil);
-    const VALUE common_bits = RUBY_Qundef & RUBY_Qnil;
-    return (obj & mask) == common_bits;
+    const uintptr_t mask = ~(RUBY_Qundef ^ RUBY_Qnil);
+    const uintptr_t common_bits = RUBY_Qundef & RUBY_Qnil;
+    return ((uintptr_t)obj & mask) == common_bits;
 }
 
 RBIMPL_ATTR_CONST()
@@ -246,7 +246,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline bool
 RB_FIXNUM_P(VALUE obj)
 {
-    return obj & RUBY_FIXNUM_FLAG;
+    return (uintptr_t)obj & RUBY_FIXNUM_FLAG;
 }
 
 RBIMPL_ATTR_CONST()
@@ -267,8 +267,8 @@ static inline bool
 RB_STATIC_SYM_P(VALUE obj)
 {
     RBIMPL_ATTR_CONSTEXPR(CXX14)
-    const VALUE mask = ~(RBIMPL_VALUE_FULL << RUBY_SPECIAL_SHIFT);
-    return (obj & mask) == RUBY_SYMBOL_FLAG;
+    const uintptr_t mask = ~(RBIMPL_VALUE_FULL << RUBY_SPECIAL_SHIFT);
+    return ((uintptr_t)obj & mask) == RUBY_SYMBOL_FLAG;
 }
 
 RBIMPL_ATTR_CONST()
@@ -288,7 +288,7 @@ static inline bool
 RB_FLONUM_P(VALUE obj)
 {
 #if USE_FLONUM
-    return (obj & RUBY_FLONUM_MASK) == RUBY_FLONUM_FLAG;
+    return ((uintptr_t)obj & RUBY_FLONUM_MASK) == RUBY_FLONUM_FLAG;
 #else
     return false;
 #endif
@@ -310,7 +310,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline bool
 RB_IMMEDIATE_P(VALUE obj)
 {
-    return obj & RUBY_IMMEDIATE_MASK;
+    return (uintptr_t)obj & RUBY_IMMEDIATE_MASK;
 }
 
 RBIMPL_ATTR_CONST()
@@ -326,7 +326,7 @@ RBIMPL_ATTR_ARTIFICIAL()
 static inline bool
 RB_SPECIAL_CONST_P(VALUE obj)
 {
-    return RB_IMMEDIATE_P(obj) || obj == RUBY_Qfalse;
+    return RB_IMMEDIATE_P(obj) || (uintptr_t)obj == RUBY_Qfalse;
 }
 
 RBIMPL_ATTR_CONST()
@@ -346,7 +346,7 @@ RBIMPL_ATTR_CONSTEXPR(CXX11)
 static inline VALUE
 rb_special_const_p(VALUE obj)
 {
-    return RB_SPECIAL_CONST_P(obj) * RUBY_Qtrue;
+    return (VALUE)(uintptr_t)(RB_SPECIAL_CONST_P(obj) * RUBY_Qtrue);
 }
 
 /**

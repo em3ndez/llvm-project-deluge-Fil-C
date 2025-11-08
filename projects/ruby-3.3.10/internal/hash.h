@@ -183,7 +183,7 @@ RHASH_ST_CLEAR(VALUE h)
 static inline unsigned
 RHASH_AR_TABLE_SIZE_RAW(VALUE h)
 {
-    VALUE ret = FL_TEST_RAW(h, RHASH_AR_TABLE_SIZE_MASK);
+    uintptr_t ret = FL_TEST_RAW(h, RHASH_AR_TABLE_SIZE_MASK);
     ret >>= RHASH_AR_TABLE_SIZE_SHIFT;
     return (unsigned)ret;
 }

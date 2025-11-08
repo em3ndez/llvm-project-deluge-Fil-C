@@ -237,7 +237,7 @@ RARRAY_EMBED_LEN(VALUE ary)
     RBIMPL_ASSERT_TYPE(ary, RUBY_T_ARRAY);
     RBIMPL_ASSERT_OR_ASSUME(RB_FL_ANY_RAW(ary, RARRAY_EMBED_FLAG));
 
-    VALUE f = RBASIC(ary)->flags;
+    uintptr_t f = RBASIC(ary)->flags;
     f &= RARRAY_EMBED_LEN_MASK;
     f >>= RARRAY_EMBED_LEN_SHIFT;
     return RBIMPL_CAST((long)f);

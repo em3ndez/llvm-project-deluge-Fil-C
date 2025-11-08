@@ -59,11 +59,11 @@ rb_callinfo_kwarg_bytes(int keyword_len)
 
 // imemo_callinfo
 struct rb_callinfo {
-    VALUE flags;
+    uintptr_t flags;
     const struct rb_callinfo_kwarg *kwarg;
-    VALUE mid;
-    VALUE flag;
-    VALUE argc;
+    uintptr_t mid;
+    uintptr_t flag;
+    uintptr_t argc;
 };
 
 #if !defined(USE_EMBED_CI) || (USE_EMBED_CI+0)
@@ -92,11 +92,11 @@ struct rb_callinfo {
 
 #define CI_EMBED_FLAG 0x01
 #define CI_EMBED_ARGC_SHFT (CI_EMBED_TAG_bits)
-#define CI_EMBED_ARGC_MASK ((((VALUE)1)<<CI_EMBED_ARGC_bits) - 1)
+#define CI_EMBED_ARGC_MASK ((((uintptr_t)1)<<CI_EMBED_ARGC_bits) - 1)
 #define CI_EMBED_FLAG_SHFT (CI_EMBED_TAG_bits + CI_EMBED_ARGC_bits)
-#define CI_EMBED_FLAG_MASK ((((VALUE)1)<<CI_EMBED_FLAG_bits) - 1)
+#define CI_EMBED_FLAG_MASK ((((uintptr_t)1)<<CI_EMBED_FLAG_bits) - 1)
 #define CI_EMBED_ID_SHFT   (CI_EMBED_TAG_bits + CI_EMBED_ARGC_bits + CI_EMBED_FLAG_bits)
-#define CI_EMBED_ID_MASK   ((((VALUE)1)<<CI_EMBED_ID_bits) - 1)
+#define CI_EMBED_ID_MASK   ((((uintptr_t)1)<<CI_EMBED_ID_bits) - 1)
 
 static inline bool
 vm_ci_packed_p(const struct rb_callinfo *ci)
@@ -104,7 +104,7 @@ vm_ci_packed_p(const struct rb_callinfo *ci)
     if (!USE_EMBED_CI) {
         return 0;
     }
-    if (LIKELY(((VALUE)ci) & 0x01)) {
+    if (LIKELY(((uintptr_t)ci) & 0x01)) {
         return 1;
     }
     else {
@@ -128,7 +128,7 @@ static inline ID
 vm_ci_mid(const struct rb_callinfo *ci)
 {
     if (vm_ci_packed_p(ci)) {
-        return (((VALUE)ci) >> CI_EMBED_ID_SHFT) & CI_EMBED_ID_MASK;
+        return (((uintptr_t)ci) >> CI_EMBED_ID_SHFT) & CI_EMBED_ID_MASK;
     }
     else {
         return (ID)ci->mid;
@@ -139,7 +139,7 @@ static inline unsigned int
 vm_ci_flag(const struct rb_callinfo *ci)
 {
     if (vm_ci_packed_p(ci)) {
-        return (unsigned int)((((VALUE)ci) >> CI_EMBED_FLAG_SHFT) & CI_EMBED_FLAG_MASK);
+        return (unsigned int)((((uintptr_t)ci) >> CI_EMBED_FLAG_SHFT) & CI_EMBED_FLAG_MASK);
     }
     else {
         return (unsigned int)ci->flag;
@@ -150,7 +150,7 @@ static inline unsigned int
 vm_ci_argc(const struct rb_callinfo *ci)
 {
     if (vm_ci_packed_p(ci)) {
-        return (unsigned int)((((VALUE)ci) >> CI_EMBED_ARGC_SHFT) & CI_EMBED_ARGC_MASK);
+        return (unsigned int)((((uintptr_t)ci) >> CI_EMBED_ARGC_SHFT) & CI_EMBED_ARGC_MASK);
     }
     else {
         return (unsigned int)ci->argc;
@@ -192,9 +192,9 @@ vm_ci_dump(const struct rb_callinfo *ci)
 
 #define vm_ci_new_id(mid, flag, argc, must_zero) \
     ((const struct rb_callinfo *)                \
-     ((((VALUE)(mid )) << CI_EMBED_ID_SHFT)   |  \
-      (((VALUE)(flag)) << CI_EMBED_FLAG_SHFT) |  \
-      (((VALUE)(argc)) << CI_EMBED_ARGC_SHFT) |  \
+     ((((uintptr_t)(mid )) << CI_EMBED_ID_SHFT)   |  \
+      (((uintptr_t)(flag)) << CI_EMBED_FLAG_SHFT) |  \
+      (((uintptr_t)(argc)) << CI_EMBED_ARGC_SHFT) |  \
       RUBY_FIXNUM_FLAG))
 
 // vm_method.c
@@ -271,7 +271,7 @@ typedef VALUE (*vm_call_handler)(
 // imemo_callcache
 
 struct rb_callcache {
-    const VALUE flags;
+    uintptr_t flags;
 
     /* inline cache: key */
     const VALUE klass; // should not mark it because klass can not be free'd
@@ -332,10 +332,10 @@ vm_cc_new(VALUE klass,
       case cc_type_normal:
         break;
       case cc_type_super:
-        *(VALUE *)&cc->flags |= VM_CALLCACHE_SUPER;
+        *(uintptr_t*)&cc->flags |= VM_CALLCACHE_SUPER;
         break;
       case cc_type_refinement:
-        *(VALUE *)&cc->flags |= VM_CALLCACHE_REFINEMENT;
+        *(uintptr_t*)&cc->flags |= VM_CALLCACHE_REFINEMENT;
         break;
     }
 
@@ -486,7 +486,7 @@ vm_cc_call_set(const struct rb_callcache *cc, vm_call_handler call)
 static inline void
 set_vm_cc_ivar(const struct rb_callcache *cc)
 {
-    *(VALUE *)&cc->flags |= VM_CALLCACHE_IVAR;
+    *(uintptr_t *)&cc->flags |= VM_CALLCACHE_IVAR;
 }
 
 static inline void
@@ -535,7 +535,7 @@ vm_cc_bf_set(const struct rb_callcache *cc, const struct rb_builtin_function *bf
     VM_ASSERT(IMEMO_TYPE_P(cc, imemo_callcache));
     VM_ASSERT(cc != vm_cc_empty());
     *(const struct rb_builtin_function **)&cc->aux_.bf = bf;
-    *(VALUE *)&cc->flags |= VM_CALLCACHE_BF;
+    *(uintptr_t *)&cc->flags |= VM_CALLCACHE_BF;
 }
 
 static inline bool

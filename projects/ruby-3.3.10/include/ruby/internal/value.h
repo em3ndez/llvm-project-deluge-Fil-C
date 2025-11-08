@@ -24,7 +24,16 @@
 #include "ruby/backward/2/long_long.h"
 #include "ruby/backward/2/limits.h"
 
-#if defined(__DOXYGEN__)
+#if defined(__DOXYGEN__) || defined(__FILC__)
+
+#ifndef RB_VALUE_UNIT_STRUCT
+struct rb_value_unit_struct {
+    char c;
+};
+
+typedef struct rb_value_unit_struct rb_value_unit;
+#define RB_VALUE_UNIT_STRUCT
+#endif
 
 /**
  * Type that represents a Ruby object.  It is an unsigned integer of some kind,
@@ -37,7 +46,7 @@
  * @warning  ::VALUE is not a pointer.
  * @warning  ::VALUE can be wider than `long`.
  */
-typedef uintptr_t VALUE;
+typedef rb_value_unit* VALUE;
 
 /**
  * Type that represents a Ruby identifier such as a variable name.
@@ -73,14 +82,14 @@ typedef intptr_t SIGNED_VALUE;
  *
  * A compile-time constant of type ::VALUE whose value is 0.
  */
-#define RBIMPL_VALUE_NULL UINTPTR_C(0)
+#define RBIMPL_VALUE_NULL ((uintptr_t)0)
 
 /**
  * @private
  *
  * A compile-time constant of type ::VALUE whose value is 1.
  */
-#define RBIMPL_VALUE_ONE  UINTPTR_C(1)
+#define RBIMPL_VALUE_ONE  ((void*)(uintptr_t)1)
 
 /**
  * @private

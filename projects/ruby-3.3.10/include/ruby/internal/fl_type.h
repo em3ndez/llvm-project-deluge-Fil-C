@@ -55,39 +55,39 @@
 #endif
 /** @endcond */
 
-#define FL_SINGLETON    RBIMPL_CAST((VALUE)RUBY_FL_SINGLETON)            /**< @old{RUBY_FL_SINGLETON} */
-#define FL_WB_PROTECTED RBIMPL_CAST((VALUE)RUBY_FL_WB_PROTECTED)         /**< @old{RUBY_FL_WB_PROTECTED} */
-#define FL_PROMOTED     RBIMPL_CAST((VALUE)RUBY_FL_PROMOTED)             /**< @old{RUBY_FL_PROMOTED} */
-#define FL_FINALIZE     RBIMPL_CAST((VALUE)RUBY_FL_FINALIZE)             /**< @old{RUBY_FL_FINALIZE} */
-#define FL_TAINT        RBIMPL_CAST((VALUE)RUBY_FL_TAINT)                /**< @old{RUBY_FL_TAINT} */
-#define FL_SHAREABLE    RBIMPL_CAST((VALUE)RUBY_FL_SHAREABLE)            /**< @old{RUBY_FL_SHAREABLE} */
-#define FL_UNTRUSTED    RBIMPL_CAST((VALUE)RUBY_FL_UNTRUSTED)            /**< @old{RUBY_FL_UNTRUSTED} */
-#define FL_SEEN_OBJ_ID  RBIMPL_CAST((VALUE)RUBY_FL_SEEN_OBJ_ID)          /**< @old{RUBY_FL_SEEN_OBJ_ID} */
-#define FL_EXIVAR       RBIMPL_CAST((VALUE)RUBY_FL_EXIVAR)               /**< @old{RUBY_FL_EXIVAR} */
-#define FL_FREEZE       RBIMPL_CAST((VALUE)RUBY_FL_FREEZE)               /**< @old{RUBY_FL_FREEZE} */
+#define FL_SINGLETON    RBIMPL_CAST((uintptr_t)RUBY_FL_SINGLETON)            /**< @old{RUBY_FL_SINGLETON} */
+#define FL_WB_PROTECTED RBIMPL_CAST((uintptr_t)RUBY_FL_WB_PROTECTED)         /**< @old{RUBY_FL_WB_PROTECTED} */
+#define FL_PROMOTED     RBIMPL_CAST((uintptr_t)RUBY_FL_PROMOTED)             /**< @old{RUBY_FL_PROMOTED} */
+#define FL_FINALIZE     RBIMPL_CAST((uintptr_t)RUBY_FL_FINALIZE)             /**< @old{RUBY_FL_FINALIZE} */
+#define FL_TAINT        RBIMPL_CAST((uintptr_t)RUBY_FL_TAINT)                /**< @old{RUBY_FL_TAINT} */
+#define FL_SHAREABLE    RBIMPL_CAST((uintptr_t)RUBY_FL_SHAREABLE)            /**< @old{RUBY_FL_SHAREABLE} */
+#define FL_UNTRUSTED    RBIMPL_CAST((uintptr_t)RUBY_FL_UNTRUSTED)            /**< @old{RUBY_FL_UNTRUSTED} */
+#define FL_SEEN_OBJ_ID  RBIMPL_CAST((uintptr_t)RUBY_FL_SEEN_OBJ_ID)          /**< @old{RUBY_FL_SEEN_OBJ_ID} */
+#define FL_EXIVAR       RBIMPL_CAST((uintptr_t)RUBY_FL_EXIVAR)               /**< @old{RUBY_FL_EXIVAR} */
+#define FL_FREEZE       RBIMPL_CAST((uintptr_t)RUBY_FL_FREEZE)               /**< @old{RUBY_FL_FREEZE} */
 
-#define FL_USHIFT       RBIMPL_CAST((VALUE)RUBY_FL_USHIFT)               /**< @old{RUBY_FL_USHIFT} */
+#define FL_USHIFT       RBIMPL_CAST((uintptr_t)RUBY_FL_USHIFT)               /**< @old{RUBY_FL_USHIFT} */
 
-#define FL_USER0        RBIMPL_CAST((VALUE)RUBY_FL_USER0)                /**< @old{RUBY_FL_USER0} */
-#define FL_USER1        RBIMPL_CAST((VALUE)RUBY_FL_USER1)                /**< @old{RUBY_FL_USER1} */
-#define FL_USER2        RBIMPL_CAST((VALUE)RUBY_FL_USER2)                /**< @old{RUBY_FL_USER2} */
-#define FL_USER3        RBIMPL_CAST((VALUE)RUBY_FL_USER3)                /**< @old{RUBY_FL_USER3} */
-#define FL_USER4        RBIMPL_CAST((VALUE)RUBY_FL_USER4)                /**< @old{RUBY_FL_USER4} */
-#define FL_USER5        RBIMPL_CAST((VALUE)RUBY_FL_USER5)                /**< @old{RUBY_FL_USER5} */
-#define FL_USER6        RBIMPL_CAST((VALUE)RUBY_FL_USER6)                /**< @old{RUBY_FL_USER6} */
-#define FL_USER7        RBIMPL_CAST((VALUE)RUBY_FL_USER7)                /**< @old{RUBY_FL_USER7} */
-#define FL_USER8        RBIMPL_CAST((VALUE)RUBY_FL_USER8)                /**< @old{RUBY_FL_USER8} */
-#define FL_USER9        RBIMPL_CAST((VALUE)RUBY_FL_USER9)                /**< @old{RUBY_FL_USER9} */
-#define FL_USER10       RBIMPL_CAST((VALUE)RUBY_FL_USER10)               /**< @old{RUBY_FL_USER10} */
-#define FL_USER11       RBIMPL_CAST((VALUE)RUBY_FL_USER11)               /**< @old{RUBY_FL_USER11} */
-#define FL_USER12       RBIMPL_CAST((VALUE)RUBY_FL_USER12)               /**< @old{RUBY_FL_USER12} */
-#define FL_USER13       RBIMPL_CAST((VALUE)RUBY_FL_USER13)               /**< @old{RUBY_FL_USER13} */
-#define FL_USER14       RBIMPL_CAST((VALUE)RUBY_FL_USER14)               /**< @old{RUBY_FL_USER14} */
-#define FL_USER15       RBIMPL_CAST((VALUE)RUBY_FL_USER15)               /**< @old{RUBY_FL_USER15} */
-#define FL_USER16       RBIMPL_CAST((VALUE)RUBY_FL_USER16)               /**< @old{RUBY_FL_USER16} */
-#define FL_USER17       RBIMPL_CAST((VALUE)RUBY_FL_USER17)               /**< @old{RUBY_FL_USER17} */
-#define FL_USER18       RBIMPL_CAST((VALUE)RUBY_FL_USER18)               /**< @old{RUBY_FL_USER18} */
-#define FL_USER19       RBIMPL_CAST((VALUE)(unsigned int)RUBY_FL_USER19) /**< @old{RUBY_FL_USER19} */
+#define FL_USER0        RBIMPL_CAST((uintptr_t)RUBY_FL_USER0)                /**< @old{RUBY_FL_USER0} */
+#define FL_USER1        RBIMPL_CAST((uintptr_t)RUBY_FL_USER1)                /**< @old{RUBY_FL_USER1} */
+#define FL_USER2        RBIMPL_CAST((uintptr_t)RUBY_FL_USER2)                /**< @old{RUBY_FL_USER2} */
+#define FL_USER3        RBIMPL_CAST((uintptr_t)RUBY_FL_USER3)                /**< @old{RUBY_FL_USER3} */
+#define FL_USER4        RBIMPL_CAST((uintptr_t)RUBY_FL_USER4)                /**< @old{RUBY_FL_USER4} */
+#define FL_USER5        RBIMPL_CAST((uintptr_t)RUBY_FL_USER5)                /**< @old{RUBY_FL_USER5} */
+#define FL_USER6        RBIMPL_CAST((uintptr_t)RUBY_FL_USER6)                /**< @old{RUBY_FL_USER6} */
+#define FL_USER7        RBIMPL_CAST((uintptr_t)RUBY_FL_USER7)                /**< @old{RUBY_FL_USER7} */
+#define FL_USER8        RBIMPL_CAST((uintptr_t)RUBY_FL_USER8)                /**< @old{RUBY_FL_USER8} */
+#define FL_USER9        RBIMPL_CAST((uintptr_t)RUBY_FL_USER9)                /**< @old{RUBY_FL_USER9} */
+#define FL_USER10       RBIMPL_CAST((uintptr_t)RUBY_FL_USER10)               /**< @old{RUBY_FL_USER10} */
+#define FL_USER11       RBIMPL_CAST((uintptr_t)RUBY_FL_USER11)               /**< @old{RUBY_FL_USER11} */
+#define FL_USER12       RBIMPL_CAST((uintptr_t)RUBY_FL_USER12)               /**< @old{RUBY_FL_USER12} */
+#define FL_USER13       RBIMPL_CAST((uintptr_t)RUBY_FL_USER13)               /**< @old{RUBY_FL_USER13} */
+#define FL_USER14       RBIMPL_CAST((uintptr_t)RUBY_FL_USER14)               /**< @old{RUBY_FL_USER14} */
+#define FL_USER15       RBIMPL_CAST((uintptr_t)RUBY_FL_USER15)               /**< @old{RUBY_FL_USER15} */
+#define FL_USER16       RBIMPL_CAST((uintptr_t)RUBY_FL_USER16)               /**< @old{RUBY_FL_USER16} */
+#define FL_USER17       RBIMPL_CAST((uintptr_t)RUBY_FL_USER17)               /**< @old{RUBY_FL_USER17} */
+#define FL_USER18       RBIMPL_CAST((uintptr_t)RUBY_FL_USER18)               /**< @old{RUBY_FL_USER18} */
+#define FL_USER19       RBIMPL_CAST((uintptr_t)(unsigned int)RUBY_FL_USER19) /**< @old{RUBY_FL_USER19} */
 
 #define ELTS_SHARED          RUBY_ELTS_SHARED     /**< @old{RUBY_ELTS_SHARED} */
 #define RB_OBJ_FREEZE        rb_obj_freeze_inline /**< @alias{rb_obj_freeze_inline} */
@@ -465,8 +465,8 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @pre        The object must not be an enum ::ruby_special_consts.
  * @return     `obj`'s flags, masked by `flags`.
  */
-static inline VALUE
-RB_FL_TEST_RAW(VALUE obj, VALUE flags)
+static inline uintptr_t
+RB_FL_TEST_RAW(VALUE obj, uintptr_t flags)
 {
     RBIMPL_ASSERT_OR_ASSUME(RB_FL_ABLE(obj));
     return RBASIC(obj)->flags & flags;
@@ -491,8 +491,8 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @note       It  is intentional  for this  function to  return ::VALUE.   The
  *             return value could be passed to RB_FL_STE() etc.
  */
-static inline VALUE
-RB_FL_TEST(VALUE obj, VALUE flags)
+static inline uintptr_t
+RB_FL_TEST(VALUE obj, uintptr_t flags)
 {
     if (RB_FL_ABLE(obj)) {
         return RB_FL_TEST_RAW(obj, flags);
@@ -515,7 +515,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @pre        The object must not be an enum ::ruby_special_consts.
  */
 static inline bool
-RB_FL_ANY_RAW(VALUE obj, VALUE flags)
+RB_FL_ANY_RAW(VALUE obj, uintptr_t flags)
 {
     return RB_FL_TEST_RAW(obj, flags);
 }
@@ -531,7 +531,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @retval     false  No it doesn't at all.
  */
 static inline bool
-RB_FL_ANY(VALUE obj, VALUE flags)
+RB_FL_ANY(VALUE obj, uintptr_t flags)
 {
     return RB_FL_TEST(obj, flags);
 }
@@ -549,7 +549,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @pre        The object must not be an enum ::ruby_special_consts.
  */
 static inline bool
-RB_FL_ALL_RAW(VALUE obj, VALUE flags)
+RB_FL_ALL_RAW(VALUE obj, uintptr_t flags)
 {
     return RB_FL_TEST_RAW(obj, flags) == flags;
 }
@@ -565,7 +565,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @retval     false  The object lacks any of the flags.
  */
 static inline bool
-RB_FL_ALL(VALUE obj, VALUE flags)
+RB_FL_ALL(VALUE obj, uintptr_t flags)
 {
     return RB_FL_TEST(obj, flags) == flags;
 }
@@ -588,7 +588,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * `__declspec(noalias)`.
  */
 static inline void
-rbimpl_fl_set_raw_raw(struct RBasic *obj, VALUE flags)
+rbimpl_fl_set_raw_raw(struct RBasic *obj, uintptr_t flags)
 {
     obj->flags |= flags;
 }
@@ -603,7 +603,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @post        `obj` has `flags` set.
  */
 static inline void
-RB_FL_SET_RAW(VALUE obj, VALUE flags)
+RB_FL_SET_RAW(VALUE obj, uintptr_t flags)
 {
     RBIMPL_ASSERT_OR_ASSUME(RB_FL_ABLE(obj));
     rbimpl_fl_set_raw_raw(RBASIC(obj), flags);
@@ -623,7 +623,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @post        `obj` has `flags` set.
  */
 static inline void
-RB_FL_SET(VALUE obj, VALUE flags)
+RB_FL_SET(VALUE obj, uintptr_t flags)
 {
     if (RB_FL_ABLE(obj)) {
         RB_FL_SET_RAW(obj, flags);
@@ -648,7 +648,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * `__declspec(noalias)`.
  */
 static inline void
-rbimpl_fl_unset_raw_raw(struct RBasic *obj, VALUE flags)
+rbimpl_fl_unset_raw_raw(struct RBasic *obj, uintptr_t flags)
 {
     obj->flags &= ~flags;
 }
@@ -663,7 +663,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @post        `obj` has `flags` cleared.
  */
 static inline void
-RB_FL_UNSET_RAW(VALUE obj, VALUE flags)
+RB_FL_UNSET_RAW(VALUE obj, uintptr_t flags)
 {
     RBIMPL_ASSERT_OR_ASSUME(RB_FL_ABLE(obj));
     rbimpl_fl_unset_raw_raw(RBASIC(obj), flags);
@@ -678,7 +678,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @post        `obj` has `flags` cleard.
  */
 static inline void
-RB_FL_UNSET(VALUE obj, VALUE flags)
+RB_FL_UNSET(VALUE obj, uintptr_t flags)
 {
     if (RB_FL_ABLE(obj)) {
         RB_FL_UNSET_RAW(obj, flags);
@@ -703,7 +703,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * `__declspec(noalias)`.
  */
 static inline void
-rbimpl_fl_reverse_raw_raw(struct RBasic *obj, VALUE flags)
+rbimpl_fl_reverse_raw_raw(struct RBasic *obj, uintptr_t flags)
 {
     obj->flags ^= flags;
 }
@@ -718,7 +718,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @post        `obj` has `flags` cleared.
  */
 static inline void
-RB_FL_REVERSE_RAW(VALUE obj, VALUE flags)
+RB_FL_REVERSE_RAW(VALUE obj, uintptr_t flags)
 {
     RBIMPL_ASSERT_OR_ASSUME(RB_FL_ABLE(obj));
     rbimpl_fl_reverse_raw_raw(RBASIC(obj), flags);
@@ -734,7 +734,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * @post        `obj` has `flags` reversed.
  */
 static inline void
-RB_FL_REVERSE(VALUE obj, VALUE flags)
+RB_FL_REVERSE(VALUE obj, uintptr_t flags)
 {
     if (RB_FL_ABLE(obj)) {
         RB_FL_REVERSE_RAW(obj, flags);
@@ -879,7 +879,7 @@ RBIMPL_ATTR_ARTIFICIAL()
  * (namely `class.c:singleton_class_of()`) where return  value of this function
  * is passed to RB_FL_SET_RAW().
  */
-static inline VALUE
+static inline uintptr_t
 RB_OBJ_FROZEN_RAW(VALUE obj)
 {
     return RB_FL_TEST_RAW(obj, RUBY_FL_FREEZE);

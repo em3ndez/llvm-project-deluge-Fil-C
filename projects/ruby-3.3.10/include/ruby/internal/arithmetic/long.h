@@ -118,7 +118,7 @@ RB_INT2FIX(long i)
     const unsigned long k = (j << 1) + RUBY_FIXNUM_FLAG;
     const long          l = k;
     const SIGNED_VALUE  m = l; /* Sign extend */
-    const VALUE         n = m;
+    const VALUE         n = (VALUE)m;
 
     RBIMPL_ASSERT_OR_ASSUME(RB_FIXNUM_P(n));
     return n;
@@ -166,7 +166,7 @@ rbimpl_fix2long_by_idiv(VALUE x)
     /* :NOTE: VALUE  can be wider  than long.  (x-1)/2 never  overflows because
      * RB_FIXNUM_P(x)  holds.   Also it  has  no  portability issue  like  y>>1
      * below. */
-    const SIGNED_VALUE y = x - RUBY_FIXNUM_FLAG;
+    const SIGNED_VALUE y = (uintptr_t)x - RUBY_FIXNUM_FLAG;
     const SIGNED_VALUE z = y / 2;
     const long         w = RBIMPL_CAST((long)z);
 
@@ -193,7 +193,7 @@ rbimpl_fix2long_by_shift(VALUE x)
 
     /* :NOTE: VALUE can be wider than long.  If right shift is arithmetic, this
      * is noticeably faster than above. */
-    const SIGNED_VALUE y = x;
+    const SIGNED_VALUE y = (uintptr_t)x;
     const SIGNED_VALUE z = y >> 1;
     const long         w = RBIMPL_CAST((long)z);
 
@@ -341,14 +341,14 @@ rb_ulong2num_inline(unsigned long v)
 
 #elif ! defined(HAVE_BUILTIN___BUILTIN_CHOOSE_EXPR_CONSTANT_P)
 # undef INT2FIX
-# define INT2FIX(i) (RBIMPL_CAST((VALUE)(i)) << 1 | RUBY_FIXNUM_FLAG)
+# define INT2FIX(i) (VALUE)(RBIMPL_CAST((uintptr_t)(i)) << 1 | RUBY_FIXNUM_FLAG)
 
 #else
 # undef INT2FIX
 # define INT2FIX(i)                                     \
     __builtin_choose_expr(                              \
         __builtin_constant_p(i),                        \
-        RBIMPL_CAST((VALUE)(i)) << 1 | RUBY_FIXNUM_FLAG, \
+        (VALUE)(RBIMPL_CAST((uintptr_t)(i)) << 1 | RUBY_FIXNUM_FLAG), \
         RB_INT2FIX(i))
 #endif
 /** @endcond */

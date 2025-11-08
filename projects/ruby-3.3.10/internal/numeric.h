@@ -206,11 +206,11 @@ rb_float_flonum_value(VALUE v)
             VALUE v;
         } t;
 
-        VALUE b63 = (v >> 63);
+        uintptr_t b63 = ((uintptr_t)v >> 63);
         /* e: xx1... -> 011... */
         /*    xx0... -> 100... */
         /*      ^b63           */
-        t.v = RUBY_BIT_ROTR((2 - b63) | (v & ~(VALUE)0x03), 3);
+        t.v = (VALUE)(RUBY_BIT_ROTR((2 - b63) | ((uintptr_t)v & ~(uintptr_t)0x03), 3));
         return t.d;
     }
 #endif
@@ -251,19 +251,19 @@ rb_float_new_inline(double d)
     int bits;
 
     t.d = d;
-    bits = (int)((VALUE)(t.v >> 60) & 0x7);
+    bits = (int)((uintptr_t)((uintptr_t)t.v >> 60) & 0x7);
     /* bits contains 3 bits of b62..b60. */
     /* bits - 3 = */
     /*   b011 -> b000 */
     /*   b100 -> b001 */
 
-    if (t.v != 0x3000000000000000 /* 1.72723e-77 */ &&
+    if (t.v != (VALUE)0x3000000000000000 /* 1.72723e-77 */ &&
         !((bits-3) & ~0x01)) {
-        return (RUBY_BIT_ROTL(t.v, 3) & ~(VALUE)0x01) | 0x02;
+        return (VALUE)((RUBY_BIT_ROTL((uintptr_t)t.v, 3) & ~0x01) | 0x02);
     }
     else if (t.v == (VALUE)0) {
         /* +0.0 */
-        return 0x8000000000000002;
+        return (VALUE)0x8000000000000002;
     }
     /* out of range */
 #endif

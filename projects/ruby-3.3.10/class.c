@@ -227,7 +227,7 @@ rb_class_detach_module_subclasses(VALUE klass)
  * \note this function is not Class#allocate.
  */
 static VALUE
-class_alloc(VALUE flags, VALUE klass)
+class_alloc(uintptr_t flags, VALUE klass)
 {
     size_t alloc_size = sizeof(struct RClass) + sizeof(rb_classext_t);
 
@@ -474,7 +474,7 @@ copy_tables(VALUE clone, VALUE orig)
     rb_id_table_free(RCLASS_M_TBL(clone));
     RCLASS_M_TBL(clone) = 0;
     if (!RB_TYPE_P(clone, T_ICLASS)) {
-        st_data_t id;
+        ID id;
 
         rb_iv_tbl_copy(clone, orig);
         CONST_ID(id, "__tmp_classpath__");
@@ -1784,7 +1784,7 @@ method_entry_i(ID key, VALUE value, void *data)
         if (!me) return ID_TABLE_CONTINUE;
         if (!arg->recur && me->owner != owner) return ID_TABLE_CONTINUE;
     }
-    if (!st_is_member(arg->list, key)) {
+    if (!st_is_member(arg->list, (st_data_t)key)) {
         if (UNDEFINED_METHOD_ENTRY_P(me)) {
             type = METHOD_VISI_UNDEF; /* none */
         }
@@ -1792,7 +1792,7 @@ method_entry_i(ID key, VALUE value, void *data)
             type = METHOD_ENTRY_VISI(me);
             RUBY_ASSERT(type != METHOD_VISI_UNDEF);
         }
-        st_add_direct(arg->list, key, (st_data_t)type);
+        st_add_direct(arg->list, (st_data_t)key, (st_data_t)type);
     }
     return ID_TABLE_CONTINUE;
 }
@@ -2188,10 +2188,10 @@ rb_undef_methods_from(VALUE klass, VALUE super)
 static inline VALUE
 special_singleton_class_of(VALUE obj)
 {
-    switch (obj) {
-      case Qnil:   return rb_cNilClass;
-      case Qfalse: return rb_cFalseClass;
-      case Qtrue:  return rb_cTrueClass;
+    switch ((uintptr_t)obj) {
+      case (uintptr_t)Qnil:   return rb_cNilClass;
+      case (uintptr_t)Qfalse: return rb_cFalseClass;
+      case (uintptr_t)Qtrue:  return rb_cTrueClass;
       default:     return Qnil;
     }
 }

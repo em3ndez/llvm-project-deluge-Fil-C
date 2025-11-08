@@ -103,7 +103,7 @@ insn_operands_unification(INSN *iobj)
 }
 
 int
-rb_insn_unified_local_var_level(VALUE insn)
+rb_insn_unified_local_var_level(uintptr_t insn)
 {
 #ifdef OPT_OPERANDS_UNIFICATION
     /* optimize rule */
@@ -119,9 +119,9 @@ rb_insn_unified_local_var_level(VALUE insn)
       case BIN(setlocal_WC_1):
         return 1;
       case BIN(putobject_INT2FIX_0_):
-        return INT2FIX(0);
+        return (int)INT2FIX(0);
       case BIN(putobject_INT2FIX_1_):
-        return INT2FIX(1);
+        return (int)INT2FIX(1);
     }
 #endif
     return -1;

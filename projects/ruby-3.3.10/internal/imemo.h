@@ -161,8 +161,8 @@ imemo_type_p(VALUE imemo, enum imemo_type imemo_type)
 {
     if (LIKELY(!RB_SPECIAL_CONST_P(imemo))) {
         /* fixed at compile time if imemo_type is given. */
-        const VALUE mask = (IMEMO_MASK << FL_USHIFT) | RUBY_T_MASK;
-        const VALUE expected_type = (imemo_type << FL_USHIFT) | T_IMEMO;
+        const uintptr_t mask = (IMEMO_MASK << FL_USHIFT) | RUBY_T_MASK;
+        const uintptr_t expected_type = (imemo_type << FL_USHIFT) | T_IMEMO;
         /* fixed at runtime. */
         return expected_type == (RBASIC(imemo)->flags & mask);
     }
