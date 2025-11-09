@@ -730,26 +730,7 @@ RBIMPL_ATTR_NONNULL((1))
 static inline void *
 rbimpl_atomic_ptr_exchange(void *volatile *ptr, const void *val)
 {
-#if 0
-
-#elif defined(InterlockedExchangePointer)
-    /* const_cast */
-    PVOID *pptr = RBIMPL_CAST((PVOID *)ptr);
-    PVOID pval = RBIMPL_CAST((PVOID)val);
-    return InterlockedExchangePointer(pptr, pval);
-
-#elif defined(__sun) && defined(HAVE_ATOMIC_H)
-    return atomic_swap_ptr(ptr, RBIMPL_CAST((void *)val));
-
-#else
-    RBIMPL_STATIC_ASSERT(sizeof_voidp, sizeof *ptr == sizeof(size_t));
-
-    const size_t sval = RBIMPL_CAST((size_t)val);
-    volatile size_t *const sptr = RBIMPL_CAST((volatile size_t *)ptr);
-    const size_t sret = rbimpl_atomic_size_exchange(sptr, sval);
-    return RBIMPL_CAST((void *)sret);
-
-#endif
+    return zxchg_ptr((void**)ptr, val);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()
@@ -758,12 +739,7 @@ RBIMPL_ATTR_NONNULL((1))
 static inline VALUE
 rbimpl_atomic_value_exchange(volatile VALUE *ptr, VALUE val)
 {
-    RBIMPL_STATIC_ASSERT(sizeof_value, sizeof *ptr == sizeof(size_t));
-
-    const size_t sval = RBIMPL_CAST((size_t)val);
-    volatile size_t *const sptr = RBIMPL_CAST((volatile size_t *)ptr);
-    const size_t sret = rbimpl_atomic_size_exchange(sptr, sval);
-    return RBIMPL_CAST((VALUE)sret);
+    return zxchg_ptr((void**)ptr, val);
 }
 
 RBIMPL_ATTR_ARTIFICIAL()

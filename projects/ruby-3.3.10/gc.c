@@ -338,6 +338,8 @@ size_mul_add_mul_or_raise(size_t x, size_t y, size_t z, size_t w, VALUE exc)
     }
 }
 
+#define nomem_error GET_VM()->special_exceptions[ruby_error_nomemory]
+
 #ifdef __FILC__
 
 /* FIXME: I started out writing this chunk thinking that I'd just replace some simple API with calls
@@ -758,10 +760,42 @@ rb_objspace_each_objects(each_obj_callback *callback, void *data)
     zerror("rb_objspace_each_objects not implemented");
 }
 
+static int
+internal_object_p(VALUE obj)
+{
+    RVALUE *p = (RVALUE *)obj;
+    void *ptr = obj;
+    bool used_p = p->as.basic.flags;
+
+    if (used_p) {
+        switch (BUILTIN_TYPE(obj)) {
+          case T_NODE:
+            UNEXPECTED_NODE(internal_object_p);
+            break;
+          case T_NONE:
+          case T_MOVED:
+          case T_IMEMO:
+          case T_ICLASS:
+          case T_ZOMBIE:
+            break;
+          case T_CLASS:
+            if (!p->as.basic.klass) break;
+            if (FL_TEST(obj, FL_SINGLETON)) {
+                return rb_singleton_class_internal_p(obj);
+            }
+            return 0;
+          default:
+            if (!p->as.basic.klass) break;
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int
 rb_objspace_internal_object_p(VALUE obj)
 {
-    zerror("rb_objspace_internal_object_p not implemented");
+    return internal_object_p(obj);
 }
 
 VALUE
@@ -1213,6 +1247,894 @@ rb_objspace_marked_object_p(VALUE obj)
     return 0;
 }
 
+void
+rb_gc_writebarrier(VALUE a, VALUE b)
+{
+}
+
+void
+rb_gc_writebarrier_unprotect(VALUE obj)
+{
+}
+
+void
+rb_gc_writebarrier_remember(VALUE obj)
+{
+}
+
+void
+rb_copy_wb_protected_attribute(VALUE dest, VALUE obj)
+{
+}
+
+VALUE
+rb_obj_rgengc_writebarrier_protected_p(VALUE obj)
+{
+    return Qfalse;
+}
+
+VALUE
+rb_obj_rgengc_promoted_p(VALUE obj)
+{
+    return Qfalse;
+}
+
+size_t
+rb_obj_gc_flags(VALUE obj, ID* flags, size_t max)
+{
+    return 0;
+}
+
+void
+rb_gc_ractor_newobj_cache_clear(rb_ractor_newobj_cache_t *newobj_cache)
+{
+}
+
+void
+rb_gc_force_recycle(VALUE obj)
+{
+    /* no-op */
+}
+
+void
+rb_gc_register_mark_object(VALUE obj)
+{
+}
+
+void
+rb_gc_register_address(VALUE *addr)
+{
+}
+
+void
+rb_gc_unregister_address(VALUE *addr)
+{
+}
+
+void
+rb_global_variable(VALUE *var)
+{
+}
+
+void
+rb_gc_prepare_heap(void)
+{
+}
+
+void
+rb_gc_ref_update_table_values_only(st_table *tbl)
+{
+    zerror("rb_gc_ref_update_table_values_only not supported");
+}
+
+void
+rb_gc_update_tbl_refs(st_table *ptr)
+{
+    zerror("rb_gc_update_tbl_refs not supported");
+}
+
+void
+rb_gc_update_values(long n, VALUE *values)
+{
+    zerror("rb_gc_update_values not supported");
+}
+
+VALUE
+rb_gc_location(VALUE value)
+{
+    return value;
+}
+
+VALUE
+rb_gc_start(void)
+{
+    zgc_request_fresh();
+    return Qnil;
+}
+
+void
+rb_gc(void)
+{
+    zgc_request_fresh();
+}
+
+int
+rb_during_gc(void)
+{
+    return zgc_requested_cycle() != zgc_completed_cycle();
+}
+
+size_t
+rb_gc_count(void)
+{
+    return zgc_completed_cycle();
+}
+
+static VALUE
+gc_info_decode(const VALUE hash_or_key)
+{
+    VALUE hash = Qnil;
+    if (RB_TYPE_P(hash_or_key, T_HASH))
+        hash = hash_or_key;
+    return hash;
+}
+
+VALUE
+rb_gc_latest_gc_info(VALUE key)
+{
+    return gc_info_decode(key);
+}
+
+size_t
+rb_gc_stat(VALUE key)
+{
+    return 0;
+}
+
+VALUE
+rb_gc_enable(void)
+{
+    return Qtrue;
+}
+
+VALUE
+rb_objspace_gc_enable(rb_objspace_t *objspace)
+{
+    return Qtrue;
+}
+
+VALUE
+rb_gc_disable_no_rest(void)
+{
+    return Qtrue;
+}
+
+VALUE
+rb_gc_disable(void)
+{
+    return Qtrue;
+}
+
+void
+ruby_gc_set_params(void)
+{
+}
+
+void
+rb_objspace_reachable_objects_from(VALUE obj, void (func)(VALUE, void *), void *data)
+{
+    zerror("rb_objspace_reachable_objects_from unimplemented");
+}
+
+void
+rb_objspace_reachable_objects_from_root(void (func)(const char *category, VALUE, void *), void *passing_data)
+{
+    zerror("rb_objspace_reachable_objects_from_root unimplemented");
+}
+
+void
+rb_memerror(void)
+{
+    rb_execution_context_t *ec = GET_EC();
+    VALUE exc;
+
+    if (0) {
+        // Print out pid, sleep, so you can attach debugger to see what went wrong:
+        fprintf(stderr, "rb_memerror pid=%"PRI_PIDT_PREFIX"d\n", getpid());
+        sleep(60);
+    }
+
+    exc = nomem_error;
+    if (!exc ||
+        rb_ec_raised_p(ec, RAISED_NOMEMORY)) {
+        fprintf(stderr, "[FATAL] failed to allocate memory\n");
+        exit(EXIT_FAILURE);
+    }
+    if (rb_ec_raised_p(ec, RAISED_NOMEMORY)) {
+        rb_ec_raised_clear(ec);
+    }
+    else {
+        rb_ec_raised_set(ec, RAISED_NOMEMORY);
+        exc = ruby_vm_special_exception_copy(exc);
+    }
+    ec->errinfo = exc;
+    EC_JUMP_TAG(ec, TAG_RAISE);
+}
+
+void *
+rb_aligned_malloc(size_t alignment, size_t size)
+{
+    return zgc_aligned_alloc(alignment, size);
+}
+
+void
+rb_malloc_info_show_results(void)
+{
+}
+
+void *
+ruby_xmalloc_body(size_t size)
+{
+    return malloc(size);
+}
+
+void
+ruby_malloc_size_overflow(size_t count, size_t elsize)
+{
+    rb_raise(rb_eArgError,
+             "malloc: possible integer overflow (%"PRIuSIZE"*%"PRIuSIZE")",
+             count, elsize);
+}
+
+static inline size_t
+xmalloc2_size(const size_t count, const size_t elsize)
+{
+    return size_mul_or_raise(count, elsize, rb_eArgError);
+}
+
+void *
+ruby_xmalloc2_body(size_t n, size_t size)
+{
+    return maloc(xmalloc2_size(n, size));
+}
+
+void *
+ruby_xcalloc_body(size_t n, size_t size)
+{
+    return malloc(xmalloc2_size(n, size));
+}
+
+#ifdef ruby_sized_xrealloc
+#undef ruby_sized_xrealloc
+#endif
+void *
+ruby_sized_xrealloc(void *ptr, size_t new_size, size_t old_size)
+{
+    return realloc(ptr, new_size);
+}
+
+void *
+ruby_xrealloc_body(void *ptr, size_t new_size)
+{
+    return realloc(ptr, new_size);
+}
+
+#ifdef ruby_sized_xrealloc2
+#undef ruby_sized_xrealloc2
+#endif
+void *
+ruby_sized_xrealloc2(void *ptr, size_t n, size_t size, size_t old_n)
+{
+    size_t len = xmalloc2_size(n, size);
+    return realloc(ptr, len);
+}
+
+void *
+ruby_xrealloc2_body(void *ptr, size_t n, size_t size)
+{
+    return ruby_sized_xrealloc2(ptr, n, size, 0);
+}
+
+#ifdef ruby_sized_xfree
+#undef ruby_sized_xfree
+#endif
+void
+ruby_sized_xfree(void *x, size_t size)
+{
+    free(x);
+}
+
+void
+ruby_xfree(void *x)
+{
+    free(x);
+}
+
+void *
+rb_xmalloc_mul_add(size_t x, size_t y, size_t z) /* x * y + z */
+{
+    size_t w = size_mul_add_or_raise(x, y, z, rb_eArgError);
+    return ruby_xmalloc(w);
+}
+
+void *
+rb_xcalloc_mul_add(size_t x, size_t y, size_t z) /* x * y + z */
+{
+    size_t w = size_mul_add_or_raise(x, y, z, rb_eArgError);
+    return ruby_xcalloc(w, 1);
+}
+
+void *
+rb_xrealloc_mul_add(const void *p, size_t x, size_t y, size_t z) /* x * y + z */
+{
+    size_t w = size_mul_add_or_raise(x, y, z, rb_eArgError);
+    return ruby_xrealloc((void *)p, w);
+}
+
+void *
+rb_xmalloc_mul_add_mul(size_t x, size_t y, size_t z, size_t w) /* x * y + z * w */
+{
+    size_t u = size_mul_add_mul_or_raise(x, y, z, w, rb_eArgError);
+    return ruby_xmalloc(u);
+}
+
+void *
+rb_xcalloc_mul_add_mul(size_t x, size_t y, size_t z, size_t w) /* x * y + z * w */
+{
+    size_t u = size_mul_add_mul_or_raise(x, y, z, w, rb_eArgError);
+    return ruby_xcalloc(u, 1);
+}
+
+void *
+ruby_mimmalloc(size_t size)
+{
+    return malloc(size);
+}
+
+void
+ruby_mimfree(void *ptr)
+{
+    free(ptr);
+}
+
+void *
+rb_alloc_tmp_buffer_with_count(volatile VALUE *store, size_t size, size_t cnt)
+{
+    void *ptr;
+    VALUE imemo;
+    rb_imemo_tmpbuf_t *tmpbuf;
+
+    /* Keep the order; allocate an empty imemo first then xmalloc, to
+     * get rid of potential memory leak */
+    imemo = rb_imemo_tmpbuf_auto_free_maybe_mark_buffer(NULL, 0);
+    *store = imemo;
+    ptr = ruby_xmalloc0(size);
+    tmpbuf = (rb_imemo_tmpbuf_t *)imemo;
+    tmpbuf->ptr = ptr;
+    tmpbuf->cnt = cnt;
+    return ptr;
+}
+
+void *
+rb_alloc_tmp_buffer(volatile VALUE *store, long len)
+{
+    long cnt;
+
+    if (len < 0 || (cnt = (long)roomof(len, sizeof(VALUE))) < 0) {
+        rb_raise(rb_eArgError, "negative buffer size (or size too big)");
+    }
+
+    return rb_alloc_tmp_buffer_with_count(store, len, cnt);
+}
+
+void
+rb_free_tmp_buffer(volatile VALUE *store)
+{
+    rb_imemo_tmpbuf_t *s = (rb_imemo_tmpbuf_t*)ATOMIC_VALUE_EXCHANGE(*store, 0);
+    if (s) {
+        void *ptr = ATOMIC_PTR_EXCHANGE(s->ptr, 0);
+        s->cnt = 0;
+        ruby_xfree(ptr);
+    }
+}
+
+void
+rb_gc_adjust_memory_usage(ssize_t diff)
+{
+}
+
+const char *
+rb_method_type_name(rb_method_type_t type)
+{
+    switch (type) {
+      case VM_METHOD_TYPE_ISEQ:           return "iseq";
+      case VM_METHOD_TYPE_ATTRSET:        return "attrest";
+      case VM_METHOD_TYPE_IVAR:           return "ivar";
+      case VM_METHOD_TYPE_BMETHOD:        return "bmethod";
+      case VM_METHOD_TYPE_ALIAS:          return "alias";
+      case VM_METHOD_TYPE_REFINED:        return "refined";
+      case VM_METHOD_TYPE_CFUNC:          return "cfunc";
+      case VM_METHOD_TYPE_ZSUPER:         return "zsuper";
+      case VM_METHOD_TYPE_MISSING:        return "missing";
+      case VM_METHOD_TYPE_OPTIMIZED:      return "optimized";
+      case VM_METHOD_TYPE_UNDEF:          return "undef";
+      case VM_METHOD_TYPE_NOTIMPLEMENTED: return "notimplemented";
+    }
+    rb_bug("rb_method_type_name: unreachable (type: %d)", type);
+}
+
+static void
+rb_raw_iseq_info(char *const buff, const size_t buff_size, const rb_iseq_t *iseq)
+{
+    if (buff_size > 0 && ISEQ_BODY(iseq) && ISEQ_BODY(iseq)->location.label && !RB_TYPE_P(ISEQ_BODY(iseq)->location.pathobj, T_MOVED)) {
+        VALUE path = rb_iseq_path(iseq);
+        int n = ISEQ_BODY(iseq)->location.first_lineno;
+        snprintf(buff, buff_size, " %s@%s:%d",
+                 RSTRING_PTR(ISEQ_BODY(iseq)->location.label),
+                 RSTRING_PTR(path), n);
+    }
+}
+
+static const char *
+type_name(int type, VALUE obj)
+{
+    switch (type) {
+#define TYPE_NAME(t) case (t): return #t;
+            TYPE_NAME(T_NONE);
+            TYPE_NAME(T_OBJECT);
+            TYPE_NAME(T_CLASS);
+            TYPE_NAME(T_MODULE);
+            TYPE_NAME(T_FLOAT);
+            TYPE_NAME(T_STRING);
+            TYPE_NAME(T_REGEXP);
+            TYPE_NAME(T_ARRAY);
+            TYPE_NAME(T_HASH);
+            TYPE_NAME(T_STRUCT);
+            TYPE_NAME(T_BIGNUM);
+            TYPE_NAME(T_FILE);
+            TYPE_NAME(T_MATCH);
+            TYPE_NAME(T_COMPLEX);
+            TYPE_NAME(T_RATIONAL);
+            TYPE_NAME(T_NIL);
+            TYPE_NAME(T_TRUE);
+            TYPE_NAME(T_FALSE);
+            TYPE_NAME(T_SYMBOL);
+            TYPE_NAME(T_FIXNUM);
+            TYPE_NAME(T_UNDEF);
+            TYPE_NAME(T_IMEMO);
+            TYPE_NAME(T_ICLASS);
+            TYPE_NAME(T_MOVED);
+            TYPE_NAME(T_ZOMBIE);
+      case T_DATA:
+        if (obj && rb_objspace_data_type_name(obj)) {
+            return rb_objspace_data_type_name(obj);
+        }
+        return "T_DATA";
+#undef TYPE_NAME
+    }
+    return "unknown";
+}
+
+static const char *
+obj_type_name(VALUE obj)
+{
+    return type_name(TYPE(obj), obj);
+}
+
+static int
+str_len_no_raise(VALUE str)
+{
+    long len = RSTRING_LEN(str);
+    if (len < 0) return 0;
+    if (len > INT_MAX) return INT_MAX;
+    return (int)len;
+}
+
+#define BUFF_ARGS buff + pos, buff_size - pos
+#define APPEND_F(...) if ((pos += snprintf(BUFF_ARGS, "" __VA_ARGS__)) >= buff_size) goto end
+#define APPEND_S(s) do { \
+        if ((pos + (int)rb_strlen_lit(s)) >= buff_size) { \
+            goto end; \
+        } \
+        else { \
+            memcpy(buff + pos, (s), rb_strlen_lit(s) + 1); \
+        } \
+    } while (0)
+#define TF(c) ((c) != 0 ? "true" : "false")
+#define C(c, s) ((c) != 0 ? (s) : " ")
+
+static size_t
+rb_raw_obj_info_common(char *const buff, const size_t buff_size, const VALUE obj)
+{
+    size_t pos = 0;
+
+    if (SPECIAL_CONST_P(obj)) {
+        APPEND_F("%s", obj_type_name(obj));
+
+        if (FIXNUM_P(obj)) {
+            APPEND_F(" %ld", FIX2LONG(obj));
+        }
+        else if (SYMBOL_P(obj)) {
+            APPEND_F(" %s", rb_id2name(SYM2ID(obj)));
+        }
+    }
+    else {
+        APPEND_F("%p [%s] %s ",
+                 obj, zptr_to_new_string(obj), obj_type_name(obj));
+        if (internal_object_p(obj)) {
+            /* ignore */
+        }
+        else if (RBASIC(obj)->klass == 0) {
+            APPEND_S("(temporary internal)");
+        }
+        else if (RTEST(RBASIC(obj)->klass)) {
+            VALUE class_path = rb_class_path_cached(RBASIC(obj)->klass);
+            if (!NIL_P(class_path)) {
+                APPEND_F("(%s)", RSTRING_PTR(class_path));
+            }
+        }
+    }
+
+    return pos;
+}
+
+static size_t
+rb_raw_obj_info_buitin_type(char *const buff, const size_t buff_size, const VALUE obj, size_t pos)
+{
+    if (LIKELY(pos < buff_size) && !SPECIAL_CONST_P(obj)) {
+        const enum ruby_value_type type = BUILTIN_TYPE(obj);
+
+        switch (type) {
+          case T_NODE:
+            UNEXPECTED_NODE(rb_raw_obj_info);
+            break;
+          case T_ARRAY:
+            if (ARY_SHARED_P(obj)) {
+                APPEND_S("shared -> ");
+                rb_raw_obj_info(BUFF_ARGS, ARY_SHARED_ROOT(obj));
+            }
+            else if (ARY_EMBED_P(obj)) {
+                APPEND_F("[%s%s] len: %ld (embed)",
+                         C(ARY_EMBED_P(obj),  "E"),
+                         C(ARY_SHARED_P(obj), "S"),
+                         RARRAY_LEN(obj));
+            }
+            else {
+                APPEND_F("[%s%s] len: %ld, capa:%ld ptr:%p",
+                         C(ARY_EMBED_P(obj),  "E"),
+                         C(ARY_SHARED_P(obj), "S"),
+                         RARRAY_LEN(obj),
+                         ARY_EMBED_P(obj) ? -1L : RARRAY(obj)->as.heap.aux.capa,
+                         (void *)RARRAY_CONST_PTR(obj));
+            }
+            break;
+          case T_STRING: {
+            if (STR_SHARED_P(obj)) {
+                APPEND_F(" [shared] len: %ld", RSTRING_LEN(obj));
+            }
+            else {
+                if (STR_EMBED_P(obj)) APPEND_S(" [embed]");
+
+                APPEND_F(" len: %ld, capa: %" PRIdSIZE, RSTRING_LEN(obj), rb_str_capacity(obj));
+            }
+            APPEND_F(" \"%.*s\"", str_len_no_raise(obj), RSTRING_PTR(obj));
+            break;
+          }
+          case T_SYMBOL: {
+            VALUE fstr = RSYMBOL(obj)->fstr;
+            ID id = RSYMBOL(obj)->id;
+            if (RB_TYPE_P(fstr, T_STRING)) {
+                APPEND_F(":%s id:%d", RSTRING_PTR(fstr), (unsigned int)id);
+            }
+            else {
+                APPEND_F("(%p) id:%d", (void *)fstr, (unsigned int)id);
+            }
+            break;
+          }
+          case T_MOVED: {
+            APPEND_F("-> %p", (void*)rb_gc_location(obj));
+            break;
+          }
+          case T_HASH: {
+            APPEND_F("[%c] %"PRIdSIZE,
+                     RHASH_AR_TABLE_P(obj) ? 'A' : 'S',
+                     RHASH_SIZE(obj));
+            break;
+          }
+          case T_CLASS:
+          case T_MODULE:
+            {
+                VALUE class_path = rb_class_path_cached(obj);
+                if (!NIL_P(class_path)) {
+                    APPEND_F("%s", RSTRING_PTR(class_path));
+                }
+                else {
+                    APPEND_S("(anon)");
+                }
+                break;
+            }
+          case T_ICLASS:
+            {
+                VALUE class_path = rb_class_path_cached(RBASIC_CLASS(obj));
+                if (!NIL_P(class_path)) {
+                    APPEND_F("src:%s", RSTRING_PTR(class_path));
+                }
+                break;
+            }
+          case T_OBJECT:
+            {
+                if (rb_shape_obj_too_complex(obj)) {
+                    size_t hash_len = rb_st_table_size(ROBJECT_IV_HASH(obj));
+                    APPEND_F("(too_complex) len:%"PRIuSIZE"", hash_len);
+                }
+                else {
+                    uint32_t len = ROBJECT_IV_CAPACITY(obj);
+
+                    if (RANY(obj)->as.basic.flags & ROBJECT_EMBED) {
+                        APPEND_F("(embed) len:%d", len);
+                    }
+                    else {
+                        VALUE *ptr = ROBJECT_IVPTR(obj);
+                        APPEND_F("len:%d ptr:%p", len, (void *)ptr);
+                    }
+                }
+            }
+            break;
+          case T_DATA: {
+            const struct rb_block *block;
+            const rb_iseq_t *iseq;
+            if (rb_obj_is_proc(obj) &&
+                (block = vm_proc_block(obj)) != NULL &&
+                (vm_block_type(block) == block_type_iseq) &&
+                (iseq = vm_block_iseq(block)) != NULL) {
+                rb_raw_iseq_info(BUFF_ARGS, iseq);
+            }
+            else if (rb_ractor_p(obj)) {
+                rb_ractor_t *r = (void *)DATA_PTR(obj);
+                if (r) {
+                    APPEND_F("r:%d", r->pub.id);
+                }
+            }
+            else {
+                const char * const type_name = rb_objspace_data_type_name(obj);
+                if (type_name) {
+                    APPEND_F("%s", type_name);
+                }
+            }
+            break;
+          }
+          case T_IMEMO: {
+            APPEND_F("<%s> ", rb_imemo_name(imemo_type(obj)));
+
+            switch (imemo_type(obj)) {
+              case imemo_ment:
+                {
+                    const rb_method_entry_t *me = &RANY(obj)->as.imemo.ment;
+
+                    APPEND_F(":%s (%s%s%s%s) type:%s aliased:%d owner:%p defined_class:%p",
+                             rb_id2name(me->called_id),
+                             METHOD_ENTRY_VISI(me) == METHOD_VISI_PUBLIC ?  "pub" :
+                             METHOD_ENTRY_VISI(me) == METHOD_VISI_PRIVATE ? "pri" : "pro",
+                             METHOD_ENTRY_COMPLEMENTED(me) ? ",cmp" : "",
+                             METHOD_ENTRY_CACHED(me) ? ",cc" : "",
+                             METHOD_ENTRY_INVALIDATED(me) ? ",inv" : "",
+                             me->def ? rb_method_type_name(me->def->type) : "NULL",
+                             me->def ? me->def->aliased : -1,
+                             (void *)me->owner, // obj_info(me->owner),
+                             (void *)me->defined_class); //obj_info(me->defined_class)));
+
+                    if (me->def) {
+                        switch (me->def->type) {
+                          case VM_METHOD_TYPE_ISEQ:
+                            APPEND_S(" (iseq:");
+                            rb_raw_obj_info(BUFF_ARGS, (VALUE)me->def->body.iseq.iseqptr);
+                            APPEND_S(")");
+                            break;
+                          default:
+                            break;
+                        }
+                    }
+
+                    break;
+                }
+              case imemo_iseq: {
+                const rb_iseq_t *iseq = (const rb_iseq_t *)obj;
+                rb_raw_iseq_info(BUFF_ARGS, iseq);
+                break;
+              }
+              case imemo_callinfo:
+                {
+                    const struct rb_callinfo *ci = (const struct rb_callinfo *)obj;
+                    APPEND_F("(mid:%s, flag:%x argc:%d, kwarg:%s)",
+                             rb_id2name(vm_ci_mid(ci)),
+                             vm_ci_flag(ci),
+                             vm_ci_argc(ci),
+                             vm_ci_kwarg(ci) ? "available" : "NULL");
+                    break;
+                }
+              case imemo_callcache:
+                {
+                    const struct rb_callcache *cc = (const struct rb_callcache *)obj;
+                    VALUE class_path = cc->klass ? rb_class_path_cached(cc->klass) : Qnil;
+                    const rb_callable_method_entry_t *cme = vm_cc_cme(cc);
+
+                    APPEND_F("(klass:%s cme:%s%s (%p) call:%p",
+                             NIL_P(class_path) ? (cc->klass ? "??" : "<NULL>") : RSTRING_PTR(class_path),
+                             cme ? rb_id2name(cme->called_id) : "<NULL>",
+                             cme ? (METHOD_ENTRY_INVALIDATED(cme) ? " [inv]" : "") : "",
+                             (void *)cme,
+                             (void *)vm_cc_call(cc));
+                    break;
+                }
+              default:
+                break;
+            }
+          }
+          default:
+            break;
+        }
+    }
+  end:
+
+    return pos;
+}
+
+#undef TF
+#undef C
+
+const char *
+rb_raw_obj_info(char *const buff, const size_t buff_size, VALUE obj)
+{
+    size_t pos = rb_raw_obj_info_common(buff, buff_size, obj);
+    pos = rb_raw_obj_info_buitin_type(buff, buff_size, obj, pos);
+    if (pos >= buff_size) {} // truncated
+
+    return buff;
+}
+
+#undef APPEND_S
+#undef APPEND_F
+#undef BUFF_ARGS
+
+static const char *
+obj_info(VALUE obj)
+{
+    return obj_type_name(obj);
+}
+
+const char *
+rb_obj_info(VALUE obj)
+{
+    return obj_info(obj);
+}
+
+void
+rb_obj_info_dump(VALUE obj)
+{
+    char buff[0x100];
+    fprintf(stderr, "rb_obj_info_dump: %s\n", rb_raw_obj_info(buff, 0x100, obj));
+}
+
+void
+rb_obj_info_dump_loc(VALUE obj, const char *file, int line, const char *func)
+{
+    char buff[0x100];
+    fprintf(stderr, "<OBJ_INFO:%s@%s:%d> %s\n", func, file, line, rb_raw_obj_info(buff, 0x100, obj));
+}
+
+static VALUE
+gc_profile_clear(VALUE _)
+{
+    return Qnil;
+}
+
+static VALUE
+gc_profile_record_get(VALUE _)
+{
+    return Qnil;
+}
+
+static VALUE
+gc_profile_result(VALUE _)
+{
+    return Qnil;
+}
+
+static VALUE
+gc_profile_report(int argc, VALUE *argv, VALUE self)
+{
+    return Qnil;
+}
+
+static VALUE
+gc_profile_total_time(VALUE self)
+{
+    return DBL2NUM(0);
+}
+
+static VALUE
+gc_profile_enable_get(VALUE self)
+{
+    return Qfalse;
+}
+
+static VALUE
+gc_profile_enable(VALUE _)
+{
+    return Qnil;
+}
+
+static VALUE
+gc_profile_disable(VALUE _)
+{
+    return Qnil;
+}
+
+static VALUE
+gc_verify_internal_consistency_m(VALUE dummy)
+{
+    return Qnil;
+}
+
+#include "gc.rbinc"
+
+void
+Init_GC(void)
+{
+#undef rb_intern
+    malloc_offset = gc_compute_malloc_offset();
+
+    VALUE rb_mObjSpace;
+    VALUE rb_mProfiler;
+    VALUE gc_constants;
+
+    rb_mGC = rb_define_module("GC");
+
+    gc_constants = rb_hash_new();
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("DEBUG")), RBOOL(GC_DEBUG));
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("BASE_SLOT_SIZE")), SIZET2NUM(sizeof(RVALUE)));
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("RVALUE_OVERHEAD")), SIZET2NUM(0));
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("RVALUE_SIZE")), SIZET2NUM(sizeof(RVALUE)));
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("SIZE_POOL_COUNT")), LONG2FIX(SIZE_POOL_COUNT));
+    rb_hash_aset(gc_constants, ID2SYM(rb_intern("RVARGC_MAX_ALLOCATE_SIZE")), LONG2FIX(size_pool_slot_size(SIZE_POOL_COUNT - 1)));
+    OBJ_FREEZE(gc_constants);
+    /* Internal constants in the garbage collector. */
+    rb_define_const(rb_mGC, "INTERNAL_CONSTANTS", gc_constants);
+
+    rb_mProfiler = rb_define_module_under(rb_mGC, "Profiler");
+    rb_define_singleton_method(rb_mProfiler, "enabled?", gc_profile_enable_get, 0);
+    rb_define_singleton_method(rb_mProfiler, "enable", gc_profile_enable, 0);
+    rb_define_singleton_method(rb_mProfiler, "raw_data", gc_profile_record_get, 0);
+    rb_define_singleton_method(rb_mProfiler, "disable", gc_profile_disable, 0);
+    rb_define_singleton_method(rb_mProfiler, "clear", gc_profile_clear, 0);
+    rb_define_singleton_method(rb_mProfiler, "result", gc_profile_result, 0);
+    rb_define_singleton_method(rb_mProfiler, "report", gc_profile_report, -1);
+    rb_define_singleton_method(rb_mProfiler, "total_time", gc_profile_total_time, 0);
+
+    rb_mObjSpace = rb_define_module("ObjectSpace");
+
+    rb_define_module_function(rb_mObjSpace, "define_finalizer", define_final, -1);
+    rb_define_module_function(rb_mObjSpace, "undefine_finalizer", undefine_final, 1);
+
+    rb_define_module_function(rb_mObjSpace, "_id2ref", os_id2ref, 1);
+
+    rb_vm_register_special_exception(ruby_error_nomemory, rb_eNoMemError, "failed to allocate memory");
+
+    rb_define_method(rb_cBasicObject, "__id__", rb_obj_id, 0);
+    rb_define_method(rb_mKernel, "object_id", rb_obj_id, 0);
+
+    rb_define_module_function(rb_mObjSpace, "count_objects", count_objects, -1);
+
+    /* internal methods */
+    rb_define_singleton_method(rb_mGC, "verify_internal_consistency", gc_verify_internal_consistency_m, 0);
+
+    rb_define_singleton_method(rb_mGC, "compact", rb_f_notimplement, 0);
+    rb_define_singleton_method(rb_mGC, "auto_compact", rb_f_notimplement, 0);
+    rb_define_singleton_method(rb_mGC, "auto_compact=", rb_f_notimplement, 1);
+    rb_define_singleton_method(rb_mGC, "latest_compact_info", rb_f_notimplement, 0);
+    /* When !GC_COMPACTION_SUPPORTED, this method is not defined in gc.rb */
+    rb_define_singleton_method(rb_mGC, "verify_compaction_references", rb_f_notimplement, -1);
+}
 
 #else /* defined(__FILC__) -> so !defined(__FILC__) */
 
@@ -2211,8 +3133,6 @@ struct RZombie {
 };
 
 #define RZOMBIE(o) ((struct RZombie *)(o))
-
-#define nomem_error GET_VM()->special_exceptions[ruby_error_nomemory]
 
 #if RUBY_MARK_FREE_DEBUG
 int ruby_gc_debug_indent = 0;
@@ -15281,6 +16201,8 @@ Init_GC(void)
     }
 }
 
+#endif /* defined(__FILC__) -> so end of !defined(__FILC__) */
+
 #ifdef ruby_xmalloc
 #undef ruby_xmalloc
 #endif
@@ -15346,5 +16268,3 @@ ruby_xrealloc2(void *ptr, size_t n, size_t new_size)
 #endif
     return ruby_xrealloc2_body(ptr, n, new_size);
 }
-
-#endif /* defined(__FILC__) -> so end of !defined(__FILC__) */
