@@ -73,7 +73,7 @@ static VALUE class_spec_rb_class_new_instance_kw(VALUE self, VALUE args, VALUE k
 
 static VALUE class_spec_rb_class_real(VALUE self, VALUE object) {
   if (rb_type_p(object, T_FIXNUM)) {
-    return INT2FIX(rb_class_real(FIX2INT(object)));
+    return (VALUE)INT2FIX((uintptr_t)rb_class_real((VALUE)FIX2INT(object)));
   } else {
     return rb_class_real(CLASS_OF(object));
   }

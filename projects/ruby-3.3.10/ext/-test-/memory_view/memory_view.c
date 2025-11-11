@@ -198,7 +198,7 @@ memory_view_get_ref_count(VALUE obj)
 
     st_data_t count;
     if (st_lookup(table, (st_data_t)obj, &count)) {
-        return ULL2NUM(count);
+        return ULL2NUM((unsigned long long)count);
     }
 
     return Qnil;

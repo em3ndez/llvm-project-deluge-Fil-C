@@ -645,7 +645,7 @@ parse_main(struct cparse_params *v, VALUE tok, VALUE val, int resume)
     /* shift/reduce error token */
     if (act > 0 && act < v->shift_n) {
         D_puts("e shift");
-        SHIFT(v, act, ERROR_TOKEN, val);
+        SHIFT(v, act, (VALUE)ERROR_TOKEN, val);
     }
     else if (act < 0 && act > -(v->reduce_n)) {
         D_puts("e reduce");

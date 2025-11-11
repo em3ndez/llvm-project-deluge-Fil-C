@@ -47,7 +47,7 @@ make_unique_str(st_table *tbl, const char *str, long len)
             result = (char *)ruby_xmalloc(len+1);
             strncpy(result, str, len);
             result[len] = 0;
-            st_add_direct(tbl, (st_data_t)result, 1);
+            st_add_direct(tbl, (st_data_t)result, (st_data_t)1);
         }
         return result;
     }

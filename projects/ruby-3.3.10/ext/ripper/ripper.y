@@ -350,7 +350,7 @@ RBIMPL_WARNING_POP()
     parser_set_lex_state(p, ls, __LINE__)
 static inline enum lex_state_e parser_set_lex_state(struct parser_params *p, enum lex_state_e ls, int line);
 
-typedef VALUE stack_type;
+typedef uintptr_t stack_type;
 
 static const rb_code_location_t NULL_LOC = { {0, -1}, {0, -1} };
 
@@ -3032,7 +3032,7 @@ mlhs_node	: user_variable
                     }
                 | primary_value call_op tIDENTIFIER
                     {
-                        anddot_multiple_assignment_check(p, &@2, $2);
+                        anddot_multiple_assignment_check(p, &@2, (ID)$2);
 #if 0
                         $$ = attrset(p, $1, $2, $3, &@$);
 #endif
@@ -3047,7 +3047,7 @@ mlhs_node	: user_variable
                     }
                 | primary_value call_op tCONSTANT
                     {
-                        anddot_multiple_assignment_check(p, &@2, $2);
+                        anddot_multiple_assignment_check(p, &@2, (ID)$2);
 #if 0
                         $$ = attrset(p, $1, $2, $3, &@$);
 #endif
@@ -3535,10 +3535,10 @@ endless_arg	: arg %prec modifier_rescue
                     }
                 ;
 
-relop		: '>'  {$$ = '>';}
-                | '<'  {$$ = '<';}
-                | tGEQ {$$ = idGE;}
-                | tLEQ {$$ = idLE;}
+relop		: '>'  {$$ = (VALUE)'>';}
+                | '<'  {$$ = (VALUE)'<';}
+                | tGEQ {$$ = (VALUE)idGE;}
+                | tLEQ {$$ = (VALUE)idLE;}
                 ;
 
 rel_expr	: arg relop arg   %prec '>'
@@ -3547,7 +3547,7 @@ rel_expr	: arg relop arg   %prec '>'
                     }
                 | rel_expr relop arg   %prec '>'
                     {
-                        rb_warning1("comparison '%s' after comparison", WARN_ID($2));
+                        rb_warning1("comparison '%s' after comparison", WARN_ID((ID)$2));
                         $$ = call_bin_op(p, $1, $2, $3, &@2, &@$);
                     }
                 ;
@@ -5089,7 +5089,7 @@ p_top_expr	: p_top_expr_body
 p_top_expr_body : p_expr
                 | p_expr ','
                     {
-                        $$ = new_array_pattern_tail(p, Qnone, 1, Qnone, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, Qnone, (VALUE)1, Qnone, Qnone, &@$);
                         $$ = new_array_pattern(p, Qnone, get_value($1), $$, &@$);
                     }
                 | p_expr ',' p_args
@@ -5254,7 +5254,7 @@ p_args		: p_expr
                     }
                 | p_args_head
                     {
-                        $$ = new_array_pattern_tail(p, $1, 1, Qnone, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, $1, (VALUE)1, Qnone, Qnone, &@$);
                     }
                 | p_args_head p_arg
                     {
@@ -5267,11 +5267,11 @@ p_args		: p_expr
                     }
                 | p_args_head p_rest
                     {
-                        $$ = new_array_pattern_tail(p, $1, 1, $2, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, $1, (VALUE)1, $2, Qnone, &@$);
                     }
                 | p_args_head p_rest ',' p_args_post
                     {
-                        $$ = new_array_pattern_tail(p, $1, 1, $2, $4, &@$);
+                        $$ = new_array_pattern_tail(p, $1, (VALUE)1, $2, $4, &@$);
                     }
                 | p_args_tail
                 ;
@@ -5291,11 +5291,11 @@ p_args_head	: p_arg ','
 
 p_args_tail	: p_rest
                     {
-                        $$ = new_array_pattern_tail(p, Qnone, 1, $1, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, Qnone, (VALUE)1, $1, Qnone, &@$);
                     }
                 | p_rest ',' p_args_post
                     {
-                        $$ = new_array_pattern_tail(p, Qnone, 1, $1, $3, &@$);
+                        $$ = new_array_pattern_tail(p, Qnone, (VALUE)1, $1, $3, &@$);
                     }
                 ;
 
@@ -5887,7 +5887,7 @@ regexp_contents: /* none */
                             $$ = list_append(p, head, tail);
                         }
 #endif
-                        VALUE s1 = 1, s2 = 0, n1 = $1, n2 = $2;
+                        VALUE s1 = (VALUE)1, s2 = 0, n1 = $1, n2 = $2;
                         if (ripper_is_node_yylval(p, n1)) {
                             s1 = RNODE_RIPPER(n1)->nd_cval;
                             n1 = RNODE_RIPPER(n1)->nd_rval;
@@ -7413,7 +7413,7 @@ yycompile0(VALUE arg)
     }
     p->ast->body.root = tree;
     if (!p->ast->body.script_lines) p->ast->body.script_lines = INT2FIX(p->line_count);
-    return TRUE;
+    return (VALUE)TRUE;
 }
 
 static rb_ast_t *
@@ -9196,7 +9196,7 @@ formal_argument(struct parser_params *p, VALUE lhs)
 #undef ERR
     }
     shadowing_lvar(p, id);
-    return lhs;
+    return (ID)lhs;
 }
 
 static int
@@ -14656,7 +14656,7 @@ error_duplicate_pattern_variable(struct parser_params *p, ID id, const YYLTYPE *
     if (is_private_local_id(p, id)) {
         return;
     }
-    if (st_is_member(p->pvtbl, id)) {
+    if (st_is_member(p->pvtbl, (st_data_t)id)) {
         yyerror1(loc, "duplicated variable name");
     }
     else {
@@ -14665,12 +14665,12 @@ error_duplicate_pattern_variable(struct parser_params *p, ID id, const YYLTYPE *
 }
 
 static void
-error_duplicate_pattern_key(struct parser_params *p, VALUE key, const YYLTYPE *loc)
+error_duplicate_pattern_key(struct parser_params *p, ID key, const YYLTYPE *loc)
 {
     if (!p->pktbl) {
         p->pktbl = st_init_numtable();
     }
-    else if (st_is_member(p->pktbl, key)) {
+    else if (st_is_member(p->pktbl, (st_data_t)key)) {
         yyerror1(loc, "duplicated key name");
         return;
     }

@@ -5,7 +5,7 @@
 struct allocation_info {
     /* all of information don't need marking. */
     int living;
-    VALUE flags;
+    uintptr_t flags;
     VALUE klass;
 
     /* allocation info */

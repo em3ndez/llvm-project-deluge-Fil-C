@@ -176,8 +176,8 @@ dump_append_ptr(struct dump_config *dc, VALUE ref)
     buffer_start = buffer_end = &buffer[sizeof(buffer)];
     *--buffer_start = '"';
     while (ref) {
-        *--buffer_start = ruby_hexdigits[ref & 0xF];
-        ref >>= 4;
+        *--buffer_start = ruby_hexdigits[(uintptr_t)ref & 0xF];
+        ref = (VALUE)((uintptr_t)ref >> 4);
     }
     *--buffer_start = 'x';
     *--buffer_start = '0';

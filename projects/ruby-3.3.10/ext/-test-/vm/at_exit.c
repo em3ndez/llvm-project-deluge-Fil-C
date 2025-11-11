@@ -21,11 +21,11 @@ print_end(ruby_vm_t *vm)
 static VALUE
 register_at_exit(VALUE self, VALUE t)
 {
-    switch (t) {
-      case Qtrue:
+    switch ((uintptr_t)t) {
+      case (uintptr_t)Qtrue:
         ruby_vm_at_exit(print_begin);
         break;
-      case Qfalse:
+      case (uintptr_t)Qfalse:
         ruby_vm_at_exit(print_end);
         break;
       default:

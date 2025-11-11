@@ -1,7 +1,7 @@
 #include <ruby.h>
 #include <ruby/st.h>
 
-static st_data_t expect_size = 32;
+static uintptr_t expect_size = 32;
 struct checker {
     st_table *tbl;
     st_index_t nr;
@@ -12,13 +12,13 @@ static void
 force_unpack_check(struct checker *c, st_data_t key, st_data_t val)
 {
     if (c->nr == 0) {
-        st_data_t i;
+        uintptr_t i;
 
         if (c->tbl->bins != NULL) rb_bug("should be packed");
 
         /* force unpacking during iteration: */
         for (i = 1; i < expect_size; i++)
-            st_add_direct(c->tbl, i, i);
+            st_add_direct(c->tbl, (st_data_t)i, (st_data_t)i);
 
         if (c->tbl->bins == NULL) rb_bug("should be unpacked");
     }
@@ -86,7 +86,7 @@ unp_fec(VALUE self, VALUE test)
 
     if (tbl->bins != NULL) rb_bug("should still be packed");
 
-    st_foreach_check(tbl, unp_fec_i, (st_data_t)&c, -1);
+    st_foreach_check(tbl, unp_fec_i, (st_data_t)&c, (st_data_t)-1);
 
     if (c.test == ID2SYM(rb_intern("delete2"))) {
         if (c.nr != 1) {
