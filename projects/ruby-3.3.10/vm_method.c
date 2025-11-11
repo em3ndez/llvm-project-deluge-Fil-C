@@ -347,7 +347,7 @@ vm_ci_hash(VALUE v)
     h = rb_hash_uint(h, ci->argc);
     if (ci->kwarg) {
         for (int i = 0; i < ci->kwarg->keyword_len; i++) {
-            h = (st_index_t)rb_hash_uint(h, ci->kwarg->keywords[i]);
+            h = (st_index_t)rb_hash_uint(h, (uintptr_t)ci->kwarg->keywords[i]);
         }
     }
     return h;

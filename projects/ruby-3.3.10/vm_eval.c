@@ -327,7 +327,7 @@ vm_call0_body(rb_execution_context_t *ec, struct rb_calling_info *calling, const
 VALUE
 rb_vm_call_kw(rb_execution_context_t *ec, VALUE recv, VALUE id, int argc, const VALUE *argv, const rb_callable_method_entry_t *me, int kw_splat)
 {
-    return rb_vm_call0(ec, recv, (VALUE)id, argc, argv, me, kw_splat);
+    return rb_vm_call0(ec, recv, (ID)id, argc, argv, me, kw_splat);
 }
 
 static inline VALUE
@@ -557,7 +557,7 @@ rb_call0(rb_execution_context_t *ec,
         }
         else if (UNLIKELY(cc_cme != cme)) { // refinement is solved
             stack_check(ec);
-            return rb_vm_call_kw(ec, recv, mid, argc, argv, cme, kw_splat);
+            return rb_vm_call_kw(ec, recv, (VALUE)mid, argc, argv, cme, kw_splat);
         }
     }
     else {
@@ -710,7 +710,7 @@ rb_check_funcall_default_kw(VALUE recv, ID mid, int argc, const VALUE *argv, VAL
         return ret;
     }
     stack_check(ec);
-    return rb_vm_call_kw(ec, recv, mid, argc, argv, me, kw_splat);
+    return rb_vm_call_kw(ec, recv, (VALUE)mid, argc, argv, me, kw_splat);
 }
 
 VALUE
@@ -742,7 +742,7 @@ rb_check_funcall_with_hook_kw(VALUE recv, ID mid, int argc, const VALUE *argv,
     }
     stack_check(ec);
     (*hook)(TRUE, recv, mid, argc, argv, arg);
-    return rb_vm_call_kw(ec, recv, mid, argc, argv, me, kw_splat);
+    return rb_vm_call_kw(ec, recv, (VALUE)mid, argc, argv, me, kw_splat);
 }
 
 VALUE
@@ -793,7 +793,7 @@ rb_type_str(enum ruby_value_type type)
 static void
 uncallable_object(VALUE recv, ID mid)
 {
-    VALUE flags;
+    uintptr_t flags;
     int type;
     const char *typestr;
     VALUE mname = rb_id2str(mid);
@@ -1048,7 +1048,7 @@ method_missing(rb_execution_context_t *ec, VALUE obj, ID id, int argc, const VAL
     me = rb_callable_method_entry(klass, idMethodMissing);
     if (!me || METHOD_ENTRY_BASIC(me)) goto missing;
     vm_passed_block_handler_set(ec, block_handler);
-    result = rb_vm_call_kw(ec, obj, idMethodMissing, argc, argv, me, kw_splat);
+    result = rb_vm_call_kw(ec, obj, (VALUE)idMethodMissing, argc, argv, me, kw_splat);
     if (work) ALLOCV_END(work);
     return result;
   missing:

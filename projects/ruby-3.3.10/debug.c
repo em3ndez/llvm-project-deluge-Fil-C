@@ -213,14 +213,18 @@ ruby_env_debug_option(const char *str, int len, void *arg)
 #define SET_WHEN_UINT(name, vals, num, req) \
     if (NAME_MATCH_VALUE(name)) SET_UINT_LIST(name, vals, num);
 
+#ifndef __FILC__
     SET_WHEN("gc_stress", *ruby_initial_gc_stress_ptr, Qtrue);
+#endif
     SET_WHEN("core", ruby_enable_coredump, 1);
     SET_WHEN("ci", ruby_on_ci, 1);
+#ifndef __FILC__
     if (NAME_MATCH_VALUE("rgengc")) {
         if (!len) ruby_rgengc_debug = 1;
         else SET_UINT_LIST("rgengc", &ruby_rgengc_debug, 1);
         return 1;
     }
+#endif
 #if defined _WIN32
 # if RUBY_MSVCRT_VERSION >= 80
     SET_WHEN("rtc_error", ruby_w32_rtc_error, 1);

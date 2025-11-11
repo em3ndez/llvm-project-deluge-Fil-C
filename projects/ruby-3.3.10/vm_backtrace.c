@@ -1102,8 +1102,8 @@ ec_backtrace_to_ary(const rb_execution_context_t *ec, int argc, const VALUE *arg
       case 1:
         {
             long beg, len, bt_size = backtrace_size(ec);
-            switch (rb_range_beg_len(level, &beg, &len, bt_size - lev_plus, 0)) {
-              case Qfalse:
+            switch ((uintptr_t)rb_range_beg_len(level, &beg, &len, bt_size - lev_plus, 0)) {
+              case (uintptr_t)Qfalse:
                 lev = NUM2LONG(level);
                 if (lev < 0) {
                     rb_raise(rb_eArgError, "negative level (%ld)", lev);
@@ -1111,7 +1111,7 @@ ec_backtrace_to_ary(const rb_execution_context_t *ec, int argc, const VALUE *arg
                 lev += lev_plus;
                 n = ALL_BACKTRACE_LINES;
                 break;
-              case Qnil:
+              case (uintptr_t)Qnil:
                 return Qnil;
               default:
                 lev = beg + lev_plus;

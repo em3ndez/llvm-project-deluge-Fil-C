@@ -734,7 +734,7 @@ vm_set_top_stack(rb_execution_context_t *ec, const rb_iseq_t *iseq)
     }
 
     /* for return */
-    vm_push_frame(ec, iseq, VM_FRAME_MAGIC_TOP | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH, rb_ec_thread_ptr(ec)->top_self,
+    vm_push_frame(ec, iseq, (VALUE)(VM_FRAME_MAGIC_TOP | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH), rb_ec_thread_ptr(ec)->top_self,
                   VM_BLOCK_HANDLER_NONE,
                   (VALUE)vm_cref_new_toplevel(ec), /* cref or me */
                   ISEQ_BODY(iseq)->iseq_encoded, ec->cfp->sp,
@@ -744,7 +744,7 @@ vm_set_top_stack(rb_execution_context_t *ec, const rb_iseq_t *iseq)
 static void
 vm_set_eval_stack(rb_execution_context_t *ec, const rb_iseq_t *iseq, const rb_cref_t *cref, const struct rb_block *base_block)
 {
-    vm_push_frame(ec, iseq, VM_FRAME_MAGIC_EVAL | VM_FRAME_FLAG_FINISH,
+    vm_push_frame(ec, iseq, (VALUE)(VM_FRAME_MAGIC_EVAL | VM_FRAME_FLAG_FINISH),
                   vm_block_self(base_block), VM_GUARDED_PREV_EP(vm_block_ep(base_block)),
                   (VALUE)cref, /* cref or me */
                   ISEQ_BODY(iseq)->iseq_encoded,
@@ -1233,7 +1233,7 @@ env_copy(const VALUE *src_ep, VALUE read_only_variables)
 
     // Copy after allocations above, since they can move objects in src_ep.
     RB_OBJ_WRITE(copied_env, &ep[VM_ENV_DATA_INDEX_ME_CREF], src_ep[VM_ENV_DATA_INDEX_ME_CREF]);
-    ep[VM_ENV_DATA_INDEX_FLAGS] = src_ep[VM_ENV_DATA_INDEX_FLAGS] | VM_ENV_FLAG_ISOLATED;
+    ep[VM_ENV_DATA_INDEX_FLAGS] = (VALUE)((uintptr_t)src_ep[VM_ENV_DATA_INDEX_FLAGS] | VM_ENV_FLAG_ISOLATED);
     if (!VM_ENV_LOCAL_P(src_ep)) {
         VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LOCAL);
     }
@@ -1407,7 +1407,7 @@ rb_vm_make_proc_lambda(const rb_execution_context_t *ec, const struct rb_capture
             }
             else {
                 VM_ASSERT(FIXNUM_P(ep0));
-                if (ep0 & VM_ENV_FLAG_ESCAPED) {
+                if ((uintptr_t)ep0 & VM_ENV_FLAG_ESCAPED) {
                     // ok. do nothing
                 }
                 else {
@@ -1504,11 +1504,11 @@ rb_binding_add_dynavars(VALUE bindval, rb_binding_t *bind, int dyncount, const I
 /* C -> Ruby: block */
 
 static inline VALUE
-invoke_block(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_cref_t *cref, VALUE type, int opt_pc)
+invoke_block(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_cref_t *cref, uintptr_t type, int opt_pc)
 {
     int arg_size = ISEQ_BODY(iseq)->param.size;
 
-    vm_push_frame(ec, iseq, type | VM_FRAME_FLAG_FINISH, self,
+    vm_push_frame(ec, iseq, (VALUE)(type | VM_FRAME_FLAG_FINISH), self,
                   VM_GUARDED_PREV_EP(captured->ep),
                   (VALUE)cref, /* cref or method */
                   ISEQ_BODY(iseq)->iseq_encoded + opt_pc,
@@ -1519,7 +1519,7 @@ invoke_block(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, cons
 }
 
 static VALUE
-invoke_bmethod(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_callable_method_entry_t *me, VALUE type, int opt_pc)
+invoke_bmethod(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_callable_method_entry_t *me, uintptr_t type, int opt_pc)
 {
     /* bmethod call from outside the VM */
     int arg_size = ISEQ_BODY(iseq)->param.size;
@@ -1527,7 +1527,7 @@ invoke_bmethod(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, co
 
     VM_ASSERT(me->def->type == VM_METHOD_TYPE_BMETHOD);
 
-    vm_push_frame(ec, iseq, type | VM_FRAME_FLAG_BMETHOD, self,
+    vm_push_frame(ec, iseq, (VALUE)(type | VM_FRAME_FLAG_BMETHOD), self,
                   VM_GUARDED_PREV_EP(captured->ep),
                   (VALUE)me,
                   ISEQ_BODY(iseq)->iseq_encoded + opt_pc,
@@ -1553,7 +1553,7 @@ invoke_iseq_block_from_c(rb_execution_context_t *ec, const struct rb_captured_bl
 {
     const rb_iseq_t *iseq = rb_iseq_check(captured->code.iseq);
     int opt_pc;
-    VALUE type = VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0);
+    uintptr_t type = VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0);
     rb_control_frame_t *cfp = ec->cfp;
     VALUE *sp = cfp->sp;
     int flags = (kw_splat ? VM_CALL_KW_SPLAT : 0);
@@ -1777,13 +1777,13 @@ rb_vm_svar_lep(const rb_execution_context_t *ec, const rb_control_frame_t *cfp)
 static VALUE
 vm_cfp_svar_get(const rb_execution_context_t *ec, rb_control_frame_t *cfp, VALUE key)
 {
-    return lep_svar_get(ec, rb_vm_svar_lep(ec, cfp), key);
+    return lep_svar_get(ec, rb_vm_svar_lep(ec, cfp), (rb_num_t)key);
 }
 
 static void
 vm_cfp_svar_set(const rb_execution_context_t *ec, rb_control_frame_t *cfp, VALUE key, const VALUE val)
 {
-    lep_svar_set(ec, rb_vm_svar_lep(ec, cfp), key, val);
+    lep_svar_set(ec, rb_vm_svar_lep(ec, cfp), (rb_num_t)key, val);
 }
 
 static VALUE
@@ -1801,13 +1801,13 @@ vm_svar_set(const rb_execution_context_t *ec, VALUE key, VALUE val)
 VALUE
 rb_backref_get(void)
 {
-    return vm_svar_get(GET_EC(), VM_SVAR_BACKREF);
+    return vm_svar_get(GET_EC(), (VALUE)VM_SVAR_BACKREF);
 }
 
 void
 rb_backref_set(VALUE val)
 {
-    vm_svar_set(GET_EC(), VM_SVAR_BACKREF, val);
+    vm_svar_set(GET_EC(), (VALUE)VM_SVAR_BACKREF, val);
 }
 
 VALUE
@@ -2134,7 +2134,7 @@ rb_vm_check_redefinition_opt_method(const rb_method_entry_t *me, VALUE klass)
             if (flag != 0) {
                 rb_yjit_bop_redefined(flag, (enum ruby_basic_operators)bop);
                 rb_rjit_bop_redefined(flag, (enum ruby_basic_operators)bop);
-                ruby_vm_redefined_flag[bop] |= flag;
+                ruby_vm_redefined_flag[(uintptr_t)bop] |= flag;
             }
         }
     }
@@ -2160,7 +2160,7 @@ rb_vm_check_redefinition_by_prepend(VALUE klass)
 }
 
 static void
-add_opt_method(VALUE klass, ID mid, VALUE bop)
+add_opt_method(VALUE klass, ID mid, uintptr_t bop)
 {
     const rb_method_entry_t *me = rb_method_entry_at(klass, mid);
 
@@ -2177,7 +2177,7 @@ static void
 vm_init_redefined_flag(void)
 {
     ID mid;
-    VALUE bop;
+    uintptr_t bop;
 
     vm_opt_method_def_table = st_init_numtable();
     vm_opt_mid_table = st_init_numtable();
@@ -2542,7 +2542,7 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state, V
         const struct iseq_catch_table *ct;
         unsigned long epc, cont_pc, cont_sp;
         const rb_iseq_t *catch_iseq;
-        VALUE type;
+        enum rb_catch_type type;
         const rb_control_frame_t *escape_cfp;
 
         cont_pc = cont_sp = 0;
@@ -2708,7 +2708,7 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state, V
 
             /* push block frame */
             cfp->sp[0] = (VALUE)err;
-            vm_push_frame(ec, catch_iseq, VM_FRAME_MAGIC_RESCUE,
+            vm_push_frame(ec, catch_iseq, (VALUE)VM_FRAME_MAGIC_RESCUE,
                           cfp->self,
                           VM_GUARDED_PREV_EP(cfp->ep),
                           0, /* cref or me */
@@ -2800,7 +2800,7 @@ rb_vm_call_cfunc(VALUE recv, VALUE (*func)(VALUE), VALUE arg,
     const rb_iseq_t *iseq = rb_iseq_new(0, filename, filename, Qnil, 0, ISEQ_TYPE_TOP);
     VALUE val;
 
-    vm_push_frame(ec, iseq, VM_FRAME_MAGIC_TOP | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH,
+    vm_push_frame(ec, iseq, (VALUE)(VM_FRAME_MAGIC_TOP | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH),
                   recv, block_handler,
                   (VALUE)vm_cref_new_toplevel(ec), /* cref or me */
                   0, reg_cfp->sp, 0, 0);
@@ -3519,7 +3519,7 @@ rb_ec_initialize_vm_stack(rb_execution_context_t *ec, VALUE *stack, size_t size)
 
     vm_push_frame(ec,
         NULL /* dummy iseq */,
-        VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH | VM_FRAME_FLAG_CFRAME /* dummy frame */,
+        (VALUE)(VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH | VM_FRAME_FLAG_CFRAME) /* dummy frame */,
         Qnil /* dummy self */, VM_BLOCK_HANDLER_NONE /* dummy block ptr */,
         0 /* dummy cref/me */,
         0 /* dummy pc */, ec->vm_stack, 0, 0

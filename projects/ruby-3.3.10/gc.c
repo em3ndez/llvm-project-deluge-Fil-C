@@ -348,6 +348,55 @@ typedef int each_obj_callback(void *, void *, size_t, void *);
     rb_bug(#func"(): GC does not handle T_NODE 0x%x(%p) 0x%"PRIxVALUE, \
            BUILTIN_TYPE(obj), (void*)(obj), RBASIC(obj)->flags)
 
+struct gc_raise_tag {
+    VALUE exc;
+    const char *fmt;
+    va_list *ap;
+};
+
+NORETURN(static void *gc_vraise(void *ptr));
+NORETURN(static void gc_raise(VALUE exc, const char *fmt, ...));
+
+static void *
+gc_vraise(void *ptr)
+{
+    struct gc_raise_tag *argv = ptr;
+    rb_vraise(argv->exc, argv->fmt, *argv->ap);
+    UNREACHABLE_RETURN(NULL);
+}
+
+static void
+gc_raise(VALUE exc, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    struct gc_raise_tag argv = {
+        exc, fmt, &ap,
+    };
+
+    if (ruby_thread_has_gvl_p()) {
+        gc_vraise(&argv);
+        UNREACHABLE;
+    }
+    else if (ruby_native_thread_p()) {
+        rb_thread_call_with_gvl(gc_vraise, &argv);
+        UNREACHABLE;
+    }
+    else {
+        /* Not in a ruby thread */
+        fprintf(stderr, "%s", "[FATAL] ");
+        vfprintf(stderr, fmt, ap);
+    }
+
+    va_end(ap);
+    abort();
+}
+
+VALUE rb_mGC;
+int ruby_disable_gc = 0;
+
+#define CEILDIV(i, mod) roomof(i, mod)
+
 #ifdef __FILC__
 
 /* FIXME: I started out writing this chunk thinking that I'd just replace some simple API with calls
@@ -433,7 +482,7 @@ rb_gc_size_allocatable_p(size_t size)
 
 static inline VALUE newobj(VALUE klass, uintptr_t flags, VALUE v1, VALUE v2, VALUE v3, size_t size)
 {
-    RVALUE *p = malloc(size);
+    RVALUE *p = malloc(CEILDIV(size, sizeof(RVALUE)) * sizeof(RVALUE));
     p->as.basic.flags = flags;
     *(VALUE*)&p->as.basic.klass = klass;
     p->as.values.v1 = v1;
@@ -903,8 +952,8 @@ rb_objspace_markable_object_p(VALUE obj)
 int
 rb_objspace_garbage_object_p(VALUE obj)
 {
-    zerror("rb_objspace_garbage_object_p not implemented");
-    return 0;
+    /* FIXME: Any call to this indicates a weak map that isn't weak in the Fil-C port. */
+    return FALSE;
 }
 
 bool
@@ -1011,6 +1060,12 @@ cc_table_memsize(struct rb_id_table *cc_table)
     size_t total = rb_id_table_memsize(cc_table);
     rb_id_table_foreach_values(cc_table, cc_table_memsize_i, &total);
     return total;
+}
+
+size_t
+rb_gc_obj_slot_size(VALUE obj)
+{
+    return (char*)zgetupper(obj) - (char*)zgetlower(obj);
 }
 
 static size_t
@@ -2097,6 +2152,12 @@ undefine_final(VALUE os, VALUE obj)
     return rb_undefine_finalizer(obj);
 }
 
+void
+rb_gc_mark_machine_stack(const rb_execution_context_t *ec)
+{
+    zerror("rb_gc_mark_machine_stack not supported");
+}
+
 #include "gc.rbinc"
 
 void
@@ -2784,7 +2845,6 @@ typedef struct rb_objspace {
 
 #define BASE_SLOT_SIZE sizeof(RVALUE)
 
-#define CEILDIV(i, mod) roomof(i, mod)
 enum {
     HEAP_PAGE_ALIGN = (1UL << HEAP_PAGE_ALIGN_LOG),
     HEAP_PAGE_ALIGN_MASK = (~(~0UL << HEAP_PAGE_ALIGN_LOG)),
@@ -3158,8 +3218,6 @@ struct RZombie {
 #if RUBY_MARK_FREE_DEBUG
 int ruby_gc_debug_indent = 0;
 #endif
-VALUE rb_mGC;
-int ruby_disable_gc = 0;
 int ruby_enable_autocompact = 0;
 #if RGENGC_CHECK_MODE
 gc_compact_compare_func ruby_autocompact_compare_func;
@@ -3171,8 +3229,6 @@ void rb_vm_update_references(void *ptr);
 
 void rb_gcdebug_print_obj_condition(VALUE obj);
 
-NORETURN(static void *gc_vraise(void *ptr));
-NORETURN(static void gc_raise(VALUE exc, const char *fmt, ...));
 NORETURN(static void negative_size_allocation_error(const char *));
 
 static void init_mark_stack(mark_stack_t *stack);
@@ -14027,47 +14083,6 @@ objspace_reachable_objects_from_root(rb_objspace_t *objspace, void (func)(const 
 /*
   ------------------------ Extended allocator ------------------------
 */
-
-struct gc_raise_tag {
-    VALUE exc;
-    const char *fmt;
-    va_list *ap;
-};
-
-static void *
-gc_vraise(void *ptr)
-{
-    struct gc_raise_tag *argv = ptr;
-    rb_vraise(argv->exc, argv->fmt, *argv->ap);
-    UNREACHABLE_RETURN(NULL);
-}
-
-static void
-gc_raise(VALUE exc, const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    struct gc_raise_tag argv = {
-        exc, fmt, &ap,
-    };
-
-    if (ruby_thread_has_gvl_p()) {
-        gc_vraise(&argv);
-        UNREACHABLE;
-    }
-    else if (ruby_native_thread_p()) {
-        rb_thread_call_with_gvl(gc_vraise, &argv);
-        UNREACHABLE;
-    }
-    else {
-        /* Not in a ruby thread */
-        fprintf(stderr, "%s", "[FATAL] ");
-        vfprintf(stderr, fmt, ap);
-    }
-
-    va_end(ap);
-    abort();
-}
 
 static void objspace_xfree(rb_objspace_t *objspace, void *ptr, size_t size);
 

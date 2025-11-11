@@ -238,7 +238,7 @@ pm_ast_new(pm_parser_t *parser, pm_node_t *node, rb_encoding *encoding) {
         int state = 0;
 
         VALUE string = rb_enc_str_new((const char *) constant->start, constant->length, encoding);
-        ID value = rb_protect(rb_intern_str, string, &state);
+        ID value = (ID)rb_protect((VALUE(*)(VALUE))rb_intern_str, string, &state);
 
         if (state != 0) {
             value = rb_intern_const("?");
