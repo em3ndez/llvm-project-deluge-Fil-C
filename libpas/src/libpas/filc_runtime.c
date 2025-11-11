@@ -446,8 +446,10 @@ void filc_initialize(void)
     filc_get_bool_env("FILC_EXIT_ON_PANIC", &filc_exit_on_panic);
     filc_get_bool_env("FILC_QUIET_PANIC", &filc_quiet_panic);
     filc_get_bool_env("FILC_DUMP_ERRNOS", &filc_dump_errnos);
-    filc_get_bool_env("FILC_RUN_GLOBAL_CTORS", &filc_run_global_ctors);
-    filc_get_bool_env("FILC_RUN_GLOBAL_DTORS", &filc_run_global_dtors);
+    if (PAS_ENABLE_TESTING) {
+        filc_get_bool_env("FILC_RUN_GLOBAL_CTORS", &filc_run_global_ctors);
+        filc_get_bool_env("FILC_RUN_GLOBAL_DTORS", &filc_run_global_dtors);
+    }
     filc_get_bool_env("FILC_VERBOSE_STW", &filc_verbose_stop_the_world);
 
     filc_override_settings_if_appropriate();
@@ -12869,7 +12871,7 @@ bool filc_native_zget_quiet_panic(filc_thread* my_thread)
 
 void filc_get_bool_env(const char* name, bool* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     if (!strcmp(value, "1") ||
@@ -12890,7 +12892,7 @@ void filc_get_bool_env(const char* name, bool* value_ptr)
 
 void filc_get_unsigned_env(const char* name, unsigned* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     unsigned result;
@@ -12904,7 +12906,7 @@ void filc_get_unsigned_env(const char* name, unsigned* value_ptr)
 
 void filc_get_size_env(const char* name, size_t* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     size_t result;
@@ -12918,7 +12920,7 @@ void filc_get_size_env(const char* name, size_t* value_ptr)
 
 void filc_get_double_env(const char* name, double* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     double result;
