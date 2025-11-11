@@ -1522,6 +1522,7 @@ Init_signal(void)
     install_sighandler(SIGUSR2, sighandler);
 #endif
 
+#ifndef __FILC__
     if (!ruby_enable_coredump) {
 #ifdef SIGBUS
         force_install_sighandler(SIGBUS, (sighandler_t)sigbus, &default_sigbus_handler);
@@ -1534,6 +1535,7 @@ Init_signal(void)
         force_install_sighandler(SIGSEGV, (sighandler_t)sigsegv, &default_sigsegv_handler);
 #endif
     }
+#endif
 #ifdef SIGPIPE
     install_sighandler(SIGPIPE, sig_do_nothing);
 #endif

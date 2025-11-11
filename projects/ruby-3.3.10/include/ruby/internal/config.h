@@ -98,6 +98,9 @@
 #endif
 
 #ifdef UNALIGNED_WORD_ACCESS
+# if defined __FILC__ && UNALIGNED_WORD_ACCESS
+#  error "UNALIGNED_WORD_ACCESS is already defined and true"
+# endif
 # /* Take that. */
 #elif defined(__i386)
 # define UNALIGNED_WORD_ACCESS 1
@@ -120,6 +123,11 @@
 #elif defined(__mc68020__)
 # define UNALIGNED_WORD_ACCESS 1
 #else
+# define UNALIGNED_WORD_ACCESS 0
+#endif
+
+#if defined __FILC__
+# undef UNALIGNED_WORD_ACCESS
 # define UNALIGNED_WORD_ACCESS 0
 #endif
 

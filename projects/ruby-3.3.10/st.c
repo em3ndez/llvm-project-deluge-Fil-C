@@ -1842,7 +1842,7 @@ st_hash(const void *ptr, size_t len, st_index_t h)
 #undef SKIP_TAIL
     if (len >= sizeof(st_index_t)) {
 #if !UNALIGNED_WORD_ACCESS
-        int align = (int)((st_data_t)data % sizeof(st_index_t));
+        int align = (int)((st_index_t)data % sizeof(st_index_t));
         if (align) {
             st_index_t d = 0;
             int sl, sr, pack;

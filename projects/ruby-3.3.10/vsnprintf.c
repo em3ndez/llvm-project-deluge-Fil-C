@@ -551,6 +551,7 @@ BSD_vfprintf(FILE *fp, const char *fmt0, va_list ap)
 	char expstr[7];		/* buffer for exponent string */
 #endif
 	u_long MAYBE_UNUSED(ulval) = 0; /* integer arguments %[diouxX] */
+        void *MAYBE_UNUSED(pval) = NULL;
 #ifdef _HAVE_SANE_QUAD_
 	u_quad_t MAYBE_UNUSED(uqval) = 0; /* %q integers */
 #endif /* _HAVE_SANE_QUAD_ */
@@ -822,7 +823,10 @@ reswitch:	switch (ch) {
 			    IS_PRI_EXTRA_MARK(fmt)) {
 				fmt += PRI_EXTRA_MARK_LEN;
 				FLUSH();
-#if defined _HAVE_SANE_QUAD_ && SIZEOF_VOIDP == SIZEOF_LONG_LONG
+#if defined __FILC__
+                                pval = va_arg(ap, void*);
+				cp = (*fp->vextra)(fp, sizeof(pval), &pval, &fieldsz, sign);
+#elif defined _HAVE_SANE_QUAD_ && SIZEOF_VOIDP == SIZEOF_LONG_LONG
 				uqval = va_arg(ap, u_quad_t);
 				cp = (*fp->vextra)(fp, sizeof(uqval), &uqval, &fieldsz, sign);
 #else

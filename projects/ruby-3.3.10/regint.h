@@ -53,6 +53,14 @@
 # endif
 #endif
 
+#ifdef __FILC__
+# if defined UNALIGNED_WORD_ACCESS && UNALIGNED_WORD_ACCESS
+#  error "UNALIGNED_WORD_ACCESS already defined and true"
+# else
+#  define UNALIGNED_WORD_ACCESS 0
+# endif
+#endif
+
 /* __POWERPC__ added to accommodate Darwin case. */
 #ifndef UNALIGNED_WORD_ACCESS
 # if defined(__i386) || defined(__i386__) || defined(_M_IX86) || \
