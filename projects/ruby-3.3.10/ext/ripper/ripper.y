@@ -3032,7 +3032,7 @@ mlhs_node	: user_variable
                     }
                 | primary_value call_op tIDENTIFIER
                     {
-                        anddot_multiple_assignment_check(p, &@2, (ID)$2);
+                        anddot_multiple_assignment_check(p, &@2, $2);
 #if 0
                         $$ = attrset(p, $1, $2, $3, &@$);
 #endif
@@ -3047,7 +3047,7 @@ mlhs_node	: user_variable
                     }
                 | primary_value call_op tCONSTANT
                     {
-                        anddot_multiple_assignment_check(p, &@2, (ID)$2);
+                        anddot_multiple_assignment_check(p, &@2, $2);
 #if 0
                         $$ = attrset(p, $1, $2, $3, &@$);
 #endif
@@ -3535,10 +3535,10 @@ endless_arg	: arg %prec modifier_rescue
                     }
                 ;
 
-relop		: '>'  {$$ = (VALUE)'>';}
-                | '<'  {$$ = (VALUE)'<';}
-                | tGEQ {$$ = (VALUE)idGE;}
-                | tLEQ {$$ = (VALUE)idLE;}
+relop		: '>'  {$$ = '>';}
+                | '<'  {$$ = '<';}
+                | tGEQ {$$ = idGE;}
+                | tLEQ {$$ = idLE;}
                 ;
 
 rel_expr	: arg relop arg   %prec '>'
@@ -3547,7 +3547,7 @@ rel_expr	: arg relop arg   %prec '>'
                     }
                 | rel_expr relop arg   %prec '>'
                     {
-                        rb_warning1("comparison '%s' after comparison", WARN_ID((ID)$2));
+                        rb_warning1("comparison '%s' after comparison", WARN_ID($2));
                         $$ = call_bin_op(p, $1, $2, $3, &@2, &@$);
                     }
                 ;
@@ -5089,7 +5089,7 @@ p_top_expr	: p_top_expr_body
 p_top_expr_body : p_expr
                 | p_expr ','
                     {
-                        $$ = new_array_pattern_tail(p, Qnone, (VALUE)1, Qnone, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, Qnone, 1, Qnone, Qnone, &@$);
                         $$ = new_array_pattern(p, Qnone, get_value($1), $$, &@$);
                     }
                 | p_expr ',' p_args
@@ -5254,7 +5254,7 @@ p_args		: p_expr
                     }
                 | p_args_head
                     {
-                        $$ = new_array_pattern_tail(p, $1, (VALUE)1, Qnone, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, $1, 1, Qnone, Qnone, &@$);
                     }
                 | p_args_head p_arg
                     {
@@ -5267,11 +5267,11 @@ p_args		: p_expr
                     }
                 | p_args_head p_rest
                     {
-                        $$ = new_array_pattern_tail(p, $1, (VALUE)1, $2, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, $1, 1, $2, Qnone, &@$);
                     }
                 | p_args_head p_rest ',' p_args_post
                     {
-                        $$ = new_array_pattern_tail(p, $1, (VALUE)1, $2, $4, &@$);
+                        $$ = new_array_pattern_tail(p, $1, 1, $2, $4, &@$);
                     }
                 | p_args_tail
                 ;
@@ -5291,11 +5291,11 @@ p_args_head	: p_arg ','
 
 p_args_tail	: p_rest
                     {
-                        $$ = new_array_pattern_tail(p, Qnone, (VALUE)1, $1, Qnone, &@$);
+                        $$ = new_array_pattern_tail(p, Qnone, 1, $1, Qnone, &@$);
                     }
                 | p_rest ',' p_args_post
                     {
-                        $$ = new_array_pattern_tail(p, Qnone, (VALUE)1, $1, $3, &@$);
+                        $$ = new_array_pattern_tail(p, Qnone, 1, $1, $3, &@$);
                     }
                 ;
 
@@ -5887,7 +5887,7 @@ regexp_contents: /* none */
                             $$ = list_append(p, head, tail);
                         }
 #endif
-                        VALUE s1 = (VALUE)1, s2 = 0, n1 = $1, n2 = $2;
+                        VALUE s1 = 1, s2 = 0, n1 = $1, n2 = $2;
                         if (ripper_is_node_yylval(p, n1)) {
                             s1 = RNODE_RIPPER(n1)->nd_cval;
                             n1 = RNODE_RIPPER(n1)->nd_rval;
@@ -9196,7 +9196,7 @@ formal_argument(struct parser_params *p, VALUE lhs)
 #undef ERR
     }
     shadowing_lvar(p, id);
-    return (ID)lhs;
+    return lhs;
 }
 
 static int
@@ -16204,79 +16204,3 @@ ripper_dispatch0(struct parser_params *p, ID mid)
 static VALUE
 ripper_dispatch1(struct parser_params *p, ID mid, VALUE a)
 {
-    validate(a);
-    return rb_funcall(p->value, mid, 1, a);
-}
-
-static VALUE
-ripper_dispatch2(struct parser_params *p, ID mid, VALUE a, VALUE b)
-{
-    validate(a);
-    validate(b);
-    return rb_funcall(p->value, mid, 2, a, b);
-}
-
-static VALUE
-ripper_dispatch3(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    return rb_funcall(p->value, mid, 3, a, b, c);
-}
-
-static VALUE
-ripper_dispatch4(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    validate(d);
-    return rb_funcall(p->value, mid, 4, a, b, c, d);
-}
-
-static VALUE
-ripper_dispatch5(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d, VALUE e)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    validate(d);
-    validate(e);
-    return rb_funcall(p->value, mid, 5, a, b, c, d, e);
-}
-
-static VALUE
-ripper_dispatch7(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d, VALUE e, VALUE f, VALUE g)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    validate(d);
-    validate(e);
-    validate(f);
-    validate(g);
-    return rb_funcall(p->value, mid, 7, a, b, c, d, e, f, g);
-}
-
-void
-ripper_error(struct parser_params *p)
-{
-    p->error_p = TRUE;
-}
-
-VALUE
-ripper_value(struct parser_params *p)
-{
-    (void)yystpcpy; /* may not used in newer bison */
-
-    return p->value;
-}
-
-#endif /* RIPPER */
-/*
- * Local variables:
- * mode: c
- * c-file-style: "ruby"
- * End:
- */

@@ -13195,7 +13195,7 @@ yyreduce:
   case 121: /* mlhs_node: primary_value call_op "local variable or method"  */
 #line 3034 "ripper.y"
                   {
-                        anddot_multiple_assignment_check(p, &(yylsp[-1]), (ID)(yyvsp[-1].val));
+                        anddot_multiple_assignment_check(p, &(yylsp[-1]), (yyvsp[-1].val));
 #if 0
                         (yyval.val) = attrset(p, (yyvsp[-2].val), (yyvsp[-1].val), (yyvsp[0].val), &(yyloc));
 #endif
@@ -13218,7 +13218,7 @@ yyreduce:
   case 123: /* mlhs_node: primary_value call_op "constant"  */
 #line 3049 "ripper.y"
                   {
-                        anddot_multiple_assignment_check(p, &(yylsp[-1]), (ID)(yyvsp[-1].val));
+                        anddot_multiple_assignment_check(p, &(yylsp[-1]), (yyvsp[-1].val));
 #if 0
                         (yyval.val) = attrset(p, (yyvsp[-2].val), (yyvsp[-1].val), (yyvsp[0].val), &(yyloc));
 #endif
@@ -14089,25 +14089,25 @@ yyreduce:
 
   case 270: /* relop: '>'  */
 #line 3538 "ripper.y"
-            {(yyval.val) = (VALUE)'>';}
+            {(yyval.val) = '>';}
 #line 14094 "ripper.c"
     break;
 
   case 271: /* relop: '<'  */
 #line 3539 "ripper.y"
-                     {(yyval.val) = (VALUE)'<';}
+                     {(yyval.val) = '<';}
 #line 14100 "ripper.c"
     break;
 
   case 272: /* relop: ">="  */
 #line 3540 "ripper.y"
-                     {(yyval.val) = (VALUE)idGE;}
+                     {(yyval.val) = idGE;}
 #line 14106 "ripper.c"
     break;
 
   case 273: /* relop: "<="  */
 #line 3541 "ripper.y"
-                     {(yyval.val) = (VALUE)idLE;}
+                     {(yyval.val) = idLE;}
 #line 14112 "ripper.c"
     break;
 
@@ -14122,7 +14122,7 @@ yyreduce:
   case 275: /* rel_expr: rel_expr relop arg  */
 #line 3549 "ripper.y"
                   {
-                        rb_warning1("comparison '%s' after comparison", WARN_ID((ID)(yyvsp[-1].val)));
+                        rb_warning1("comparison '%s' after comparison", WARN_ID((yyvsp[-1].val)));
                         (yyval.val) = call_bin_op(p, (yyvsp[-2].val), (yyvsp[-1].val), (yyvsp[0].val), &(yylsp[-1]), &(yyloc));
                     }
 #line 14129 "ripper.c"
@@ -16200,7 +16200,7 @@ yyreduce:
   case 501: /* p_top_expr_body: p_expr ','  */
 #line 5091 "ripper.y"
                   {
-                        (yyval.val) = new_array_pattern_tail(p, Qnone, (VALUE)1, Qnone, Qnone, &(yyloc));
+                        (yyval.val) = new_array_pattern_tail(p, Qnone, 1, Qnone, Qnone, &(yyloc));
                         (yyval.val) = new_array_pattern(p, Qnone, get_value((yyvsp[-1].val)), (yyval.val), &(yyloc));
                     }
 #line 16207 "ripper.c"
@@ -16451,7 +16451,7 @@ yyreduce:
   case 531: /* p_args: p_args_head  */
 #line 5256 "ripper.y"
                   {
-                        (yyval.val) = new_array_pattern_tail(p, (yyvsp[0].val), (VALUE)1, Qnone, Qnone, &(yyloc));
+                        (yyval.val) = new_array_pattern_tail(p, (yyvsp[0].val), 1, Qnone, Qnone, &(yyloc));
                     }
 #line 16457 "ripper.c"
     break;
@@ -16472,7 +16472,7 @@ yyreduce:
   case 533: /* p_args: p_args_head p_rest  */
 #line 5269 "ripper.y"
                   {
-                        (yyval.val) = new_array_pattern_tail(p, (yyvsp[-1].val), (VALUE)1, (yyvsp[0].val), Qnone, &(yyloc));
+                        (yyval.val) = new_array_pattern_tail(p, (yyvsp[-1].val), 1, (yyvsp[0].val), Qnone, &(yyloc));
                     }
 #line 16478 "ripper.c"
     break;
@@ -16480,7 +16480,7 @@ yyreduce:
   case 534: /* p_args: p_args_head p_rest ',' p_args_post  */
 #line 5273 "ripper.y"
                   {
-                        (yyval.val) = new_array_pattern_tail(p, (yyvsp[-3].val), (VALUE)1, (yyvsp[-2].val), (yyvsp[0].val), &(yyloc));
+                        (yyval.val) = new_array_pattern_tail(p, (yyvsp[-3].val), 1, (yyvsp[-2].val), (yyvsp[0].val), &(yyloc));
                     }
 #line 16486 "ripper.c"
     break;
@@ -16507,7 +16507,7 @@ yyreduce:
   case 538: /* p_args_tail: p_rest  */
 #line 5293 "ripper.y"
                   {
-                        (yyval.val) = new_array_pattern_tail(p, Qnone, (VALUE)1, (yyvsp[0].val), Qnone, &(yyloc));
+                        (yyval.val) = new_array_pattern_tail(p, Qnone, 1, (yyvsp[0].val), Qnone, &(yyloc));
                     }
 #line 16513 "ripper.c"
     break;
@@ -16515,7 +16515,7 @@ yyreduce:
   case 539: /* p_args_tail: p_rest ',' p_args_post  */
 #line 5297 "ripper.y"
                   {
-                        (yyval.val) = new_array_pattern_tail(p, Qnone, (VALUE)1, (yyvsp[-2].val), (yyvsp[0].val), &(yyloc));
+                        (yyval.val) = new_array_pattern_tail(p, Qnone, 1, (yyvsp[-2].val), (yyvsp[0].val), &(yyloc));
                     }
 #line 16521 "ripper.c"
     break;
@@ -17253,7 +17253,7 @@ yyreduce:
                             (yyval.val) = list_append(p, head, tail);
                         }
 #endif
-                        VALUE s1 = (VALUE)1, s2 = 0, n1 = (yyvsp[-1].val), n2 = (yyvsp[0].val);
+                        VALUE s1 = 1, s2 = 0, n1 = (yyvsp[-1].val), n2 = (yyvsp[0].val);
                         if (ripper_is_node_yylval(p, n1)) {
                             s1 = RNODE_RIPPER(n1)->nd_cval;
                             n1 = RNODE_RIPPER(n1)->nd_rval;
@@ -21033,7 +21033,7 @@ formal_argument(struct parser_params *p, VALUE lhs)
 #undef ERR
     }
     shadowing_lvar(p, id);
-    return (ID)lhs;
+    return lhs;
 }
 
 static int
@@ -28041,79 +28041,3 @@ ripper_dispatch0(struct parser_params *p, ID mid)
 static VALUE
 ripper_dispatch1(struct parser_params *p, ID mid, VALUE a)
 {
-    validate(a);
-    return rb_funcall(p->value, mid, 1, a);
-}
-
-static VALUE
-ripper_dispatch2(struct parser_params *p, ID mid, VALUE a, VALUE b)
-{
-    validate(a);
-    validate(b);
-    return rb_funcall(p->value, mid, 2, a, b);
-}
-
-static VALUE
-ripper_dispatch3(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    return rb_funcall(p->value, mid, 3, a, b, c);
-}
-
-static VALUE
-ripper_dispatch4(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    validate(d);
-    return rb_funcall(p->value, mid, 4, a, b, c, d);
-}
-
-static VALUE
-ripper_dispatch5(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d, VALUE e)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    validate(d);
-    validate(e);
-    return rb_funcall(p->value, mid, 5, a, b, c, d, e);
-}
-
-static VALUE
-ripper_dispatch7(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d, VALUE e, VALUE f, VALUE g)
-{
-    validate(a);
-    validate(b);
-    validate(c);
-    validate(d);
-    validate(e);
-    validate(f);
-    validate(g);
-    return rb_funcall(p->value, mid, 7, a, b, c, d, e, f, g);
-}
-
-void
-ripper_error(struct parser_params *p)
-{
-    p->error_p = TRUE;
-}
-
-VALUE
-ripper_value(struct parser_params *p)
-{
-    (void)yystpcpy; /* may not used in newer bison */
-
-    return p->value;
-}
-
-#endif /* RIPPER */
-/*
- * Local variables:
- * mode: c
- * c-file-style: "ruby"
- * End:
- */

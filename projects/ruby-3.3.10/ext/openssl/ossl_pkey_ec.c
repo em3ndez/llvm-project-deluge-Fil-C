@@ -955,7 +955,7 @@ static VALUE ossl_ec_group_get_point_conversion_form(VALUE self)
 {
     EC_GROUP *group = NULL;
     point_conversion_form_t form;
-    VALUE ret;
+    ID ret;
 
     GetECGroup(self, group);
     form = EC_GROUP_get_point_conversion_form(group);

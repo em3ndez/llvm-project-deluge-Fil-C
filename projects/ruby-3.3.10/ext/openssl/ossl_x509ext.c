@@ -469,11 +469,11 @@ Init_ossl_x509ext(void)
     rb_define_alloc_func(cX509ExtFactory, ossl_x509extfactory_alloc);
     rb_define_method(cX509ExtFactory, "initialize", ossl_x509extfactory_initialize, -1);
 
-    rb_attr(cX509ExtFactory, rb_intern("issuer_certificate"), 1, 0, Qfalse);
-    rb_attr(cX509ExtFactory, rb_intern("subject_certificate"), 1, 0, Qfalse);
-    rb_attr(cX509ExtFactory, rb_intern("subject_request"), 1, 0, Qfalse);
-    rb_attr(cX509ExtFactory, rb_intern("crl"), 1, 0, Qfalse);
-    rb_attr(cX509ExtFactory, rb_intern("config"), 1, 1, Qfalse);
+    rb_attr(cX509ExtFactory, rb_intern("issuer_certificate"), 1, 0, (int)Qfalse);
+    rb_attr(cX509ExtFactory, rb_intern("subject_certificate"), 1, 0, (int)Qfalse);
+    rb_attr(cX509ExtFactory, rb_intern("subject_request"), 1, 0, (int)Qfalse);
+    rb_attr(cX509ExtFactory, rb_intern("crl"), 1, 0, (int)Qfalse);
+    rb_attr(cX509ExtFactory, rb_intern("config"), 1, 1, (int)Qfalse);
 
     rb_define_method(cX509ExtFactory, "issuer_certificate=", ossl_x509extfactory_set_issuer_cert, 1);
     rb_define_method(cX509ExtFactory, "subject_certificate=", ossl_x509extfactory_set_subject_cert, 1);

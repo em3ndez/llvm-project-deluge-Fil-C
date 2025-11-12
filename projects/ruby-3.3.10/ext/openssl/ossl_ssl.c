@@ -2640,7 +2640,7 @@ Init_ossl_ssl(void)
      * The _cert_, _key_, and _extra_chain_cert_ attributes are deprecated.
      * It is recommended to use #add_certificate instead.
      */
-    rb_attr(cSSLContext, rb_intern_const("cert"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("cert"), 1, 1, (int)Qfalse);
 
     /*
      * Context private key
@@ -2648,29 +2648,29 @@ Init_ossl_ssl(void)
      * The _cert_, _key_, and _extra_chain_cert_ attributes are deprecated.
      * It is recommended to use #add_certificate instead.
      */
-    rb_attr(cSSLContext, rb_intern_const("key"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("key"), 1, 1, (int)Qfalse);
 
     /*
      * A certificate or Array of certificates that will be sent to the client.
      */
-    rb_attr(cSSLContext, rb_intern_const("client_ca"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("client_ca"), 1, 1, (int)Qfalse);
 
     /*
      * The path to a file containing a PEM-format CA certificate
      */
-    rb_attr(cSSLContext, rb_intern_const("ca_file"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("ca_file"), 1, 1, (int)Qfalse);
 
     /*
      * The path to a directory containing CA certificates in PEM format.
      *
      * Files are looked up by subject's X509 name's hash value.
      */
-    rb_attr(cSSLContext, rb_intern_const("ca_path"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("ca_path"), 1, 1, (int)Qfalse);
 
     /*
      * Maximum session lifetime in seconds.
      */
-    rb_attr(cSSLContext, rb_intern_const("timeout"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("timeout"), 1, 1, (int)Qfalse);
 
     /*
      * Session verification mode.
@@ -2683,12 +2683,12 @@ Init_ossl_ssl(void)
      *
      * See SSL_CTX_set_verify(3) for details.
      */
-    rb_attr(cSSLContext, rb_intern_const("verify_mode"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("verify_mode"), 1, 1, (int)Qfalse);
 
     /*
      * Number of CA certificates to walk when verifying a certificate chain.
      */
-    rb_attr(cSSLContext, rb_intern_const("verify_depth"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("verify_depth"), 1, 1, (int)Qfalse);
 
     /*
      * A callback for additional certificate verification.  The callback is
@@ -2702,7 +2702,7 @@ Init_ossl_ssl(void)
      * If the callback returns +false+, the chain verification is immediately
      * stopped and a bad_certificate alert is then sent.
      */
-    rb_attr(cSSLContext, rb_intern_const("verify_callback"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("verify_callback"), 1, 1, (int)Qfalse);
 
     /*
      * Whether to check the server certificate is valid for the hostname.
@@ -2710,12 +2710,12 @@ Init_ossl_ssl(void)
      * In order to make this work, verify_mode must be set to VERIFY_PEER and
      * the server hostname must be given by OpenSSL::SSL::SSLSocket#hostname=.
      */
-    rb_attr(cSSLContext, rb_intern_const("verify_hostname"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("verify_hostname"), 1, 1, (int)Qfalse);
 
     /*
      * An OpenSSL::X509::Store used for certificate verification.
      */
-    rb_attr(cSSLContext, rb_intern_const("cert_store"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("cert_store"), 1, 1, (int)Qfalse);
 
     /*
      * An Array of extra X509 certificates to be added to the certificate
@@ -2724,7 +2724,7 @@ Init_ossl_ssl(void)
      * The _cert_, _key_, and _extra_chain_cert_ attributes are deprecated.
      * It is recommended to use #add_certificate instead.
      */
-    rb_attr(cSSLContext, rb_intern_const("extra_chain_cert"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("extra_chain_cert"), 1, 1, (int)Qfalse);
 
     /*
      * A callback invoked when a client certificate is requested by a server
@@ -2734,14 +2734,14 @@ Init_ossl_ssl(void)
      * containing an OpenSSL::X509::Certificate and an OpenSSL::PKey.  If any
      * other value is returned the handshake is suspended.
      */
-    rb_attr(cSSLContext, rb_intern_const("client_cert_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("client_cert_cb"), 1, 1, (int)Qfalse);
 
     /*
      * Sets the context in which a session can be reused.  This allows
      * sessions for multiple applications to be distinguished, for example, by
      * name.
      */
-    rb_attr(cSSLContext, rb_intern_const("session_id_context"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("session_id_context"), 1, 1, (int)Qfalse);
 
     /*
      * A callback invoked on a server when a session is proposed by the client
@@ -2750,7 +2750,7 @@ Init_ossl_ssl(void)
      * The callback is invoked with the SSLSocket and session id.  The
      * callback may return a Session from an external cache.
      */
-    rb_attr(cSSLContext, rb_intern_const("session_get_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("session_get_cb"), 1, 1, (int)Qfalse);
 
     /*
      * A callback invoked when a new session was negotiated.
@@ -2758,7 +2758,7 @@ Init_ossl_ssl(void)
      * The callback is invoked with an SSLSocket.  If +false+ is returned the
      * session will be removed from the internal cache.
      */
-    rb_attr(cSSLContext, rb_intern_const("session_new_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("session_new_cb"), 1, 1, (int)Qfalse);
 
     /*
      * A callback invoked when a session is removed from the internal cache.
@@ -2769,7 +2769,7 @@ Init_ossl_ssl(void)
      * multi-threaded application. The callback is called inside a global lock
      * and it can randomly cause deadlock on Ruby thread switching.
      */
-    rb_attr(cSSLContext, rb_intern_const("session_remove_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("session_remove_cb"), 1, 1, (int)Qfalse);
 
     /*
      * A callback invoked whenever a new handshake is initiated on an
@@ -2790,7 +2790,7 @@ Init_ossl_ssl(void)
      *     raise RuntimeError, "Client renegotiation disabled"
      *   end
      */
-    rb_attr(cSSLContext, rb_intern_const("renegotiation_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("renegotiation_cb"), 1, 1, (int)Qfalse);
 #ifdef OSSL_USE_NEXTPROTONEG
     /*
      * An Enumerable of Strings. Each String represents a protocol to be
@@ -2803,7 +2803,7 @@ Init_ossl_ssl(void)
      *
      *   ctx.npn_protocols = ["http/1.1", "spdy/2"]
      */
-    rb_attr(cSSLContext, rb_intern_const("npn_protocols"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("npn_protocols"), 1, 1, (int)Qfalse);
     /*
      * A callback invoked on the client side when the client needs to select
      * a protocol from the list sent by the server. Supported in OpenSSL 1.0.1
@@ -2820,7 +2820,7 @@ Init_ossl_ssl(void)
      *     protocols.first
      *   end
      */
-    rb_attr(cSSLContext, rb_intern_const("npn_select_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("npn_select_cb"), 1, 1, (int)Qfalse);
 #endif
 
     /*
@@ -2834,7 +2834,7 @@ Init_ossl_ssl(void)
      *
      *   ctx.alpn_protocols = ["http/1.1", "spdy/2", "h2"]
      */
-    rb_attr(cSSLContext, rb_intern_const("alpn_protocols"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("alpn_protocols"), 1, 1, (int)Qfalse);
     /*
      * A callback invoked on the server side when the server needs to select
      * a protocol from the list sent by the client. Supported in OpenSSL 1.0.2
@@ -2851,7 +2851,7 @@ Init_ossl_ssl(void)
      *     protocols.first
      *   end
      */
-    rb_attr(cSSLContext, rb_intern_const("alpn_select_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("alpn_select_cb"), 1, 1, (int)Qfalse);
 
     /*
      * A callback invoked when TLS key material is generated or received, in
@@ -2874,7 +2874,7 @@ Init_ossl_ssl(void)
      *     end
      *   end
      */
-    rb_attr(cSSLContext, rb_intern_const("keylog_cb"), 1, 1, Qfalse);
+    rb_attr(cSSLContext, rb_intern_const("keylog_cb"), 1, 1, (int)Qfalse);
 
     rb_define_alias(cSSLContext, "ssl_timeout", "timeout");
     rb_define_alias(cSSLContext, "ssl_timeout=", "timeout=");
