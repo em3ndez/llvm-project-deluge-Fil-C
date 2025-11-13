@@ -196,10 +196,10 @@ rsock_revlookup_flag(VALUE revlookup, int *norevlookup)
 #define return_norevlookup(x) {*norevlookup = (x); return 1;}
     ID id;
 
-    switch (revlookup) {
-      case Qtrue:  return_norevlookup(0);
-      case Qfalse: return_norevlookup(1);
-      case Qnil: break;
+    switch ((uintptr_t)revlookup) {
+      case (uintptr_t)Qtrue:  return_norevlookup(0);
+      case (uintptr_t)Qfalse: return_norevlookup(1);
+      case (uintptr_t)Qnil: break;
       default:
         Check_Type(revlookup, T_SYMBOL);
         id = SYM2ID(revlookup);

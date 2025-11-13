@@ -212,7 +212,7 @@ static VALUE
 sendmsg_blocking(void *data)
 {
     struct iomsg_arg *arg = data;
-    return sendmsg(arg->fd, &arg->msg, 0);
+    return (VALUE)sendmsg(arg->fd, &arg->msg, 0);
 }
 
 /*
@@ -305,7 +305,7 @@ recvmsg_blocking(void *data)
 {
     struct iomsg_arg *arg = data;
     int flags = 0;
-    return rsock_recvmsg(arg->fd, &arg->msg, flags);
+    return (VALUE)rsock_recvmsg(arg->fd, &arg->msg, flags);
 }
 
 /*

@@ -1457,6 +1457,7 @@ void ripper_error(struct parser_params *p);
 
 #define yyparse ripper_yyparse
 
+#define THINGY(tok) ((VALUE)(tok))
 #define ID2VAL(id) STATIC_ID2SYM(id)
 #define TOKEN2VAL(t) ID2VAL(TOKEN2ID(t))
 #define KWD2EID(t, v) ripper_new_yylval(p, keyword_##t, get_value(v), 0)
@@ -1502,7 +1503,7 @@ new_array_pattern(struct parser_params *p, VALUE constant, VALUE pre_arg, VALUE 
 }
 
 static VALUE
-new_array_pattern_tail(struct parser_params *p, VALUE pre_args, VALUE has_rest, VALUE rest_arg, VALUE post_args, const YYLTYPE *loc)
+new_array_pattern_tail(struct parser_params *p, VALUE pre_args, int has_rest, VALUE rest_arg, VALUE post_args, const YYLTYPE *loc)
 {
     return ripper_new_yylval2(p, pre_args, rest_arg, post_args);
 }
@@ -1555,6 +1556,7 @@ new_hash_pattern_tail(struct parser_params *p, VALUE kw_args, VALUE kw_rest_arg,
 static VALUE heredoc_dedent(struct parser_params*,VALUE);
 
 #else
+#define THINGY(tok) (tok)
 #define ID2VAL(id) (id)
 #define TOKEN2VAL(t) ID2VAL(t)
 #define KWD2EID(t, v) keyword_##t
@@ -3032,7 +3034,7 @@ mlhs_node	: user_variable
                     }
                 | primary_value call_op tIDENTIFIER
                     {
-                        anddot_multiple_assignment_check(p, &@2, $2);
+                        anddot_multiple_assignment_check(p, &@2, (ID)$2);
                     /*%%%*/
                         $$ = attrset(p, $1, $2, $3, &@$);
                     /*% %*/
@@ -3047,7 +3049,7 @@ mlhs_node	: user_variable
                     }
                 | primary_value call_op tCONSTANT
                     {
-                        anddot_multiple_assignment_check(p, &@2, $2);
+                        anddot_multiple_assignment_check(p, &@2, (ID)$2);
                     /*%%%*/
                         $$ = attrset(p, $1, $2, $3, &@$);
                     /*% %*/
@@ -3535,10 +3537,10 @@ endless_arg	: arg %prec modifier_rescue
                     }
                 ;
 
-relop		: '>'  {$$ = '>';}
-                | '<'  {$$ = '<';}
-                | tGEQ {$$ = idGE;}
-                | tLEQ {$$ = idLE;}
+relop		: '>'  {$$ = THINGY('>');}
+                | '<'  {$$ = THINGY('<');}
+                | tGEQ {$$ = THINGY(idGE);}
+                | tLEQ {$$ = THINGY(idLE);}
                 ;
 
 rel_expr	: arg relop arg   %prec '>'
@@ -3547,7 +3549,7 @@ rel_expr	: arg relop arg   %prec '>'
                     }
                 | rel_expr relop arg   %prec '>'
                     {
-                        rb_warning1("comparison '%s' after comparison", WARN_ID($2));
+                        rb_warning1("comparison '%s' after comparison", WARN_ID((ID)$2));
                         $$ = call_bin_op(p, $1, $2, $3, &@2, &@$);
                     }
                 ;
@@ -5887,7 +5889,7 @@ regexp_contents: /* none */
                             $$ = list_append(p, head, tail);
                         }
                     /*%
-                        VALUE s1 = 1, s2 = 0, n1 = $1, n2 = $2;
+                        VALUE s1 = (VALUE)1, s2 = 0, n1 = $1, n2 = $2;
                         if (ripper_is_node_yylval(p, n1)) {
                             s1 = RNODE_RIPPER(n1)->nd_cval;
                             n1 = RNODE_RIPPER(n1)->nd_rval;
@@ -9196,7 +9198,7 @@ formal_argument(struct parser_params *p, VALUE lhs)
 #undef ERR
     }
     shadowing_lvar(p, id);
-    return lhs;
+    return (ID)lhs;
 }
 
 static int
