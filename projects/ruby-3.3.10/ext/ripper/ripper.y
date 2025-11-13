@@ -16204,3 +16204,79 @@ ripper_dispatch0(struct parser_params *p, ID mid)
 static VALUE
 ripper_dispatch1(struct parser_params *p, ID mid, VALUE a)
 {
+    validate(a);
+    return rb_funcall(p->value, mid, 1, a);
+}
+
+static VALUE
+ripper_dispatch2(struct parser_params *p, ID mid, VALUE a, VALUE b)
+{
+    validate(a);
+    validate(b);
+    return rb_funcall(p->value, mid, 2, a, b);
+}
+
+static VALUE
+ripper_dispatch3(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c)
+{
+    validate(a);
+    validate(b);
+    validate(c);
+    return rb_funcall(p->value, mid, 3, a, b, c);
+}
+
+static VALUE
+ripper_dispatch4(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d)
+{
+    validate(a);
+    validate(b);
+    validate(c);
+    validate(d);
+    return rb_funcall(p->value, mid, 4, a, b, c, d);
+}
+
+static VALUE
+ripper_dispatch5(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d, VALUE e)
+{
+    validate(a);
+    validate(b);
+    validate(c);
+    validate(d);
+    validate(e);
+    return rb_funcall(p->value, mid, 5, a, b, c, d, e);
+}
+
+static VALUE
+ripper_dispatch7(struct parser_params *p, ID mid, VALUE a, VALUE b, VALUE c, VALUE d, VALUE e, VALUE f, VALUE g)
+{
+    validate(a);
+    validate(b);
+    validate(c);
+    validate(d);
+    validate(e);
+    validate(f);
+    validate(g);
+    return rb_funcall(p->value, mid, 7, a, b, c, d, e, f, g);
+}
+
+void
+ripper_error(struct parser_params *p)
+{
+    p->error_p = TRUE;
+}
+
+VALUE
+ripper_value(struct parser_params *p)
+{
+    (void)yystpcpy; /* may not used in newer bison */
+
+    return p->value;
+}
+
+#endif /* RIPPER */
+/*
+ * Local variables:
+ * mode: c
+ * c-file-style: "ruby"
+ * End:
+ */
