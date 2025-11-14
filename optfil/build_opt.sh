@@ -498,6 +498,15 @@ install -v -m644    INSTALL LICENCE OVERVIEW README* \
                     /opt/fil/share/doc/openssh-9.8p1
 cd ..
 rm -rf pizlonated-openssh
+
+tar -xf $FILCSRC/projects/sudo-1.9.15p5/pizlonated-sudo.tar.gz
+cd pizlonated-sudo
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CC_FOR_BUILD=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --with-all-insults --with-pam --with-pam-login --with-fqdn --with-logging=syslog --with-logfac=authpriv --with-env-editor --with-editor=/opt/fil/bin/mg --with-timeout=15 --with-password-timeout=0 --with-passprompt="[memory safe sudo] password for %p: " --with-tty-tickets --without-sendmail --enable-zlib=system  --with-rundir=/opt/fil/var/sudo
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-sudo
+
 cd ..
 test -d build
 test -d ../fil
