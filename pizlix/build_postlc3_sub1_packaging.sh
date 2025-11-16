@@ -13,6 +13,7 @@ test -d $FILCSRC/projects
 
 cd $FILCSRC
 
+rm -vf projects/*/pizlonated-*.tar.gz
 ./package-source.sh projects/wayland-1.24.0 pizlonated-wayland
 ./package-source.sh projects/libevdev-1.11.0 pizlonated-libevdev
 ./package-source.sh projects/libinput-1.29.1 pizlonated-libinput
