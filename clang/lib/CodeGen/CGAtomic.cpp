@@ -905,6 +905,7 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
       E->getScopeModel() ? EmitScalarExpr(E->getScope()) : nullptr;
   llvm::PointerType *PtrTy = getSinglePointerType(Ptr.getElementType());
   bool ShouldCastToIntPtrTy = true;
+  bool ShouldUseIntValuesForPtrType = false;
 
   switch (E->getOp()) {
   case AtomicExpr::AO__c11_atomic_init:
@@ -967,6 +968,7 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
   case AtomicExpr::AO__opencl_atomic_fetch_add:
   case AtomicExpr::AO__opencl_atomic_fetch_sub:
     if (MemTy->isPointerType()) {
+      ShouldUseIntValuesForPtrType = true;
       // For pointer arithmetic, we're required to do a bit of math:
       // adding 1 to an int* is not the same as adding 1 to a uintptr_t.
       // ... but only for the C11 builtins. The GNU builtins expect the
@@ -1057,10 +1059,12 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
 
   if (PtrTy) {
     Ptr = Ptr.withElementType(PtrTy);
-    if (Val1.isValid())
-      Val1 = Val1.withElementType(PtrTy);
-    if (Val2.isValid())
-      Val2 = Val2.withElementType(PtrTy);
+    if (!ShouldUseIntValuesForPtrType) {
+      if (Val1.isValid())
+        Val1 = Val1.withElementType(PtrTy);
+      if (Val2.isValid())
+        Val2 = Val2.withElementType(PtrTy);
+    }
   } else if (ShouldCastToIntPtrTy) {
     Ptr = Atomics.castToAtomicIntPointer(Ptr);
     if (Val1.isValid())
