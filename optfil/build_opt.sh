@@ -361,6 +361,7 @@ cd ..
 
 test -d ../build
 test -d ../../fil
+rm -rf pizlonated-bash
 
 tar -xf $FILCSRC/projects/openssl-3.3.1/pizlonated-openssl.tar.gz
 cd pizlonated-openssl
@@ -514,6 +515,224 @@ make -j `nproc`
 make -j `nproc` install
 cd ..
 rm -rf pizlonated-sudo
+
+tar -xf $FILCSRC/projects/sed-4.9/pizlonated-sed.tar.gz
+cd pizlonated-sed
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-sed
+
+tar -xf $FILCSRC/pizlix/psmisc-23.7.tar.xz
+cd psmisc-23.7
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf psmisc-23.7
+
+tar -xf $FILCSRC/pizlix/flex-2.6.4.tar.gz
+cd flex-2.6.4
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --disable-static
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf flex-2.6.4
+
+tar -xf $FILCSRC/projects/bison-3.8.2/pizlonated-bison.tar.gz
+cd pizlonated-bison
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-bison
+
+tar -xf $FILCSRC/projects/grep-3.11/pizlonated-grep.tar.gz
+cd pizlonated-grep
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-grep
+
+tar -xf $FILCSRC/pizlix/less-661.tar.gz
+cd less-661
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf less-661
+
+tar -xf $FILCSRC/projects/diffutils-3.10/pizlonated-diffutils.tar.gz
+cd pizlonated-diffutils
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-diffutils
+
+tar -xf $FILCSRC/pizlix/gawk-5.3.0.tar.xz
+cd gawk-5.3.0
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf gawk-5.3.0
+
+tar -xf $FILCSRC/pizlix/findutils-4.10.0.tar.xz
+cd findutils-4.10.0
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf findutils-4.10.0
+
+tar -xf $FILCSRC/pizlix/gzip-1.13.tar.xz
+cd gzip-1.13
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf gzip-1.13
+
+tar -xf $FILCSRC/projects/make-4.4.1/pizlonated-make.tar.gz
+cd pizlonated-make
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-make
+
+tar -xf $FILCSRC/pizlix/patch-2.7.6.tar.xz
+cd patch-2.7.6
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf patch-2.7.6
+
+tar -xf $FILCSRC/projects/tar-1.35/pizlonated-tar.tar.gz
+cd pizlonated-tar
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ FORCE_UNSAFE_CONFIGURE=1 \
+    ./configure --prefix=/opt/fil \
+                --with-gzip=/opt/fil/bin/gzip \
+                --with-bzip2=/opt/fil/bin/bzip2 \
+                --with-lzma=/opt/fil/bin/lzma \
+                --with-xz=/opt/fil/bin/xz \
+                --with-zstd=/opt/fil/bin/zstd
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-tar
+
+tar -xf $FILCSRC/projects/icu-76.1/pizlonated-icu.tar.gz
+cd pizlonated-icu/icu4c/source
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+cd ../../../
+rm -rf pizlonated-icu
+
+tar -xf $FILCSRC/projects/procps-ng-4.0.4/pizlonated-procps.tar.gz
+cd pizlonated-procps
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --disable-static
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-procps
+
+tar -xf $FILCSRC/projects/libevent-2.1.12/pizlonated-libevent.tar.gz
+cd pizlonated-libevent
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure  --prefix=/opt/fil --sysconfdir=/etc
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-libevent
+
+tar -xf $FILCSRC/projects/tmux-3.5a/pizlonated-tmux.tar.gz
+cd pizlonated-tmux
+PATH=/opt/fil/bin:$PATH CC="/opt/fil/bin/filcc -Wno-pointer-sign" CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-tmux
+
+tar -xf $FILCSRC/pizlix/libunistring-1.2.tar.xz
+cd libunistring-1.2
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --disable-static --sysconfdir=/etc
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf libunistring-1.2
+
+tar -xf $FILCSRC/projects/libidn2-2.3.7/pizlonated-libidn2.tar.gz
+cd pizlonated-libidn2
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --disable-static
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-libidn2
+
+tar -xf $FILCSRC/pizlix/libpsl-0.21.5.tar.gz
+cd libpsl-0.21.5
+mkdir -v build
+cd build
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ meson setup .. --prefix=/opt/fil --sysconfdir=/etc --buildtype=release
+ninja
+ninja install
+cd ../..
+rm -rf libpsl-0.21.5
+
+tar -xf $FILCSRC/projects/libtasn1-4.19.0/pizlonated-libtasn1.tar.gz
+cd pizlonated-libtasn1
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --disable-static
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-libtasn1
+
+tar -xf $FILCSRC/projects/p11-kit-0.25.5/pizlonated-p11-kit.tar.gz
+cd pizlonated-p11-kit
+mkdir -v p11-build
+cd p11-build
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ meson setup .. --prefix=/opt/fil --sysconfdir=/etc --buildtype=release
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-p11-kit
+
+tar -xf $FILCSRC/pizlix/nghttp2-1.62.1.tar.xz
+cd nghttp2-1.62.1
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --disable-static --enable-lib-only
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf nghttp2-1.62.1
+
+tar -xf $FILCSRC/projects/curl-8.9.1/pizlonated-curl.tar.gz
+cd pizlonated-curl
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --disable-static --with-openssl --enable-threaded-resolver --with-ca-path=/etc/ssl/certs --with-gsssapi
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-curl
+
+tar -xf $FILCSRC/pizlix/wget-1.24.5.tar.gz
+cd wget-1.24.5
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --with-ssl=openssl
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf wget-1.24.5
+
+tar -xf $FILCSRC/projects/git-2.46.0/pizlonated-git.tar.gz
+cd pizlonated-git
+PATH=/opt/fil/bin:$PATH CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil --sysconfdir=/etc --with-libpcre2
+make -j `nproc`
+make -j `nproc` install
+cd ..
+rm -rf pizlonated-git
 
 cd ..
 test -d build

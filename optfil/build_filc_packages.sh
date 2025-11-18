@@ -41,6 +41,8 @@ test `id -u` -eq `id -u $FILCOWNER`
 
 cd $FILCSRC
 
+rm -vf projects/*/pizlonated-*.tar.gz
+
 cd projects/yolo-glibc-2.40
 git archive --format=tar HEAD --prefix=pizlonated-yolo-glibc/ | tar -xf -
 git diff --relative HEAD . | (cd pizlonated-yolo-glibc && patch -p1)
@@ -77,4 +79,19 @@ cd ../..
 ./package-source.sh projects/libselinux-3.9 pizlonated-selinux
 ./package-source.sh projects/sudo-1.9.15p5 pizlonated-sudo
 ./package-source.sh projects/libuv-1.51.0 pizlonated-libuv
+./package-source.sh projects/sed-4.9 pizlonated-sed
+./package-source.sh projects/bison-3.8.2 pizlonated-bison
+./package-source.sh projects/grep-3.11 pizlonated-grep
+./package-source.sh projects/diffutils-3.10 pizlonated-diffutils
+./package-source.sh projects/make-4.4.1 pizlonated-make
+./package-source.sh projects/tar-1.35 pizlonated-tar
+./package-source.sh projects/icu-76.1 pizlonated-icu
+./package-source.sh projects/procps-ng-4.0.4 pizlonated-procps
+./package-source.sh projects/tmux-3.5a pizlonated-tmux
+./package-source.sh projects/libidn2-2.3.7 pizlonated-libidn2
+./package-source.sh projects/libtasn1-4.19.0 pizlonated-libtasn1
+./package-source.sh projects/p11-kit-0.25.5 pizlonated-p11-kit
+./package-source.sh projects/curl-8.9.1 pizlonated-curl
+./package-source.sh projects/git-2.46.0 pizlonated-git
+./package-source.sh projects/libevent-2.1.12 pizlonated-libevent
 

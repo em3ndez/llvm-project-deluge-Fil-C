@@ -67,7 +67,7 @@ echo "This installer will:"
 if [ ! -d /opt ]; then
     echo "  - Create /opt directory (doesn't currently exist)"
 fi
-echo "  - Extract fil.tar to /opt, creating /opt/fil"
+echo "  - Extract fil.tar.xz to /opt, creating /opt/fil"
 echo
 echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
 read response
@@ -78,10 +78,10 @@ if [ "$response" != "YES" ]; then
 fi
 
 echo
-echo "Extracting fil.tar to /opt..."
+echo "Extracting fil.tar.xz to /opt..."
 
-if [ ! -f fil.tar ]; then
-    echo "Error: fil.tar not found in current directory"
+if [ ! -f fil.tar.xz ]; then
+    echo "Error: fil.tar.xz not found in current directory"
     exit 1
 fi
 
@@ -91,7 +91,7 @@ if [ ! -d /opt ]; then
 fi
 
 cd /opt
-tar -xf "$OLDPWD/fil.tar"
+tar -xf "$OLDPWD/fil.tar.xz"
 
 echo
 echo "Checking SSH configuration..."

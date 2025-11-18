@@ -86,7 +86,7 @@ done
 rm -rf binutils
 
 cd ..
-tar -cf $FILCSRC/optfil/fil.tar fil
+tar -cJf $FILCSRC/optfil/fil.tar.xz fil
 chown $FILCOWNER:$FILCGROUP $FILCSRC/optfil/fil.tar
 
 cd $FILCSRC/optfil
