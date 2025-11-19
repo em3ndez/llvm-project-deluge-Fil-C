@@ -655,8 +655,10 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("crt0.o")));
     else if (HasCRTBeginEndFiles) {
       std::string P;
-      if (ToolChain.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT &&
-          !isAndroid) {
+      if (ToolChain.getDriver().HasPizfix)
+        P = GetYoloLibPath("crtbegin.o");
+      else if (ToolChain.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT &&
+               !isAndroid) {
         std::string crtbegin = ToolChain.getCompilerRT(Args, "crtbegin",
                                                        ToolChain::FT_Object);
         if (ToolChain.getVFS().exists(crtbegin))
@@ -847,11 +849,13 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back("--start-group");
       CmdArgs.push_back("-lyoloc");
       CmdArgs.push_back("-lyolom");
-      CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("libgcc.a")));
-      if (ToolChain.getDriver().HasPizfix)
+      if (ToolChain.getDriver().HasPizfix) {
+        CmdArgs.push_back("-lyolort");
         CmdArgs.push_back("-lyolounwind");
-      else
+      } else {
+        CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("libgcc.a")));
         CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("libgcc_eh.a")));
+      }
       if (IsStatic || IsStaticPIE)
         CmdArgs.push_back("--end-group");
     } else if (!Args.hasArg(options::OPT_nodefaultlibs)) {
@@ -923,8 +927,10 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     if (!Args.hasArg(options::OPT_nostartfiles) && !IsIAMCU) {
       if (HasCRTBeginEndFiles) {
         std::string P;
-        if (ToolChain.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT &&
-            !isAndroid) {
+        if (ToolChain.getDriver().HasPizfix)
+          P = GetYoloLibPath("crtend.o");
+        else if (ToolChain.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT &&
+                 !isAndroid) {
           std::string crtend = ToolChain.getCompilerRT(Args, "crtend",
                                                        ToolChain::FT_Object);
           if (ToolChain.getVFS().exists(crtend))

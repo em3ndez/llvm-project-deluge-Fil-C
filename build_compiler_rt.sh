@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,25 +28,33 @@
 set -e
 set -x
 
-if test "x$ALTLLVMLIBCOPT" = "x"
+NINJAFLAGS=
+if test -e clang-build-overrides.sh
 then
-    LLVMLIBCOPT="-DLIBCXX_HAS_MUSL_LIBC=ON"
-else
-    LLVMLIBCOPT=$ALTLLVMLIBCOPT
+    . ./clang-build-overrides.sh
 fi
 
-export CMAKEOPTIONS="-S ../llvm -B . -G Ninja -DLLVM_ENABLE_PROJECTS=clang
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_ASSERTIONS=ON
-    -DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi
-    -DLLVM_ENABLE_LLD=ON
-    -DLIBCXXABI_HAS_PTHREAD_API=ON -DLIBCXX_ENABLE_EXCEPTIONS=ON
-    -DLIBCXXABI_ENABLE_EXCEPTIONS=ON -DLIBCXX_HAS_PTHREAD_API=ON
-    $LLVMLIBCOPT -DLLVM_ENABLE_ZSTD=OFF -DLIBCXXABI_USE_LLVM_UNWINDER=OFF
-    -DLIBCXX_FORCE_LIBCXXABI=ON -DLLVM_TARGETS_TO_BUILD=$LLVMARCH
-    -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_LIBEDIT=OFF
-    -DLLVM_ENABLE_LIBPFM=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF
-    -DLLVM_ENABLE_CURL=OFF -DLLVM_ENABLE_HTTPLIB=OFF
-    -DLLVM_STATIC_LINK_CXX_STDLIB=ON -DCMAKE_EXE_LINKER_FLAGS=-static-libgcc"
+export CMAKEOPTIONS="-G Ninja
+    -DCMAKE_BUILD_TYPE=Release
+    -DCOMPILER_RT_BUILD_BUILTINS=ON
+    -DCOMPILER_RT_BUILD_CRT=ON
+    -DCOMPILER_RT_CRT_USE_EH_FRAME_REGISTRY=ON
+    -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+    -DCOMPILER_RT_BUILD_XRAY=OFF
+    -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
+    -DCOMPILER_RT_BUILD_PROFILE=OFF
+    -DCOMPILER_RT_DEFAULT_TARGET_TRIPLE=x86_64-linux-gnu
+    .."
 
-./configure_cmake_project.sh
+cd compiler-rt
 
+../configure_cmake_project.sh
+
+cd build
+ninja $NINJAFLAGS
+
+cd ../..
+mkdir -p pizfix/lib
+cp compiler-rt/build/lib/linux/clang_rt.crtbegin-x86_64.o pizfix/lib/crtbegin.o
+cp compiler-rt/build/lib/linux/clang_rt.crtend-x86_64.o pizfix/lib/crtend.o
+cp compiler-rt/build/lib/linux/libclang_rt.builtins-x86_64.a pizfix/lib/libyolort.a

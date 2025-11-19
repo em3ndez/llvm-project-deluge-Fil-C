@@ -28,6 +28,7 @@ set -x
 
 rm -rf pizfix
 
+./build_compiler_rt.sh
 ./build_yolounwind.sh
 ./configure_llvm.sh
 ./build_clang.sh
