@@ -71,7 +71,7 @@ echo "This installer will:"
 if [ ! -d /opt ]; then
     echo "  - Create /opt directory (doesn't currently exist)"
 fi
-echo "  - Extract fil.tar.xz to /opt, creating /opt/fil"
+echo "  - Extract fil.tar.xz to /opt, creating /opt/fil (requires about 1.3 GB)"
 echo
 echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
 read response

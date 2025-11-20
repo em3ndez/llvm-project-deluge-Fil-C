@@ -87,7 +87,7 @@ rm -rf binutils
 
 cd ..
 tar -cJf $FILCSRC/optfil/fil.tar.xz fil
-chown $FILCOWNER:$FILCGROUP $FILCSRC/optfil/fil.tar
+chown $FILCOWNER:$FILCGROUP $FILCSRC/optfil/fil.tar.xz
 
 cd $FILCSRC/optfil
 su $FILCOWNER ./build_finish.sh
