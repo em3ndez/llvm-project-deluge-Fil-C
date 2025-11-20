@@ -655,7 +655,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("crt0.o")));
     else if (HasCRTBeginEndFiles) {
       std::string P;
-      if (ToolChain.getDriver().HasPizfix)
+      if ((true))
         P = GetYoloLibPath("crtbegin.o");
       else if (ToolChain.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT &&
                !isAndroid) {
@@ -849,13 +849,8 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back("--start-group");
       CmdArgs.push_back("-lyoloc");
       CmdArgs.push_back("-lyolom");
-      if (ToolChain.getDriver().HasPizfix) {
-        CmdArgs.push_back("-lyolort");
-        CmdArgs.push_back("-lyolounwind");
-      } else {
-        CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("libgcc.a")));
-        CmdArgs.push_back(Args.MakeArgString(GetGCCLibPath("libgcc_eh.a")));
-      }
+      CmdArgs.push_back("-lyolort");
+      CmdArgs.push_back("-lyolounwind");
       if (IsStatic || IsStaticPIE)
         CmdArgs.push_back("--end-group");
     } else if (!Args.hasArg(options::OPT_nodefaultlibs)) {
@@ -927,7 +922,7 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     if (!Args.hasArg(options::OPT_nostartfiles) && !IsIAMCU) {
       if (HasCRTBeginEndFiles) {
         std::string P;
-        if (ToolChain.getDriver().HasPizfix)
+        if ((true))
           P = GetYoloLibPath("crtend.o");
         else if (ToolChain.GetRuntimeLibType(Args) == ToolChain::RLT_CompilerRT &&
                  !isAndroid) {

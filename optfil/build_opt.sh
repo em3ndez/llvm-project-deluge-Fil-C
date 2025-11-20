@@ -131,6 +131,10 @@ rm -rf yolo
 cp -v $FILCSRC/pizfix/$FILCLIB/libpizlo.so lib/
 cp -v $FILCSRC/pizfix/lib/filc_crt.o lib/
 cp -v $FILCSRC/pizfix/lib/filc_mincrt.o lib/
+cp -v $FILCSRC/pizfix/lib/crtbegin.o lib/
+cp -v $FILCSRC/pizfix/lib/crtend.o lib/
+cp -v $FILCSRC/pizfix/lib/libyolort.a lib/
+cp -v $FILCSRC/pizfix/lib/libyolounwind.a lib/
 cp -r $FILCSRC/optfil/kernel-include include
 cp -v $FILCSRC/pizfix/stdfil-include/*.h include/
 

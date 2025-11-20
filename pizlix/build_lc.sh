@@ -113,6 +113,10 @@ rm -rf $LFS/yolo-glibc-prefix
 cp -v $FILCSRC/pizfix/$FILCLIB/libpizlo.so $LFS/usr/lib/
 cp -v $FILCSRC/pizfix/lib/filc_crt.o $LFS/usr/lib/
 cp -v $FILCSRC/pizfix/lib/filc_mincrt.o $LFS/usr/lib/
+cp -v $FILCSRC/pizfix/lib/crtbegin.o $LFS/usr/lib/
+cp -v $FILCSRC/pizfix/lib/crtend.o $LFS/usr/lib/
+cp -v $FILCSRC/pizfix/lib/libyolort.a $LFS/usr/lib/
+cp -v $FILCSRC/pizfix/lib/libyolounwind.a $LFS/usr/lib/
 cp -v $FILCSRC/pizfix/stdfil-include/*.h $LFS/yolo/kernel-include
 
 cp -v $FILCSRC/build/bin/clang-20 $LFS/usr/bin/clang-20
