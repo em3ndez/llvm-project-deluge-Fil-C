@@ -24,14 +24,36 @@
  */
 
 /* We run the yolo libc without unwinding support. But yolo-glibc pulls in some unwind symbols
-   regardless. This is here to placate yolo glibc. */
+   regardless, and then those symbols pull in compiler-rt's GCC personality function, which then pulls
+   in more unwind symbols. This is here to placate yolo glibc and compiler-rt's GCC personality
+   function. */
 
-void __gcc_personality_v0(void)
+void _Unwind_Resume(void)
 {
     __builtin_trap();
 }
 
-void _Unwind_Resume(void)
+void _Unwind_GetLanguageSpecificData(void)
+{
+    __builtin_trap();
+}
+
+void _Unwind_GetIP(void)
+{
+    __builtin_trap();
+}
+
+void _Unwind_GetRegionStart(void)
+{
+    __builtin_trap();
+}
+
+void _Unwind_SetGR(void)
+{
+    __builtin_trap();
+}
+
+void _Unwind_SetIP(void)
 {
     __builtin_trap();
 }
