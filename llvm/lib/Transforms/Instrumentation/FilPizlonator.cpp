@@ -1389,7 +1389,7 @@ class Pizlonator {
   FunctionType* UnsafeFuncTy;
 
   // Low-level functions used by codegen.
-  FunctionCallee PollcheckSlow;
+  FunctionCallee Pollcheck;
   FunctionCallee Enter;
   FunctionCallee Exit;
   FunctionCallee StoreBarrierForLowerSlow;
@@ -9858,8 +9858,8 @@ public:
     if (verbose)
       errs() << "FlightNull = " << *FlightNull << "\n";
 
-    PollcheckSlow = M.getOrInsertFunction(
-      "filc_pollcheck_slow", VoidTy, RawPtrTy, RawPtrTy);
+    Pollcheck = M.getOrInsertFunction(
+      "filc_pollcheck", VoidTy, RawPtrTy, RawPtrTy);
     Enter = M.getOrInsertFunction(
       "filc_enter", VoidTy, RawPtrTy);
     Exit = M.getOrInsertFunction(
@@ -10495,26 +10495,13 @@ public:
 
           if (BackEdgePreds.count(BB)) {
             DebugLoc DL = BB->getTerminator()->getDebugLoc();
-            Value* StatePtr = threadStatePtr(MyThread, BB->getTerminator());
-            LoadInst* StateLoad = new LoadInst(
-              Int8Ty, StatePtr, "filc_thread_state_load", BB->getTerminator());
-            StateLoad->setDebugLoc(DL);
-            BinaryOperator* Masked = BinaryOperator::Create(
-              Instruction::And, StateLoad,
-              ConstantInt::get(
-                Int8Ty,
-                ThreadStateCheckRequested | ThreadStateStopRequested | ThreadStateDeferredSignal),
-              "filc_thread_state_masked", BB->getTerminator());
-            Masked->setDebugLoc(DL);
-            ICmpInst* PollcheckNotNeeded = new ICmpInst(
-              BB->getTerminator(), ICmpInst::ICMP_EQ, Masked, ConstantInt::get(Int8Ty, 0),
-              "filc_pollcheck_not_needed");
-            Masked->setDebugLoc(DL);
-            Instruction* NewTerm =
-              SplitBlockAndInsertIfElse(
-                expectTrue(PollcheckNotNeeded, BB->getTerminator()), BB->getTerminator(), false);
-            CallInst::Create(
-              PollcheckSlow, { MyThread, getOrigin(DL) }, "", NewTerm)->setDebugLoc(DL);
+            // Pollchecks consist of a load and conditional branch to slow path.
+            // We temporarily represent pollchecks as unconditional and add the
+            // condition in the DeleteRedundantPollchecks pass that runs after
+            // optimizations.
+            CallInst::Create(Pollcheck, {MyThread, getOrigin(DL)}, "",
+                             BB->getTerminator())
+                ->setDebugLoc(DL);
           }
         }
 
