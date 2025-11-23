@@ -6810,10 +6810,29 @@ void filc_native_zscavenger_resume(filc_thread* my_thread)
     filc_enter(my_thread);
 }
 
+void filc_native_zlock_runtime_threads(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    pas_scavenger_lock_thread();
+    fugc_lock_threads();
+    filc_enter(my_thread);
+}
+
 void filc_native_zdump_pas_status(filc_thread* my_thread)
 {
     filc_exit(my_thread);
     pas_status_reporter_print_everything();
+    filc_enter(my_thread);
+}
+
+void filc_native_zset_scavenger_periods_to_1ms(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    pas_scavenger_suspend();
+    pas_scavenger_deep_sleep_timeout_in_milliseconds = 1.;
+    pas_scavenger_period_in_milliseconds = 1.;
+    pas_scavenger_max_epoch_delta = 1000ll * 1000ll;
+    pas_scavenger_resume();
     filc_enter(my_thread);
 }
 

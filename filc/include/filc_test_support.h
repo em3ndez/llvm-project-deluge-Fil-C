@@ -84,6 +84,13 @@ void zmemmove_builtin(void* dst, void* src, __SIZE_TYPE__ count);
 /* Dumps the pas heap status. */
 void zdump_pas_status(void);
 
+/* Suspend the scavenger, set its periods to 1ms, and resume it.
+ 
+   This might even be a good thing to call for some performance situations, like if you want to
+   ensure that we're returning memory to the OS ASAP. But for now, it's just used for tests, and
+   so it's not an officially supported API. */
+void zset_scavenger_periods_to_1ms(void);
+
 #ifdef __cplusplus
 }
 #endif

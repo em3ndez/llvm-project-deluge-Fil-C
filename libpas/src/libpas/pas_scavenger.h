@@ -54,6 +54,7 @@ struct pas_scavenger_data {
 
 /* This is available extern for testing and debugging only. */
 PAS_API extern bool pas_scavenger_is_enabled;
+PAS_API extern bool pas_scavenger_shutdown_enabled;
 PAS_API extern bool pas_scavenger_eligibility_notification_has_been_deferred;
 PAS_API extern pas_scavenger_state pas_scavenger_current_state;
 PAS_API extern pas_scavenger_data* pas_scavenger_data_instance;
@@ -120,6 +121,8 @@ typedef enum {
 
 PAS_API void pas_scavenger_perform_synchronous_operation(
     pas_scavenger_synchronous_operation_kind kind);
+
+PAS_API void pas_scavenger_lock_thread(void);
 
 PAS_END_EXTERN_C;
 

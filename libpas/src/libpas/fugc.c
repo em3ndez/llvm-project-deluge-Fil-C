@@ -92,7 +92,6 @@ static pas_system_condition collector_thread_state_cond;
 static bool collector_thread_is_running = false;
 
 #define COLLECTOR_CONTROL_REQUEST_SUSPEND 1u
-#define COLLECTOR_CONTROL_REQUEST_HANDSHAKE 2u
 
 static unsigned collector_control_request = 0;
 
@@ -125,6 +124,8 @@ static size_t live_bytes_before_sweeping = SIZE_MAX;
 static double overall_start_time;
 static double mark_end_time;
 static double overall_end_time;
+
+static bool threads_locked = false;
 
 #define VERBOSE_EXTREME 8
 #define VERBOSE_HANDSHAKE_STACKS 7
@@ -190,11 +191,16 @@ static pas_thread_return_type parallel_worker_thread(void* arg)
     pas_system_mutex_lock(&collector_thread_state_lock);
     for (;;) {
         PAS_ASSERT(my_version == worker_version || my_version + 1 == worker_version);
-        double timeout = pas_get_time_in_milliseconds_for_system_condition() + 300;
-        while ((!current_worker || worker_version == my_version) && !collector_control_request
-               && pas_get_time_in_milliseconds_for_system_condition() < timeout) {
-            pas_system_condition_timed_wait(
-                &collector_thread_state_cond, &collector_thread_state_lock, timeout);
+        if (threads_locked) {
+            while ((!current_worker || worker_version == my_version) && !collector_control_request)
+                pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
+        } else {
+            double timeout = pas_get_time_in_milliseconds_for_system_condition() + 300;
+            while ((!current_worker || worker_version == my_version) && !collector_control_request
+                   && pas_get_time_in_milliseconds_for_system_condition() < timeout) {
+                pas_system_condition_timed_wait(
+                    &collector_thread_state_cond, &collector_thread_state_lock, timeout);
+            }
         }
         PAS_ASSERT(my_version == worker_version || my_version + 1 == worker_version);
         worker_function my_worker;
@@ -204,6 +210,12 @@ static pas_thread_return_type parallel_worker_thread(void* arg)
         } else
             my_worker = NULL;
         if (!my_worker || collector_control_request) {
+            if (threads_locked) {
+                PAS_ASSERT(!collector_control_request);
+                PAS_ASSERT(!my_worker);
+                continue;
+            }
+            
             if (fugc_verbose >= VERBOSE_EXTREME) {
                 pas_log("[%d, %d] fugc: parallel worker stopping\n",
                         pas_getpid(), pas_gettid());
@@ -276,27 +288,33 @@ static void do_parallel_work_impl(worker_function my_worker, const char* name)
 
     if (fugc_verbose >= VERBOSE_PARALLEL)
         pas_log("[%d] fugc: doing parallel work: %s\n", pas_getpid(), name);
-    
-    unsigned target_num_workers = parallelism_target();
-    bool thread_creation_failed = false;
-    while (num_workers < target_num_workers) {
-        num_workers++;
-        uint64_t* version_ptr = (uint64_t*)bmalloc_allocate(sizeof(uint64_t));
-        *version_ptr = worker_version;
-        if (!pas_create_detached_thread_allowing_errors(parallel_worker_thread, version_ptr)) {
-            /* Thread creation may fail because the user program is already in execve(2). */
-            thread_creation_failed = true;
-            break;
-        }
-    }
 
-    if (fugc_verbose >= VERBOSE_EXTREME) {
-        pas_log("[%d] fugc: num_workers = %u, target_num_workers = %u\n",
-                pas_getpid(), num_workers, target_num_workers);
+    if (!threads_locked) {
+        unsigned target_num_workers = parallelism_target();
+        bool thread_creation_failed = false;
+        while (num_workers < target_num_workers) {
+            uint64_t* version_ptr = (uint64_t*)bmalloc_allocate(sizeof(uint64_t));
+            *version_ptr = worker_version;
+            if (!pas_create_detached_thread_allowing_errors(parallel_worker_thread, version_ptr)) {
+                /* Thread creation may fail because the user program is already in execve(2). */
+                if (fugc_verbose >= VERBOSE_PARALLEL) {
+                    pas_log("[%d] fugc: thread creation failed (num_workers = %u)\n",
+                            pas_getpid(), num_workers);
+                }
+                thread_creation_failed = true;
+                break;
+            }
+            num_workers++;
+        }
+        
+        if (fugc_verbose >= VERBOSE_EXTREME) {
+            pas_log("[%d] fugc: num_workers = %u, target_num_workers = %u\n",
+                    pas_getpid(), num_workers, target_num_workers);
+        }
+        /* It's possible for us to have more workers than our target if the heap shrank and we still
+           have workers around from last time that haven't died. */
+        PAS_ASSERT(num_workers >= target_num_workers || thread_creation_failed);
     }
-    /* It's possible for us to have more workers than our target if the heap shrank and we still have
-       workers around from last time that haven't died. */
-    PAS_ASSERT(num_workers >= target_num_workers || thread_creation_failed);
     
     current_worker = my_worker;
     num_workers_dispatched = num_workers;
@@ -1402,14 +1420,6 @@ static pas_thread_return_type collector_thread(void* arg)
         pas_log("[%d] fugc: thread started\n", pas_getpid());
 
     while (!(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND)) {
-        if ((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE)) {
-            if (fugc_verbose >= VERBOSE_PHASES)
-                pas_log("[%d] fugc: handshaking with mutator\n", pas_getpid());
-            pas_system_mutex_lock(&collector_thread_state_lock);
-            collector_control_request &= ~COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
-            pas_system_condition_broadcast(&collector_thread_state_cond);
-            pas_system_mutex_unlock(&collector_thread_state_lock);
-        }
         switch (current_collector_state) {
         case collector_waiting:
             wait_and_start_marking();
@@ -1561,6 +1571,7 @@ void fugc_initialize_collector(void)
 void fugc_suspend(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
+    PAS_ASSERT(!threads_locked);
     if (collector_suspend_count++) {
         pas_system_mutex_unlock(&collector_thread_state_lock);
         return;
@@ -1577,6 +1588,7 @@ void fugc_suspend(void)
 void fugc_resume(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
+    PAS_ASSERT(!threads_locked);
     if (--collector_suspend_count) {
         pas_system_mutex_unlock(&collector_thread_state_lock);
         return;
@@ -1589,19 +1601,11 @@ void fugc_resume(void)
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }
 
-void fugc_handshake(void)
+void fugc_lock_threads(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
-    PAS_ASSERT(completed_cycle <= requested_cycle);
-    if (requested_cycle == completed_cycle) {
-        pas_system_mutex_unlock(&collector_thread_state_lock);
-        return;
-    }
-    collector_control_request |= COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
-    pas_system_condition_broadcast(&collector_thread_state_cond);
-    while ((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE)
-           && collector_thread_is_running)
-        pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
+    PAS_ASSERT(!collector_suspend_count);
+    threads_locked = true;
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }
 

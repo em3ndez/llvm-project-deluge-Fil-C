@@ -76,8 +76,8 @@ PAS_API void fugc_initialize_collector(void); /* Called fourth. */
 PAS_API void fugc_suspend(void);
 PAS_API void fugc_resume(void);
 
-/* Needed for munmap/mprotect support. */
-PAS_API void fugc_handshake(void);
+/* Forces the FUGC to not shut down any threads and not create new threads. */
+PAS_API void fugc_lock_threads(void);
 
 enum fugc_mark_fast_result {
     fugc_mark_fast_already_marked,

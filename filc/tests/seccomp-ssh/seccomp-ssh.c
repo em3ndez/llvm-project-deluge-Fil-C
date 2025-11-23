@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2012 Will Drewry <wad@dataspill.org>
  * Copyright (c) 2015,2017,2019,2020,2023 Damien Miller <djm@mindrot.org>
+ * Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,66 +16,37 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*
- * Uncomment the SANDBOX_SECCOMP_FILTER_DEBUG macro below to help diagnose
- * filter breakage during development. *Do not* use this in production,
- * as it relies on making library calls that are unsafe in signal context.
- *
- * Instead, live systems the auditctl(8) may be used to monitor failures.
- * E.g.
- *   auditctl -a task,always -F uid=<privsep uid>
- */
-/* #define SANDBOX_SECCOMP_FILTER_DEBUG 1 */
-
-#if 0
-/*
- * For older toolchains, it may be necessary to use the kernel
- * headers directly.
- */
-#ifdef SANDBOX_SECCOMP_FILTER_DEBUG
-# include <asm/siginfo.h>
-# define __have_siginfo_t 1
-# define __have_sigval_t 1
-# define __have_sigevent_t 1
-#endif /* SANDBOX_SECCOMP_FILTER_DEBUG */
-#endif
-
-#include "includes.h"
-
-#ifdef SANDBOX_SECCOMP_FILTER
-
-#include <sys/types.h>
-#include <sys/resource.h>
-#include <sys/prctl.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
-
-#include <linux/futex.h>
-#include <linux/net.h>
-#include <linux/audit.h>
-#include <linux/filter.h>
-#include <linux/seccomp.h>
-#include <elf.h>
-
-#include <asm/unistd.h>
-#ifdef __s390__
-#include <asm/zcrypt.h>
-#endif
-
-#include <errno.h>
-#include <signal.h>
-#include <stdarg.h>
-#include <stddef.h>  /* for offsetof */
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <stddef.h>
 #include <unistd.h>
-
-#include "log.h"
-#include "ssh-sandbox.h"
-#include "xmalloc.h"
-
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#include <linux/audit.h>
+#include <sys/syscall.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <limits.h>
+#include <sys/time.h>
+#include <sys/resource.h>
+#include <sys/mman.h>
+#include <linux/futex.h>
+#include <stdarg.h>
+#include <string.h>
+#include <inttypes.h>
 #include <stdfil.h>
+
+static void fatal(const char* msg, ...)
+{
+    va_list list;
+    va_start(list, msg);
+    vfprintf(stderr, msg, list);
+    fflush(stderr);
+    abort();
+}
+
+/* Simple seccomp test that blocks mkdir syscall */
 
 /* Linux seccomp_filter sandbox */
 #define SECCOMP_FILTER_FAIL SECCOMP_RET_KILL
@@ -207,7 +179,7 @@ static const struct sock_filter preauth_insns[] = {
 	/* Ensure the syscall arch convention is as expected. */
 	BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
 		offsetof(struct seccomp_data, arch)),
-	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, SECCOMP_AUDIT_ARCH, 1, 0),
+	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, AUDIT_ARCH_X86_64, 1, 0),
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_FILTER_FAIL),
 	/* Load the syscall number for checking. */
 	BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
@@ -434,119 +406,139 @@ static const struct sock_fprog preauth_program = {
 	.filter = (struct sock_filter *)preauth_insns,
 };
 
-struct ssh_sandbox {
-	pid_t child_pid;
+static int install_seccomp_filter(void)
+{
+    struct rlimit rl_zero, rl_one = {.rlim_cur = 1, .rlim_max = 1};
+    
+    /* Set rlimits for completeness if possible. */
+    rl_zero.rlim_cur = rl_zero.rlim_max = 0;
+    // Would be cool to set RLIMIT_FSIZE, but we cannot, if we're running in filc/run-tests, which
+    // pipes our output to a file.
+    // if (setrlimit(RLIMIT_FSIZE, &rl_zero) == -1)
+    //     fatal("%s: setrlimit(RLIMIT_FSIZE, { 0, 0 }): %s",
+    //           __func__, strerror(errno));
+    /*
+     * Cannot use zero for nfds, because poll(2) will fail with
+     * errno=EINVAL if npfds>RLIMIT_NOFILE.
+     */
+    if (setrlimit(RLIMIT_NOFILE, &rl_one) == -1)
+        fatal("%s: setrlimit(RLIMIT_NOFILE, { 0, 0 }): %s",
+              __func__, strerror(errno));
+    if (setrlimit(RLIMIT_NPROC, &rl_zero) == -1)
+        fatal("%s: setrlimit(RLIMIT_NPROC, { 0, 0 }): %s",
+              __func__, strerror(errno));
+    
+    /* Enable seccomp mode */
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
+        perror("prctl(PR_SET_NO_NEW_PRIVS)");
+        return -1;
+    }
+
+    if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &preauth_program)) {
+        perror("prctl(PR_SET_SECCOMP)");
+        return -1;
+    }
+
+    return 0;
+}
+
+#define ASSERT(exp) do { \
+    if ((exp)) \
+        break; \
+    fprintf(stderr, "%s:%d: %s: assertion %s failed.\n", \
+            __FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); \
+    abort(); \
+} while (0)
+
+static size_t num_nodes = 40000;
+static size_t repeat = 10;
+
+struct foo;
+typedef struct foo foo;
+
+struct foo {
+    foo* other;
+    char* string;
 };
 
-struct ssh_sandbox *
-ssh_sandbox_init(struct monitor *monitor)
+static foo* root;
+
+static void add_node(void)
 {
-	struct ssh_sandbox *box;
-
-	/*
-	 * Strictly, we don't need to maintain any state here but we need
-	 * to return non-NULL to satisfy the API.
-	 */
-	debug3("%s: preparing seccomp filter sandbox", __func__);
-	box = xcalloc(1, sizeof(*box));
-	box->child_pid = 0;
-
-	return box;
+    foo* node = (foo*)malloc(sizeof(foo));
+    node->other = root;
+    asprintf(&node->string, "node = %p", node);
+    root = node;
 }
 
-#ifdef SANDBOX_SECCOMP_FILTER_DEBUG
-extern struct monitor *pmonitor;
-void mm_log_handler(LogLevel level, int forced, const char *msg, void *ctx);
-
-static void
-ssh_sandbox_violation(int signum, siginfo_t *info, void *void_context)
+static void build(void)
 {
-	char msg[256];
-
-	snprintf(msg, sizeof(msg),
-	    "%s: unexpected system call (arch:0x%x,syscall:%d @ %p)",
-	    __func__, info->si_arch, info->si_syscall, info->si_call_addr);
-	mm_log_handler(SYSLOG_LEVEL_FATAL, 0, msg, pmonitor);
-	_exit(1);
+    size_t index;
+    for (index = num_nodes; index--;)
+        add_node();
 }
 
-static void
-ssh_sandbox_child_debugging(void)
+static void remove_half(void)
 {
-	struct sigaction act;
-	sigset_t mask;
-
-	debug3("%s: installing SIGSYS handler", __func__);
-	memset(&act, 0, sizeof(act));
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGSYS);
-
-	act.sa_sigaction = &ssh_sandbox_violation;
-	act.sa_flags = SA_SIGINFO;
-	if (sigaction(SIGSYS, &act, NULL) == -1)
-		fatal("%s: sigaction(SIGSYS): %s", __func__, strerror(errno));
-	if (sigprocmask(SIG_UNBLOCK, &mask, NULL) == -1)
-		fatal("%s: sigprocmask(SIGSYS): %s",
-		    __func__, strerror(errno));
-}
-#endif /* SANDBOX_SECCOMP_FILTER_DEBUG */
-
-void
-ssh_sandbox_child(struct ssh_sandbox *box)
-{
-	struct rlimit rl_zero, rl_one = {.rlim_cur = 1, .rlim_max = 1};
-	int nnp_failed = 0;
-
-        /* Tell the Fil-C runtime that this is the last chance to create threads, and that it
-           shouldn't dynamically shutdown and restart needed threads after this point. */
-        zlock_runtime_threads();
-
-	/* Set rlimits for completeness if possible. */
-	rl_zero.rlim_cur = rl_zero.rlim_max = 0;
-	if (setrlimit(RLIMIT_FSIZE, &rl_zero) == -1)
-		fatal("%s: setrlimit(RLIMIT_FSIZE, { 0, 0 }): %s",
-			__func__, strerror(errno));
-	/*
-	 * Cannot use zero for nfds, because poll(2) will fail with
-	 * errno=EINVAL if npfds>RLIMIT_NOFILE.
-	 */
-	if (setrlimit(RLIMIT_NOFILE, &rl_one) == -1)
-		fatal("%s: setrlimit(RLIMIT_NOFILE, { 0, 0 }): %s",
-			__func__, strerror(errno));
-	if (setrlimit(RLIMIT_NPROC, &rl_zero) == -1)
-		fatal("%s: setrlimit(RLIMIT_NPROC, { 0, 0 }): %s",
-			__func__, strerror(errno));
-
-#ifdef SANDBOX_SECCOMP_FILTER_DEBUG
-	ssh_sandbox_child_debugging();
-#endif /* SANDBOX_SECCOMP_FILTER_DEBUG */
-
-	debug3("%s: setting PR_SET_NO_NEW_PRIVS", __func__);
-	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
-		debug("%s: prctl(PR_SET_NO_NEW_PRIVS): %s",
-		    __func__, strerror(errno));
-		nnp_failed = 1;
-	}
-	debug3("%s: attaching seccomp filter program", __func__);
-	if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &preauth_program) == -1)
-		debug("%s: prctl(PR_SET_SECCOMP): %s",
-		    __func__, strerror(errno));
-	else if (nnp_failed)
-		fatal("%s: SECCOMP_MODE_FILTER activated but "
-		    "PR_SET_NO_NEW_PRIVS failed", __func__);
+    foo** ptr;
+    size_t index;
+    for (ptr = &root, index = 0; *ptr; index++) {
+        if ((index & 1))
+            ptr = &(*ptr)->other;
+        else
+            *ptr = (*ptr)->other;
+    }
 }
 
-void
-ssh_sandbox_parent_finish(struct ssh_sandbox *box)
+static void add_half(void)
 {
-	free(box);
-	debug3("%s: finished", __func__);
+    size_t index;
+    for (index = num_nodes / 2; index--;)
+        add_node();
 }
 
-void
-ssh_sandbox_parent_preauth(struct ssh_sandbox *box, pid_t child_pid)
+static void verify(void)
 {
-	box->child_pid = child_pid;
+    foo* node;
+    for (node = root; node; node = node->other) {
+        char* str;
+        asprintf(&str, "node = %p", node);
+        ASSERT(!strcmp(node->string, str));
+    }
 }
 
-#endif /* SANDBOX_SECCOMP_FILTER */
+int main(void)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    
+    printf("Installing ssh's seccomp filter...\n");
+
+    zlock_runtime_threads();
+
+    if (install_seccomp_filter() < 0) {
+        fprintf(stderr, "Failed to install seccomp filter\n");
+        return 1;
+    }
+
+    printf("Seccomp filter installed successfully.\n");
+    fflush(stdout);
+
+    build();
+    verify();
+    size_t index;
+    for (index = 1; index <= repeat; ++index) {
+        printf("Iteration %zu\n", index);
+        fflush(stdout);
+        remove_half();
+        verify();
+        add_half();
+        verify();
+    }
+
+    zgc_request_and_wait();
+    
+    printf("Success!\n");
+
+    return 0;
+}

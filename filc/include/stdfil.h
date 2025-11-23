@@ -787,6 +787,12 @@ void zscavenge_synchronously(void);
 void zscavenger_suspend(void);
 void zscavenger_resume(void);
 
+/* Forces the runtime to immediately create whatever threads it needs, and to disable shutting
+   them down on demand.
+
+   This is useful if you're about to install a seccomp filter that prevents thread creation. */
+void zlock_runtime_threads(void);
+
 void zdump_stack(void);
 
 struct zstack_frame_description;

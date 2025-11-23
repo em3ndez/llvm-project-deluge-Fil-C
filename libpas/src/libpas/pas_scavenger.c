@@ -55,6 +55,7 @@
 static const bool verbose = false;
 
 bool pas_scavenger_is_enabled = true;
+bool pas_scavenger_shutdown_enabled = true;
 bool pas_scavenger_eligibility_notification_has_been_deferred = false;
 pas_scavenger_state pas_scavenger_current_state = pas_scavenger_state_no_thread;
 unsigned pas_scavenger_should_suspend_count = 0;
@@ -193,18 +194,28 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
         
         should_go_again |=
             pas_baseline_allocator_table_for_all(pas_allocator_scavenge_request_stop_action);
+        if (verbose)
+            pas_log("should_go_again = %s (after baseline)\n", should_go_again ? "yes" : "no");
 
         should_go_again |=
             pas_utility_heap_for_all_allocators(pas_allocator_scavenge_request_stop_action,
                                                 pas_lock_is_not_held);
         
 		thread_local_cache_decommit_action = pas_thread_local_cache_decommit_if_possible_action;
+        if (verbose)
+            pas_log("should_go_again = %s (after utility)\n", should_go_again ? "yes" : "no");
         should_go_again |=
             pas_thread_local_cache_for_all(pas_allocator_scavenge_request_stop_action,
                                            pas_deallocator_scavenge_flush_log_if_clean_action,
                                            thread_local_cache_decommit_action);
+        if (verbose)
+            pas_log("should_go_again = %s (after TLC)\n", should_go_again ? "yes" : "no");
 
         should_go_again |= handle_expendable_memory(pas_expendable_memory_scavenge_periodic);
+        if (verbose) {
+            pas_log("should_go_again = %s (after expendable memory)\n",
+                    should_go_again ? "yes" : "no");
+        }
 
         /* For the purposes of performance tuning, as well as some of the scavenger tests, the epoch
            is time in nanoseconds.
@@ -242,6 +253,10 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
             PAS_ASSERT(!"Should not see pas_page_sharing_pool_take_locks_unavailable.");
             break;
         } }
+        if (verbose) {
+            pas_log("should_go_again = %s (after physical page sharing pool)\n",
+                    should_go_again ? "yes" : "no");
+        }
 
         if (verbose) {
             pas_log("%d: %.0lf: scavenger freed %zu bytes (%s, should_go_again = %s).\n",
@@ -253,9 +268,15 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
         pas_heap_lock_lock();
         should_go_again |= pas_bootstrap_free_heap_scavenge_periodic();
         pas_heap_lock_unlock();
+        if (verbose) {
+            pas_log("should_go_again = %s (after bootstrap free heap)\n",
+                    should_go_again ? "yes" : "no");
+        }
 
         should_go_again |= pas_immortal_heap_scavenge_periodic();
 		should_go_again |= verse_heap_mark_bits_page_commit_controller_scavenge_periodic();
+        if (verbose)
+            pas_log("should_go_again = %s (after immoral heap)\n", should_go_again ? "yes" : "no");
         
         completion_callback = pas_scavenger_completion_callback;
         if (completion_callback)
@@ -295,6 +316,10 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
                 /* do one more round of polling but this time indicating that it's the last
                    chance. */
                 pas_scavenger_current_state = pas_scavenger_state_deep_sleep;
+            } else if (!pas_scavenger_shutdown_enabled) {
+                PAS_ASSERT(!pas_scavenger_should_suspend_count);
+                while (pas_scavenger_current_state == pas_scavenger_state_deep_sleep)
+                    pas_system_condition_wait(&data->cond, &data->lock);
             } else {
                 if (verbose)
                     pas_log("Considering deep sleep.\n");
@@ -326,6 +351,8 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
         }
         
         should_shut_down |= !!pas_scavenger_should_suspend_count;
+
+        should_shut_down &= pas_scavenger_shutdown_enabled;
         
         if (should_shut_down) {
             pas_scavenger_current_state = pas_scavenger_state_no_thread;
@@ -368,6 +395,31 @@ bool pas_scavenger_did_create_eligible(void)
     return true;
 }
 
+static void ensure_thread_holding_lock(void)
+{
+    if (pas_scavenger_current_state == pas_scavenger_state_no_thread) {
+        pas_scavenger_current_state = pas_scavenger_state_polling;
+        
+        sigset_t fullset;
+        pas_reasonably_fill_sigset(&fullset);
+        sigset_t oldset;
+        PAS_ASSERT(!pthread_sigmask(SIG_BLOCK, &fullset, &oldset));
+        pas_create_detached_thread(scavenger_thread_main, NULL);
+        PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
+    }
+}
+
+void pas_scavenger_lock_thread(void)
+{
+    pas_scavenger_data* data;
+    data = ensure_data_instance(pas_lock_is_not_held);
+    pas_system_mutex_lock(&data->lock);
+    PAS_ASSERT(!pas_scavenger_should_suspend_count);
+    pas_scavenger_shutdown_enabled = false;
+    ensure_thread_holding_lock();
+    pas_system_mutex_unlock(&data->lock);
+}
+
 void pas_scavenger_notify_eligibility_if_needed(void)
 {
     pas_scavenger_data* data;
@@ -389,7 +441,7 @@ void pas_scavenger_notify_eligibility_if_needed(void)
     pas_scavenger_eligibility_notification_has_been_deferred = false;
     
     pas_fence();
-    
+
     if (pas_scavenger_current_state == pas_scavenger_state_polling)
         return;
     
@@ -401,17 +453,8 @@ void pas_scavenger_notify_eligibility_if_needed(void)
     
     if (pas_scavenger_should_suspend_count)
         goto done;
-    
-    if (pas_scavenger_current_state == pas_scavenger_state_no_thread) {
-        pas_scavenger_current_state = pas_scavenger_state_polling;
-        
-        sigset_t fullset;
-        pas_reasonably_fill_sigset(&fullset);
-        sigset_t oldset;
-        PAS_ASSERT(!pthread_sigmask(SIG_BLOCK, &fullset, &oldset));
-        pas_create_detached_thread(scavenger_thread_main, NULL);
-        PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
-    }
+
+    ensure_thread_holding_lock();
     
     if (pas_scavenger_current_state == pas_scavenger_state_deep_sleep) {
         pas_scavenger_current_state = pas_scavenger_state_polling;
@@ -429,6 +472,8 @@ void pas_scavenger_suspend(void)
     pas_scavenger_data* data;
     data = ensure_data_instance(pas_lock_is_not_held);
     pas_system_mutex_lock(&data->lock);
+
+    PAS_ASSERT(pas_scavenger_shutdown_enabled);
     
     pas_scavenger_should_suspend_count++;
     PAS_ASSERT(pas_scavenger_should_suspend_count);
