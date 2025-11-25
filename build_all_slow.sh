@@ -44,6 +44,7 @@ test ! -d projects/pizfix
 ./build_pcre.sh      # Hilariously, pcre + pcre2 would like to depend on libedit, but libedit depends
 ./build_pcre2.sh     # on ncurses, and ncurses depends on pcre2. Luckily, only pcretest wants libedit.
 ./build_jpeg-turbo.sh
+./build_tiff.sh
 ./build_ncurses.sh
 ./build_libedit.sh
 ./build_openssl.sh
