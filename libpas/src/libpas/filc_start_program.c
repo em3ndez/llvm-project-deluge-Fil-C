@@ -191,6 +191,12 @@ void filc_start_program(int argc, char** argv,
                         pizlonated_getter pizlonated___libc_start_main,
                         pizlonated_getter pizlonated_main)
 {
+    if (PAS_GLIBC) {
+        /* I trust glibc's main thread stack size measurement. */
+        really_start_program(argc, argv, pizlonated___libc_start_main, pizlonated_main);
+        return;
+    }
+    
     struct args* args = (struct args*)bmalloc_allocate(sizeof(struct args));
     args->argc = argc;
     args->argv = argv;
