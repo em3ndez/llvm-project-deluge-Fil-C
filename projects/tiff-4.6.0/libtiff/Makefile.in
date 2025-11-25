@@ -122,9 +122,9 @@ host_triplet = @host@
 @WIN32_IO_FALSE@am__append_5 = tif_unix.c
 @HAVE_CXX_TRUE@am__append_6 = libtiffxx.la
 @HAVE_RPATH_TRUE@am__append_7 = $(LIBDIR)
-@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_8 = -Wl,--version-script=$(srcdir)/libtiff.map
+@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_8 = --version-script=$(srcdir)/libtiff.map
 @HAVE_RPATH_TRUE@am__append_9 = $(LIBDIR)
-@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_10 = -Wl,--version-script=$(srcdir)/libtiffxx.map
+@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_10 = --version-script=$(srcdir)/libtiffxx.map
 noinst_PROGRAMS = mkg3states$(EXEEXT)
 subdir = libtiff
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4

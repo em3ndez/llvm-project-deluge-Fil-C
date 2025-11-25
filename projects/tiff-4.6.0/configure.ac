@@ -126,9 +126,9 @@ AC_ARG_ENABLE([ld-version-script],
     [disable linker version script (default is enabled if supported)]),
     [have_ld_version_script=$enableval], [have_ld_version_script=yes])
 if test "$have_ld_version_script" != no; then
-  AC_MSG_CHECKING([if LD -Wl,--version-script works])
+  AC_MSG_CHECKING([if LD --version-script works])
   save_LDFLAGS="$LDFLAGS"
-  LDFLAGS="$LDFLAGS -Wl,--version-script=conftest.map"
+  LDFLAGS="$LDFLAGS --version-script=conftest.map"
   cat > conftest.map <<EOF
 VERS_1 {
         global: sym;
