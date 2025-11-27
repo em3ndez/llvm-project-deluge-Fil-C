@@ -349,17 +349,24 @@ bool filc_run_global_ctors = true;
 bool filc_run_global_dtors = true;
 bool filc_verbose_stop_the_world = false;
 
-static void set_stack_limit(filc_thread* thread)
+filc_stack_limit filc_try_compute_stack_limit(void)
 {
     static const bool verbose = false;
     
     static const size_t stack_slack = 32768;
 
     pthread_attr_t attr;
-    PAS_ASSERT(!pthread_getattr_np(pthread_self(), &attr));
+
+    filc_stack_limit result;
+    result.stack_limit = NULL;
+    
+    if (pthread_getattr_np(pthread_self(), &attr))
+        return result;
+    
     char* stack;
     size_t stack_size;
-    PAS_ASSERT(!pthread_attr_getstack(&attr, (void**)&stack, &stack_size));
+    if (pthread_attr_getstack(&attr, (void**)&stack, &stack_size))
+        return result;
 
     if (verbose)
         pas_log("stack = %p, stack_size = %zu\n", stack, stack_size);
@@ -373,7 +380,20 @@ static void set_stack_limit(filc_thread* thread)
     PAS_ASSERT(stack_size > stack_slack);
     PAS_ASSERT((char*)&stack > stack + stack_slack);
 
-    thread->stack_limit = stack + stack_slack;
+    result.stack_limit = stack + stack_slack;
+    return result;
+}
+
+filc_stack_limit filc_compute_stack_limit(void)
+{
+    filc_stack_limit result = filc_try_compute_stack_limit();
+    PAS_ASSERT(filc_stack_limit_did_succeed(result));
+    return result;
+}
+
+static void set_stack_limit(filc_thread* thread)
+{
+    thread->stack_limit = filc_compute_stack_limit().stack_limit;
 }
 
 static int file_log_fd = -1;
@@ -395,7 +415,7 @@ static void open_new_log_file_if_necessary(void)
         open_new_log_file();
 }
 
-void filc_initialize(void)
+void filc_initialize(filc_stack_limit stack_limit)
 {
     bool should_log_to_file = false;
     filc_get_bool_env("FILC_LOG_TO_FILE", &should_log_to_file);
@@ -488,7 +508,8 @@ void filc_initialize(void)
     thread->tlc_node_version = pas_thread_local_cache_node_version(thread->tlc_node);
     PAS_ASSERT(!pthread_key_create(&filc_thread_key, NULL));
     PAS_ASSERT(!pthread_setspecific(filc_thread_key, thread));
-    set_stack_limit(thread);
+    PAS_ASSERT(filc_stack_limit_did_succeed(stack_limit));
+    thread->stack_limit = stack_limit.stack_limit;
 
     /* This has to happen *after* we do our primordial allocations. */
     fugc_initialize_collector();

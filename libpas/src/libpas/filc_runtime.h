@@ -102,6 +102,7 @@ struct filc_signal_handler;
 struct filc_signal_queue_chunk;
 struct filc_signal_queue_chunk_header;
 struct filc_stack_aux;
+struct filc_stack_limit;
 struct filc_thread;
 struct filc_uintptr_ptr_hash_map_entry;
 struct filc_weak;
@@ -160,6 +161,7 @@ typedef struct filc_signal_handler filc_signal_handler;
 typedef struct filc_signal_queue_chunk filc_signal_queue_chunk;
 typedef struct filc_signal_queue_chunk_header filc_signal_queue_chunk_header;
 typedef struct filc_stack_aux filc_stack_aux;
+typedef struct filc_stack_limit filc_stack_limit;
 typedef struct filc_thread filc_thread;
 typedef struct filc_uintptr_ptr_hash_map_entry filc_uintptr_ptr_hash_map_entry;
 typedef struct filc_weak filc_weak;
@@ -747,6 +749,10 @@ struct filc_signal_queue_chunk_header {
 struct filc_signal_queue_chunk {
     filc_signal_queue_chunk_header header;
     siginfo_t infos[FILC_SIGNAL_QUEUE_CHUNK_SIZE];
+};
+
+struct filc_stack_limit {
+    void* stack_limit;
 };
 
 struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
@@ -1606,10 +1612,19 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_user_panic(
             __FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); \
     } while (0)
 
+PAS_API filc_stack_limit filc_try_compute_stack_limit(void);
+
+PAS_API filc_stack_limit filc_compute_stack_limit(void);
+
+static inline bool filc_stack_limit_did_succeed(filc_stack_limit stack_limit)
+{
+    return !!stack_limit.stack_limit;
+}
+
 /* Must be called from CRT before any FilC happens. If we ever allow FilC dylibs to be loaded 
    into non-FilC code, then we'll have to call it from compiler-generated initializers, too. It's
    not fine to call this more than once or at any other time than in the CRT. */
-PAS_API void filc_initialize(void);
+PAS_API void filc_initialize(filc_stack_limit stack_limit);
 
 PAS_API size_t filc_add_size(size_t a, size_t b);
 PAS_API size_t filc_mul_size(size_t a, size_t b);

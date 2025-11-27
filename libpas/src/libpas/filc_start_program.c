@@ -35,6 +35,7 @@
 extern char** environ;
 
 static void really_start_program(
+    filc_stack_limit stack_limit,
     int argc, char** argv,
     pizlonated_getter pizlonated___libc_start_main,
     pizlonated_getter pizlonated_main)
@@ -47,7 +48,7 @@ static void really_start_program(
 
     PAS_ASSERT(argc >= 1);
 
-    filc_initialize();
+    filc_initialize(stack_limit);
     filc_thread* my_thread = filc_get_my_thread();
     filc_enter(my_thread);
 
@@ -181,7 +182,8 @@ static void* thread_main(void* arg)
 
     bmalloc_deallocate(args);
 
-    really_start_program(argc, argv, pizlonated___libc_start_main, pizlonated_main);
+    really_start_program(
+        filc_compute_stack_limit(), argc, argv, pizlonated___libc_start_main, pizlonated_main);
     
     PAS_ASSERT(!"Should not get here");
     return NULL;
@@ -192,9 +194,14 @@ void filc_start_program(int argc, char** argv,
                         pizlonated_getter pizlonated_main)
 {
     if (PAS_GLIBC) {
-        /* I trust glibc's main thread stack size measurement. */
-        really_start_program(argc, argv, pizlonated___libc_start_main, pizlonated_main);
-        return;
+        /* I trust glibc's main thread stack size measurement. But, I know that it won't work during
+           system startup. */
+        filc_stack_limit stack_limit = filc_try_compute_stack_limit();
+        if (filc_stack_limit_did_succeed(stack_limit)) {
+            really_start_program(
+                stack_limit, argc, argv, pizlonated___libc_start_main, pizlonated_main);
+            return;
+        }
     }
     
     struct args* args = (struct args*)bmalloc_allocate(sizeof(struct args));
