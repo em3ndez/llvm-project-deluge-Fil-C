@@ -25,3 +25,13 @@ cd ..
 rm -rf pizlonated-ruby
 hash -r
 
+tar -xf fribidi-1.0.15.tar.xz
+cd fribidi-1.0.15
+mkdir -v build
+cd build
+meson setup --prefix=/usr --buildtype=debugoptimized
+ninja
+ninja install
+cd ../..
+rm -rf fribidi-1.0.15
+hash -r
