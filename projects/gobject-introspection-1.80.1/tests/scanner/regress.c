@@ -11,6 +11,8 @@
 
 #include "regress.h"
 
+#include <stdfil.h>
+
 static gboolean abort_on_error = TRUE;
 
 #define ASSERT_VALUE(condition)  \
@@ -2349,7 +2351,7 @@ regress_test_obj_class_init (RegressTestObjClass *klass)
                    0     /* n_params */,
                    NULL  /* param_types */);
 
-  param_types[0] = regress_test_simple_boxed_a_get_gtype() | G_SIGNAL_TYPE_STATIC_SCOPE;
+  param_types[0] = zorptr(regress_test_simple_boxed_a_get_gtype(), (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE);
   klass->test_signal_with_static_scope_arg =
     g_signal_newv ("test-with-static-scope-arg",
                    G_TYPE_FROM_CLASS (gobject_class),
@@ -2653,7 +2655,7 @@ regress_test_obj_class_init (RegressTestObjClass *klass)
       g_signal_new ("sig-with-gerror", G_TYPE_FROM_CLASS (klass),
                     G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                     g_cclosure_marshal_generic, G_TYPE_NONE, 1,
-                    G_TYPE_ERROR | G_SIGNAL_TYPE_STATIC_SCOPE);
+                    (GType)((uintptr_t)G_TYPE_ERROR | (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
   gobject_class->set_property = regress_test_obj_set_property;
   gobject_class->get_property = regress_test_obj_get_property;

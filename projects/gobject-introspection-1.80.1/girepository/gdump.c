@@ -171,7 +171,7 @@ invoke_error_quark (GModule *self, const char *symbol, GError **error)
 		   G_FILE_ERROR,
 		   G_FILE_ERROR_FAILED,
 		   "Failed to find symbol '%s'", symbol);
-      return G_TYPE_INVALID;
+      return (GQuark)G_TYPE_INVALID;
     }
 
   return sym ();
@@ -220,23 +220,23 @@ value_to_string (const GValue *value)
     {
       GType value_type = G_VALUE_TYPE (value);
 
-      switch (G_TYPE_FUNDAMENTAL (value_type))
+      switch ((uintptr_t)G_TYPE_FUNDAMENTAL (value_type))
         {
-        case G_TYPE_BOXED:
+        case (uintptr_t)G_TYPE_BOXED:
           if (g_value_get_boxed (value) == NULL)
             return NULL;
           else
             return value_transform_to_string (value);
           break;
 
-        case G_TYPE_OBJECT:
+        case (uintptr_t)G_TYPE_OBJECT:
           if (g_value_get_object (value) == NULL)
             return NULL;
           else
             return value_transform_to_string (value);
           break;
 
-        case G_TYPE_POINTER:
+        case (uintptr_t)G_TYPE_POINTER:
           return NULL;
 
         default:
@@ -551,24 +551,24 @@ dump_type (GType type, const char *symbol, FILE *out)
    */
   GObjectClass *gobject_class = g_type_class_ref (G_TYPE_OBJECT);
 
-  switch (g_type_fundamental (type))
+  switch ((uintptr_t)g_type_fundamental (type))
     {
-    case G_TYPE_OBJECT:
+    case (uintptr_t)G_TYPE_OBJECT:
       dump_object_type (type, symbol, out);
       break;
-    case G_TYPE_INTERFACE:
+    case (uintptr_t)G_TYPE_INTERFACE:
       dump_interface_type (type, symbol, out);
       break;
-    case G_TYPE_BOXED:
+    case (uintptr_t)G_TYPE_BOXED:
       dump_boxed_type (type, symbol, out);
       break;
-    case G_TYPE_FLAGS:
+    case (uintptr_t)G_TYPE_FLAGS:
       dump_flags_type (type, symbol, out);
       break;
-    case G_TYPE_ENUM:
+    case (uintptr_t)G_TYPE_ENUM:
       dump_enum_type (type, symbol, out);
       break;
-    case G_TYPE_POINTER:
+    case (uintptr_t)G_TYPE_POINTER:
       /* GValue, etc.  Just skip them. */
       break;
     default:

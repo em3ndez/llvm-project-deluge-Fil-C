@@ -154,6 +154,7 @@ ln -s libc++abi.so.1 $LFS/usr/lib/libc++abi.so
 cp -rv $FILCSRC/build/include/c++ $LFS/usr/include
 mkdir -p $LFS/usr/include/x86_64-unknown-linux-gnu
 cp -rv $FILCSRC/build/include/x86_64-unknown-linux-gnu/c++ $LFS/usr/include/x86_64-unknown-linux-gnu
+cp -v $FILCSRC/pizlix/hacked_ldd $LFS/usr/bin/ldd
 
 echo "lc" > $LFS/sources/lfsbuildstate
 

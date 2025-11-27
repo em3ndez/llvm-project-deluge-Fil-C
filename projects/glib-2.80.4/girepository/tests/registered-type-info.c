@@ -95,7 +95,7 @@ test_boxed (RepositoryFixture *fx,
 
       g_test_message ("Expecting %s to %s", types[i].name, types[i].expect_boxed ? "be boxed" : "not be boxed");
 
-      g_assert_cmpuint (G_TYPE_FROM_INSTANCE (type_info), ==, types[i].expect_info_type);
+      g_assert_cmpuint ((uintptr_t)G_TYPE_FROM_INSTANCE (type_info), ==, (uintptr_t)types[i].expect_info_type);
 
       if (types[i].expect_nonnull_gtype_info)
         {

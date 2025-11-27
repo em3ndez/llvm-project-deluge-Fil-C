@@ -16,6 +16,14 @@ meson setup ..                  \
       -D man-pages=disabled
 ninja
 ninja install
+
+../../build_postlc3_chroot_subproject_gobject_introspection.sh
+
+# Now rebuild glib
+meson configure -D introspection=enabled
+ninja
+ninja install
+
 cd ../..
 rm -rf pizlonated-glib
 

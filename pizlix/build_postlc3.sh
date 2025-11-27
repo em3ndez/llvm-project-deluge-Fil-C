@@ -38,6 +38,7 @@ cp -v packaging-24.1.tar.gz $LFS/sources
 cp -v daemon-0.6.4.tar.gz $LFS/sources
 cp -v build_postlc3_sub2_chroot.sh $LFS/sources
 cp -v build_postlc3_chroot_project_glib.sh $LFS/sources
+cp -v build_postlc3_chroot_subproject_gobject_introspection.sh $LFS/sources
 cp -v build_postlc3_chroot_project_cairo.sh $LFS/sources
 cp -v build_postlc3_chroot_project_weston.sh $LFS/sources
 cp -v build_postlc3_chroot_project_seatd.sh $LFS/sources

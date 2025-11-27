@@ -28,3 +28,4 @@ rm -vf projects/*/pizlonated-*.tar.gz
 ./package-source.sh projects/tiff-4.6.0 pizlonated-tiff
 ./package-source.sh projects/libwebp-1.4.0 pizlonated-libwebp
 ./package-source.sh projects/openjpeg-2.5.2 pizlonated-openjpeg
+./package-source.sh projects/gobject-introspection-1.80.1 pizlonated-gobject-introspection
