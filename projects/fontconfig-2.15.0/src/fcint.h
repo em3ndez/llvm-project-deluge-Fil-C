@@ -143,6 +143,9 @@ FC_ASSERT_STATIC (sizeof (FcRef) == sizeof (int));
 #define FcStrdup(s) ((FcChar8 *) strdup ((const char *) (s)))
 #define FcFree(s) (free ((FcChar8 *) (s)))
 
+ptrdiff_t FcPtrToOffsetImpl(const void* base, const void* ptr);
+void* FcOffsetToPtrImpl(const void* base, ptrdiff_t offset);
+
 /*
  * Serialized data structures use only offsets instead of pointers
  * A low bit of 1 indicates an offset.
@@ -158,10 +161,10 @@ FC_ASSERT_STATIC (sizeof (FcRef) == sizeof (int));
 #define FcOffsetDecode(p)	(((intptr_t) (p)) & ~1)
 
 /* Compute pointer offset */
-#define FcPtrToOffset(b,p)	((ptrdiff_t) ((intptr_t) (p) - (intptr_t) (b)))
+#define FcPtrToOffset(b,p)	FcPtrToOffsetImpl(b, p)
 
 /* Given base address, offset and type, return a pointer */
-#define FcOffsetToPtr(b,o,t)	((t *) ((intptr_t) (b) + (ptrdiff_t) (o)))
+#define FcOffsetToPtr(b,o,t)	((t *) FcOffsetToPtrImpl(b, o))
 
 /* Given base address, encoded offset and type, return a pointer */
 #define FcEncodedOffsetToPtr(b,p,t) FcOffsetToPtr(b,FcOffsetDecode(p),t)

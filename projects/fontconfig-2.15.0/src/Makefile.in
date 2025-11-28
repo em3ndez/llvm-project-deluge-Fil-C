@@ -173,7 +173,7 @@ am_libfontconfig_la_OBJECTS = fcatomic.lo fccache.lo fccfg.lo \
 	fcformat.lo fcfreetype.lo fcfs.lo fcptrlist.lo fchash.lo \
 	fcinit.lo fclang.lo fclist.lo fcmatch.lo fcmatrix.lo fcname.lo \
 	fcobjs.lo fcpat.lo fcrange.lo fcserialize.lo fcstat.lo \
-	fcstr.lo fcweight.lo fcxml.lo ftglue.lo
+	fcstr.lo fcweight.lo fcxml.lo ftglue.lo fcfilc.o
 libfontconfig_la_OBJECTS = $(am_libfontconfig_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -216,7 +216,7 @@ am__depfiles_remade = ./$(DEPDIR)/fcarch.Po ./$(DEPDIR)/fcatomic.Plo \
 	./$(DEPDIR)/fcrange.Plo ./$(DEPDIR)/fcserialize.Plo \
 	./$(DEPDIR)/fcstat.Plo ./$(DEPDIR)/fcstr.Plo \
 	./$(DEPDIR)/fcweight.Plo ./$(DEPDIR)/fcxml.Plo \
-	./$(DEPDIR)/ftglue.Plo
+	./$(DEPDIR)/ftglue.Plo ./$(DEPDIR)/fcfilc.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -524,7 +524,8 @@ libfontconfig_la_SOURCES = \
 	fcwindows.h \
 	fcxml.c \
 	ftglue.h \
-	ftglue.c
+	ftglue.c \
+	fcfilc.c
 
 lib_LTLIBRARIES = libfontconfig.la
 libfontconfig_la_LDFLAGS = \
@@ -672,6 +673,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/fcweight.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/fcxml.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/ftglue.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/fcfilc.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -870,6 +872,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/fcweight.Plo
 	-rm -f ./$(DEPDIR)/fcxml.Plo
 	-rm -f ./$(DEPDIR)/ftglue.Plo
+	-rm -f ./$(DEPDIR)/fcfilc.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -944,6 +947,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/fcweight.Plo
 	-rm -f ./$(DEPDIR)/fcxml.Plo
 	-rm -f ./$(DEPDIR)/ftglue.Plo
+	-rm -f ./$(DEPDIR)/fcfilc.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
