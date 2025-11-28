@@ -1905,7 +1905,7 @@ pygobject_emit(PyGObject *self, PyObject *args)
 
     for (i = 0; i < query.n_params; i++)
 	g_value_init(&params[i + 1],
-		     query.param_types[i] & ~G_SIGNAL_TYPE_STATIC_SCOPE);
+		     zandptr(query.param_types[i], ~(uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
     for (i = 0; i < query.n_params; i++) {
 	PyObject *item = PyTuple_GetItem(args, i+1);
 
@@ -1926,7 +1926,7 @@ pygobject_emit(PyGObject *self, PyObject *args)
     }    
 
     if (query.return_type != G_TYPE_NONE)
-	g_value_init(&ret, query.return_type & ~G_SIGNAL_TYPE_STATIC_SCOPE);
+	g_value_init(&ret, zandptr(query.return_type, ~(uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
     
     Py_BEGIN_ALLOW_THREADS;
     g_signal_emitv(params, signal_id, detail, &ret);
@@ -1936,7 +1936,7 @@ pygobject_emit(PyGObject *self, PyObject *args)
 	g_value_unset(&params[i]);
     
     g_free(params);
-    if ((query.return_type & ~G_SIGNAL_TYPE_STATIC_SCOPE) != G_TYPE_NONE) {
+    if ((zandptr(query.return_type, ~(uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE)) != G_TYPE_NONE) {
       gboolean was_floating = FALSE;
 
       if (G_VALUE_HOLDS_OBJECT (&ret)) {
@@ -2000,11 +2000,11 @@ pygobject_chain_from_overridden(PyGObject *self, PyObject *args)
 
     for (i = 0; i < query.n_params; i++)
 	g_value_init(&params[i + 1],
-		     query.param_types[i] & ~G_SIGNAL_TYPE_STATIC_SCOPE);
+		     zandptr(query.param_types[i], ~(uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
     for (i = 0; i < query.n_params; i++) {
 	PyObject *item = PyTuple_GetItem(args, i);
 
-	if (pyg_boxed_check(item, (query.param_types[i] & ~G_SIGNAL_TYPE_STATIC_SCOPE))) {
+	if (pyg_boxed_check(item, (zandptr(query.param_types[i], ~(uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE)))) {
 	    g_value_set_static_boxed(&params[i+1], pyg_boxed_get(item, void));
 	}
 	else if (pyg_value_from_pyobject(&params[i+1], item) < 0) {
@@ -2022,7 +2022,7 @@ pygobject_chain_from_overridden(PyGObject *self, PyObject *args)
 	}
     }
     if (query.return_type != G_TYPE_NONE)
-	g_value_init(&ret, query.return_type & ~G_SIGNAL_TYPE_STATIC_SCOPE);
+	g_value_init(&ret, zandptr(query.return_type, ~(uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
     g_signal_chain_from_overridden(params, &ret);
     for (i = 0; i < query.n_params + 1; i++)
 	g_value_unset(&params[i]);

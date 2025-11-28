@@ -6,7 +6,7 @@ set -x
 rm -rf pizlonated-glib
 tar -xf pizlonated-glib.tar.gz
 cd pizlonated-glib
-mkdir build
+mkdir -v build
 cd build
 meson setup ..                  \
       --prefix=/usr             \

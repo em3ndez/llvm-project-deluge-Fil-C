@@ -192,8 +192,8 @@ create_property (const gchar  *prop_name,
 {
     GParamSpec *pspec = NULL;
 
-    switch (G_TYPE_FUNDAMENTAL(prop_type)) {
-    case G_TYPE_CHAR:
+    switch ((uintptr_t)G_TYPE_FUNDAMENTAL(prop_type)) {
+    case (uintptr_t)G_TYPE_CHAR:
 	{
 	    gchar minimum, maximum, default_value;
 
@@ -204,7 +204,7 @@ create_property (const gchar  *prop_name,
 				       maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_UCHAR:
+    case (uintptr_t)G_TYPE_UCHAR:
 	{
 	    gchar minimum, maximum, default_value;
 
@@ -215,7 +215,7 @@ create_property (const gchar  *prop_name,
 					maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_BOOLEAN:
+    case (uintptr_t)G_TYPE_BOOLEAN:
 	{
 	    gboolean default_value;
 
@@ -225,7 +225,7 @@ create_property (const gchar  *prop_name,
 					  default_value, flags);
 	}
 	break;
-    case G_TYPE_INT:
+    case (uintptr_t)G_TYPE_INT:
 	{
 	    gint minimum, maximum, default_value;
 
@@ -236,7 +236,7 @@ create_property (const gchar  *prop_name,
 				      maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_UINT:
+    case (uintptr_t)G_TYPE_UINT:
 	{
 	    guint minimum, maximum, default_value;
 
@@ -247,7 +247,7 @@ create_property (const gchar  *prop_name,
 				       maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_LONG:
+    case (uintptr_t)G_TYPE_LONG:
 	{
 	    glong minimum, maximum, default_value;
 
@@ -258,7 +258,7 @@ create_property (const gchar  *prop_name,
 				       maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_ULONG:
+    case (uintptr_t)G_TYPE_ULONG:
 	{
 	    gulong minimum, maximum, default_value;
 
@@ -269,7 +269,7 @@ create_property (const gchar  *prop_name,
 					maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_INT64:
+    case (uintptr_t)G_TYPE_INT64:
 	{
 	    gint64 minimum, maximum, default_value;
 
@@ -280,7 +280,7 @@ create_property (const gchar  *prop_name,
 					maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_UINT64:
+    case (uintptr_t)G_TYPE_UINT64:
 	{
 	    guint64 minimum, maximum, default_value;
 
@@ -291,7 +291,7 @@ create_property (const gchar  *prop_name,
 					 maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_ENUM:
+    case (uintptr_t)G_TYPE_ENUM:
 	{
 	    gint default_value;
 	    PyObject *pydefault;
@@ -307,7 +307,7 @@ create_property (const gchar  *prop_name,
 				       prop_type, default_value, flags);
 	}
 	break;
-    case G_TYPE_FLAGS:
+    case (uintptr_t)G_TYPE_FLAGS:
 	{
 	    guint default_value;
 	    PyObject *pydefault;
@@ -323,7 +323,7 @@ create_property (const gchar  *prop_name,
 					prop_type, default_value, flags);
 	}
 	break;
-    case G_TYPE_FLOAT:
+    case (uintptr_t)G_TYPE_FLOAT:
 	{
 	    gfloat minimum, maximum, default_value;
 
@@ -334,7 +334,7 @@ create_property (const gchar  *prop_name,
 					maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_DOUBLE:
+    case (uintptr_t)G_TYPE_DOUBLE:
 	{
 	    gdouble minimum, maximum, default_value;
 
@@ -345,7 +345,7 @@ create_property (const gchar  *prop_name,
 					 maximum, default_value, flags);
 	}
 	break;
-    case G_TYPE_STRING:
+    case (uintptr_t)G_TYPE_STRING:
 	{
 	    const gchar *default_value;
 
@@ -355,17 +355,17 @@ create_property (const gchar  *prop_name,
 					 default_value, flags);
 	}
 	break;
-    case G_TYPE_PARAM:
+    case (uintptr_t)G_TYPE_PARAM:
 	if (!PyArg_ParseTuple(args, ""))
 	    return NULL;
 	pspec = g_param_spec_param (prop_name, nick, blurb, prop_type, flags);
 	break;
-    case G_TYPE_BOXED:
+    case (uintptr_t)G_TYPE_BOXED:
 	if (!PyArg_ParseTuple(args, ""))
 	    return NULL;
 	pspec = g_param_spec_boxed (prop_name, nick, blurb, prop_type, flags);
 	break;
-    case G_TYPE_POINTER:
+    case (uintptr_t)G_TYPE_POINTER:
 	if (!PyArg_ParseTuple(args, ""))
 	    return NULL;
 	if (prop_type == G_TYPE_GTYPE)
@@ -373,13 +373,13 @@ create_property (const gchar  *prop_name,
 	else
 	    pspec = g_param_spec_pointer (prop_name, nick, blurb, flags);
 	break;
-    case G_TYPE_OBJECT:
-    case G_TYPE_INTERFACE:
+    case (uintptr_t)G_TYPE_OBJECT:
+    case (uintptr_t)G_TYPE_INTERFACE:
 	if (!PyArg_ParseTuple(args, ""))
 	    return NULL;
 	pspec = g_param_spec_object (prop_name, nick, blurb, prop_type, flags);
 	break;
-    case G_TYPE_VARIANT:
+    case (uintptr_t)G_TYPE_VARIANT:
 	{
 	    PyObject *pydefault;
             GVariant *default_value = NULL;

@@ -383,20 +383,20 @@ test_gvalue_ret_callback (GObject *object, GType type)
   ret = g_malloc0 (sizeof (GValue));
   g_value_init (ret, type);
 
-  switch (type) {
-    case G_TYPE_INT:
+  switch ((uintptr_t)type) {
+    case (uintptr_t)G_TYPE_INT:
       g_value_set_int(ret, G_MAXINT);
       break;
-    case G_TYPE_INT64:
+    case (uintptr_t)G_TYPE_INT64:
       g_value_set_int64(ret, G_MAXINT64);
       break;
-    case G_TYPE_UINT:
+    case (uintptr_t)G_TYPE_UINT:
       g_value_set_uint(ret, G_MAXUINT);
       break;
-    case G_TYPE_UINT64:
+    case (uintptr_t)G_TYPE_UINT64:
       g_value_set_uint64(ret, G_MAXUINT64);
       break;
-    case G_TYPE_STRING:
+    case (uintptr_t)G_TYPE_STRING:
       g_value_set_string(ret, "hello");
       break;
     default:
