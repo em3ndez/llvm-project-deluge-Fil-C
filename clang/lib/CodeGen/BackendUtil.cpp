@@ -67,6 +67,7 @@
 #include "llvm/Transforms/Instrumentation/AddressSanitizerOptions.h"
 #include "llvm/Transforms/Instrumentation/BoundsChecking.h"
 #include "llvm/Transforms/Instrumentation/DataFlowSanitizer.h"
+#include "llvm/Transforms/Instrumentation/DeleteRedundantPollchecks.h"
 #include "llvm/Transforms/Instrumentation/FilPizlonator.h"
 #include "llvm/Transforms/Instrumentation/GCOVProfiler.h"
 #include "llvm/Transforms/Instrumentation/HWAddressSanitizer.h"
@@ -1111,6 +1112,12 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
           }
           MPM.addPass(FilPizlonatorPass());
         });
+
+    PB.registerOptimizerLastEPCallback([](ModulePassManager &MPM,
+                                          OptimizationLevel Level,
+                                          ThinOrFullLTOPhase) {
+      MPM.addPass(DeleteRedundantPollchecksPass());
+    });
 
     if (LangOpts.ObjCAutoRefCount) {
       PB.registerPipelineStartEPCallback(
