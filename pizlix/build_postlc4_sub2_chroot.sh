@@ -52,3 +52,11 @@ cd ..
 rm -rf iso-codes-4.16.0
 hash -r
 
+tar -xf Mako-1.3.5.tar.gz
+cd Mako-1.3.5
+pip3 wheel -w dist --no-build-isolation --no-deps --no-cache-dir $PWD
+pip3 install --no-index --find-links=dist --no-cache-dir --no-user Mako
+cd ..
+rm -rf Mako-1.3.5
+hash -r
+
