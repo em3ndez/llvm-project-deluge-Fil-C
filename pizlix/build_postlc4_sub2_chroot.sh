@@ -60,3 +60,4 @@ cd ..
 rm -rf Mako-1.3.5
 hash -r
 
+./build_postlc4_chroot_project_mesa.sh
