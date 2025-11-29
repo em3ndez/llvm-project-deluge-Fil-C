@@ -42,3 +42,13 @@ hash -r
 
 ./build_postlc4_chroot_project_pygobject.sh
 ./build_postlc4_chroot_project_graphene.sh
+
+tar -xf iso-codes_4.16.0.orig.tar.xz
+cd iso-codes-4.16.0
+./configure --prefix=/usr
+make
+make install
+cd ..
+rm -rf iso-codes-4.16.0
+hash -r
+

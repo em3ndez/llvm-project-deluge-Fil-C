@@ -56,6 +56,9 @@ cp -v build_postlc3_chroot_project_harfbuzz.sh $LFS/sources
 
 ./build_chroot_late.sh /sources/build_postlc3_sub2_chroot.sh
 
+mkdir -pv $LFS/usr/share/fonts
+cp -rv dejavu $LFS/usr/share/fonts/
+
 echo "postlc3" > /mnt/lfs/sources/lfsbuildstate
 
 ./build_unmount.sh
