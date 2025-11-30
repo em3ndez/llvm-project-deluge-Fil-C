@@ -18,6 +18,8 @@
 #include <gtk/gtk.h>
 #include <string.h>
 
+#include <stdfil.h>
+
 /* --- helper macros for property value generation --- */
 /* dvalue=+0: generate minimum value
  * dvalue=.x: generate value within value range proportional to x.
@@ -107,7 +109,11 @@ pspec_select_value (GParamSpec *pspec,
   else if (G_IS_PARAM_SPEC_UNICHAR (pspec))
     g_value_set_uint (value, SELECT_VALUE (dvalue, ((GParamSpecUnichar*) pspec)->default_value, FALSE, TRUE));
   else if (G_IS_PARAM_SPEC_GTYPE (pspec))
-    g_value_set_gtype (value, SELECT_VALUE ((int) dvalue, ((GParamSpecGType*) pspec)->is_a_type, 0, (uintptr_t) GTK_TYPE_WIDGET));
+    {
+      /* I don't know what to do here, though I haven't thought about it for very long. */
+      zerror("WTF");
+      /* g_value_set_gtype (value, (GType) SELECT_VALUE ((int) dvalue, (uintptr_t) ((GParamSpecGType*) pspec)->is_a_type, (uintptr_t) 0, (uintptr_t) GTK_TYPE_WIDGET)); */
+    }
   else if (G_IS_PARAM_SPEC_STRING (pspec))
     {
       GParamSpecString *sspec = (GParamSpecString*) pspec;

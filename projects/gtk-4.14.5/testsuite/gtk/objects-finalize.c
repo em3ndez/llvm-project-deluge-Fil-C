@@ -53,7 +53,7 @@ check_finalized (gpointer data,
 static void
 test_finalize_object (gconstpointer data)
 {
-  GType test_type = GPOINTER_TO_SIZE (data);
+  GType test_type = (GType) data;
   GObject *object;
   gboolean done;
 
@@ -183,7 +183,7 @@ main (int argc, char **argv)
 	{
 	  char *test_path = g_strdup_printf ("/FinalizeObject/%s", g_type_name (all_types[i]));
 
-	  g_test_add_data_func (test_path, GSIZE_TO_POINTER (all_types[i]), test_finalize_object);
+	  g_test_add_data_func (test_path, all_types[i], test_finalize_object);
 
 	  g_free (test_path);
 	}

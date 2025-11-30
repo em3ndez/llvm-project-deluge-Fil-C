@@ -292,7 +292,7 @@ pango_language_get_default (void)
 {
   static PangoLanguage *result = NULL; /* MT-safe */
 
-  if (g_once_init_enter (&result))
+  if (g_once_init_enter_pointer (&result))
     {
       gchar *lc_ctype;
       PangoLanguage *lang;
@@ -301,7 +301,7 @@ pango_language_get_default (void)
       lang = pango_language_from_string (lc_ctype);
       g_free (lc_ctype);
 
-      g_once_init_leave (&result, lang);
+      g_once_init_leave_pointer (&result, lang);
     }
 
   return result;
