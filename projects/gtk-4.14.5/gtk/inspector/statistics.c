@@ -296,7 +296,7 @@ update_type_counts (gpointer data)
   GtkInspectorStatistics *sl = data;
   GType type;
 
-  for (type = G_TYPE_INTERFACE; type <= G_TYPE_FUNDAMENTAL_MAX; type += (1 << G_TYPE_FUNDAMENTAL_SHIFT))
+  for (type = G_TYPE_INTERFACE; type <= G_TYPE_FUNDAMENTAL_MAX; type = (GType) ((uintptr_t) type + (1 << G_TYPE_FUNDAMENTAL_SHIFT)))
     {
       if (!G_TYPE_IS_INSTANTIATABLE (type))
         continue;

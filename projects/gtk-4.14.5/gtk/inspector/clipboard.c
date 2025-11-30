@@ -89,7 +89,7 @@ load_gtype (GtkDataViewer *viewer,
   if (GDK_IS_CLIPBOARD (data_source))
     {
       gdk_clipboard_read_value_async (GDK_CLIPBOARD (data_source),
-                                      GPOINTER_TO_SIZE (gtype),
+                                      (GType) gtype,
                                       G_PRIORITY_DEFAULT,
                                       cancellable,
                                       load_gtype_value,
@@ -98,7 +98,7 @@ load_gtype (GtkDataViewer *viewer,
   else if (GDK_IS_DROP (data_source))
     {
       gdk_drop_read_value_async (GDK_DROP (data_source),
-                                 GPOINTER_TO_SIZE (gtype),
+                                 (GType) gtype,
                                  G_PRIORITY_DEFAULT,
                                  cancellable,
                                  load_gtype_value,
@@ -257,7 +257,7 @@ init_formats (GtkInspectorClipboard *self,
 
   gtypes = gdk_content_formats_get_gtypes (formats, &n);
   for (i = 0; i < n; i++)
-    add_content_type_row (self, list, g_type_name (gtypes[i]), data_source, G_CALLBACK (load_gtype), GSIZE_TO_POINTER (gtypes[i]));
+    add_content_type_row (self, list, g_type_name (gtypes[i]), data_source, G_CALLBACK (load_gtype), gtypes[i]);
 
   mime_types = gdk_content_formats_get_mime_types (formats, &n);
   for (i = 0; i < n; i++)

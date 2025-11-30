@@ -1687,9 +1687,9 @@ gtk_settings_load_from_key_file (GtkSettings       *settings,
         continue;
 
       value_type = G_PARAM_SPEC_VALUE_TYPE (pspec);
-      switch (value_type)
+      switch ((uintptr_t) value_type)
         {
-        case G_TYPE_BOOLEAN:
+        case (uintptr_t) G_TYPE_BOOLEAN:
           {
             gboolean b_val;
 
@@ -1700,8 +1700,8 @@ gtk_settings_load_from_key_file (GtkSettings       *settings,
             break;
           }
 
-        case G_TYPE_INT:
-        case G_TYPE_UINT:
+        case (uintptr_t) G_TYPE_INT:
+        case (uintptr_t) G_TYPE_UINT:
           {
             int i_val;
 
@@ -1712,7 +1712,7 @@ gtk_settings_load_from_key_file (GtkSettings       *settings,
             break;
           }
 
-        case G_TYPE_DOUBLE:
+        case (uintptr_t) G_TYPE_DOUBLE:
           {
             double d_val;
 

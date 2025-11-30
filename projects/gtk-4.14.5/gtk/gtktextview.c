@@ -63,6 +63,8 @@
 #include "gtkwidgetprivate.h"
 #include "gtkwindow.h"
 
+#include <stdfil.h>
+
 /**
  * GtkTextView:
  *
@@ -1515,9 +1517,9 @@ gtk_text_view_class_init (GtkTextViewClass *klass)
                   _gtk_marshal_BOOLEAN__ENUM_BOXED_BOXED_BOXED,
                   G_TYPE_BOOLEAN, 4,
                   GTK_TYPE_TEXT_EXTEND_SELECTION,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE);
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE));
   g_signal_set_va_marshaller (signals[EXTEND_SELECTION],
                               G_TYPE_FROM_CLASS (klass),
                               _gtk_marshal_BOOLEAN__ENUM_BOXED_BOXED_BOXEDv);

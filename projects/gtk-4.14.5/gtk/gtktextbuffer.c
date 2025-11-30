@@ -38,6 +38,8 @@
 #include "gtkpangoprivate.h"
 #include "gtkprivate.h"
 
+#include <stdfil.h>
+
 #define DEFAULT_MAX_UNDO 200
 
 /**
@@ -564,8 +566,8 @@ gtk_text_buffer_class_init (GtkTextBufferClass *klass)
                   _gtk_marshal_VOID__BOXED_STRING_INT,
                   G_TYPE_NONE,
                   3,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE,
-                  G_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE,
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
+                  zorptr (G_TYPE_STRING, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
                   G_TYPE_INT);
   g_signal_set_va_marshaller (signals[INSERT_TEXT], G_TYPE_FROM_CLASS (klass),
                               _gtk_marshal_VOID__BOXED_STRING_INTv);
@@ -596,7 +598,7 @@ gtk_text_buffer_class_init (GtkTextBufferClass *klass)
                   _gtk_marshal_VOID__BOXED_OBJECT,
                   G_TYPE_NONE,
                   2,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE,
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
                   GDK_TYPE_PAINTABLE);
   g_signal_set_va_marshaller (signals[INSERT_PAINTABLE],
                               G_TYPE_FROM_CLASS (klass),
@@ -629,7 +631,7 @@ gtk_text_buffer_class_init (GtkTextBufferClass *klass)
                   _gtk_marshal_VOID__BOXED_OBJECT,
                   G_TYPE_NONE,
                   2,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE,
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
                   GTK_TYPE_TEXT_CHILD_ANCHOR);
   g_signal_set_va_marshaller (signals[INSERT_CHILD_ANCHOR],
                               G_TYPE_FROM_CLASS (klass),
@@ -662,8 +664,8 @@ gtk_text_buffer_class_init (GtkTextBufferClass *klass)
                   _gtk_marshal_VOID__BOXED_BOXED,
                   G_TYPE_NONE,
                   2,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE,
-                  GTK_TYPE_TEXT_ITER | G_SIGNAL_TYPE_STATIC_SCOPE);
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE),
+                  zorptr (GTK_TYPE_TEXT_ITER, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE));
   g_signal_set_va_marshaller (signals[DELETE_RANGE],
                               G_TYPE_FROM_CLASS (klass),
                               _gtk_marshal_VOID__BOXED_BOXEDv);
