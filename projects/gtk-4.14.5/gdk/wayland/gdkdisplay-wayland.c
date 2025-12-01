@@ -64,6 +64,8 @@
 
 #include "gdk/gdkprivate.h"
 
+#include <pizlonated_syscalls.h>
+
 /* Keep g_assert() defined even if we disable it globally,
  * as we use it in many places as a handy mechanism to check
  * for non-NULL
@@ -1349,7 +1351,8 @@ open_shared_memory (void)
 #if defined (MFD_ALLOW_SEALING)
           options |= MFD_ALLOW_SEALING;
 #endif
-          ret = syscall (__NR_memfd_create, "gdk-wayland", options);
+          /* FIXME: Change this back after we fix Fil-C issue #155. */
+          ret = zsys_memfd_create ("gdk-wayland", options);
 
           /* fall back to shm_open until debian stops shipping 3.16 kernel
            * See bug 766341

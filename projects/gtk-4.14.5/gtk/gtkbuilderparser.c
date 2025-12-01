@@ -1531,8 +1531,7 @@ parse_signal (ParserData   *data,
 
 /* Called by GtkBuilder */
 void
-_free_signal_info (SignalInfo *info,
-                   gpointer    user_data)
+_free_signal_info (SignalInfo *info)
 {
   g_free (info->handler);
   g_free (info->connect_object_name);

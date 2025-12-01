@@ -227,8 +227,7 @@ void       gtk_builder_take_bindings (GtkBuilder *builder,
 
 gboolean  _gtk_builder_finish (GtkBuilder  *builder,
                                GError     **error);
-void _free_signal_info (SignalInfo *info,
-                        gpointer user_data);
+void _free_signal_info (SignalInfo *info);
 void _free_binding_info (BindingInfo *info,
                          gpointer user_data);
 void free_binding_expression_info (BindingExpressionInfo *info);
