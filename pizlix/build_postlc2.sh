@@ -35,7 +35,6 @@ su $FILCOWNER ./build_postlc2_sub1_packaging.sh
 cp -v $FILCSRC/projects/*/pizlonated-*.tar.gz $LFS/sources
 cp -v which-2.21.tar.gz $LFS/sources
 cp -v brotli-1.1.0.tar.gz $LFS/sources
-cp -v patchelf-0.18.0.tar.gz $LFS/sources
 cp -v libunistring-1.2.tar.xz $LFS/sources
 cp -v libpsl-0.21.5.tar.gz $LFS/sources
 cp -v make-ca-1.16.1.tar.gz $LFS/sources

@@ -10,14 +10,14 @@ cd /sources
 ./build_postlc2_chroot_project_dhcpcd.sh
 hash -r
 
-tar -xf patchelf-0.18.0.tar.gz
-cd patchelf-0.18.0
+tar -xf pizlonated-patchelf.tar.gz
+cd pizlonated-patchelf
 ./configure --prefix=/usr \
             --docdir=/usr/share/doc/patchelf-0.18.0
 make
 make install
 cd ..
-rm -rf patchelf-0.18.0
+rm -rf pizlonated-patchelf
 hash -r
 
 tar -xf libunistring-1.2.tar.xz

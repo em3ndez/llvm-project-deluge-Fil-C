@@ -30,4 +30,5 @@ rm -vf projects/*/pizlonated-*.tar.gz
 ./package-source.sh projects/openssh-9.8p1 pizlonated-openssh
 ./package-source.sh projects/yaml-0.2.5 pizlonated-yaml
 ./package-source.sh projects/ruby-3.3.10 pizlonated-ruby
+./package-source.sh projects/patchelf-0.18.0 pizlonated-patchelf
 
