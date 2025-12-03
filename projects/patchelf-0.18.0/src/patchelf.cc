@@ -339,7 +339,7 @@ ElfFile<ElfFileParamNames>::ElfFile(FileContents fContents)
     size_t shstrtabptr;
     if (__builtin_add_overflow(reinterpret_cast<size_t>(fileContents->data()), rdi(shdrs[shstrtabIndex].sh_offset), &shstrtabptr))
         error("string table overflow");
-    const char *shstrtab = reinterpret_cast<const char *>(shstrtabptr);
+    const char *shstrtab = reinterpret_cast<const char *>(fileContents->data()) + rdi(shdrs[shstrtabIndex].sh_offset);
     checkPointer(fileContents, shstrtab, shstrtabSize);
 
     if (shstrtabSize == 0)
