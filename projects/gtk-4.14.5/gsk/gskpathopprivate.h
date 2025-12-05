@@ -23,6 +23,8 @@
 #include "gskpath.h"
 #include "gskpathbuilder.h"
 
+#include <stdfil.h>
+
 G_BEGIN_DECLS
 
 typedef gpointer gskpathop;
@@ -66,13 +68,13 @@ gsk_pathop_encode (GskPathOperation        op,
   /* g_assert (op & GSK_PATHOP_OPERATION_MASK == op); */
   g_assert ((GPOINTER_TO_SIZE (pts) & GSK_PATHOP_OPERATION_MASK) == 0);
 
-  return GSIZE_TO_POINTER (GPOINTER_TO_SIZE (pts) | op);
+  return zorptr (pts, op);
 }
 
 static inline const graphene_point_t *
 gsk_pathop_points (gskpathop pop)
 {
-  return GSIZE_TO_POINTER (GPOINTER_TO_SIZE (pop) & ~GSK_PATHOP_OPERATION_MASK);
+  return zandptr (pop, ~GSK_PATHOP_OPERATION_MASK);
 }
 
 static inline

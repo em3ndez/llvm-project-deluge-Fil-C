@@ -1307,8 +1307,11 @@ gsk_standard_contour_init (GskContour             *contour,
 
   offset += self->points - points;
   for (gsize i = 0; i < n_ops; i++)
-    self->ops[i] = gsk_pathop_encode (gsk_pathop_op (ops[i]),
-                                      gsk_pathop_points (ops[i]) + offset);
+    {
+      gsize raw_point = (gsize) (gsk_pathop_points (ops[i]) + offset);
+      self->ops[i] = gsk_pathop_encode (gsk_pathop_op (ops[i]),
+                                        zmkptr (self->points, raw_point));
+    }
 
   gsk_bounding_box_init (&self->bounds,  &self->points[0], &self->points[0]);
   for (gsize i = 1; i < self->n_points; i ++)
