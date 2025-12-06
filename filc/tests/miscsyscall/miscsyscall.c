@@ -31,6 +31,7 @@
 #include <threads.h>
 #include <stdlib.h>
 #include <sys/timex.h>
+#include <sys/mman.h>
 
 #ifndef SA_RESTORER
 #define SA_RESTORER 0x4000000
@@ -585,6 +586,9 @@ int main(int argc, char** argv)
     pthread_setschedparam(pthread_self(), 0, &param);
     int policy;
     pthread_getschedparam(pthread_self(), &policy, &param);
+
+    ZASSERT(!posix_madvise(zgc_aligned_alloc(4096, 4096), 4096, POSIX_MADV_NORMAL));
+    ZASSERT(!posix_madvise(zgc_aligned_alloc(4096, 4096), 4096, POSIX_MADV_DONTNEED));
 
     zprintf("No worries.\n");
     return 0;
