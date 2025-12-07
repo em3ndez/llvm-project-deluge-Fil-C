@@ -3794,6 +3794,12 @@ class Pizlonator {
     return underlyingPtr(PAO.HighP).plus(PAO.Offset);
   }
 
+  Instruction* getAsInstruction(ConstantExpr* CE) {
+    Instruction* I = CE->getAsInstruction();
+    dropUB(I);
+    return I;
+  }
+
   PtrAndOffset canonicalizePtr(Value* HighP) {
     Value* OriginalHighP = HighP;
     int64_t Offset = 0;
@@ -3808,7 +3814,7 @@ class Pizlonator {
 
     if (ConstantExpr* CE = dyn_cast<ConstantExpr>(HighP)) {
       if (CE->getOpcode() == Instruction::GetElementPtr) {
-        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(getAsInstruction(CE));
         APInt OffsetAP(64, 0, false);
         if (GEP->accumulateConstantOffset(DLBefore, OffsetAP)) {
           Offset += OffsetAP.getZExtValue();
@@ -5769,7 +5775,7 @@ class Pizlonator {
       case Instruction::GetElementPtr: {
         ConstantTarget Target = constexprRecurse(CE->getOperand(0));
         APInt OffsetAP(64, 0, false);
-        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(getAsInstruction(CE));
         bool result = GEP->accumulateConstantOffset(DL, OffsetAP);
         GEP->deleteValue();
         if (!result)
@@ -5939,7 +5945,7 @@ class Pizlonator {
     if (verbose)
       errs() << "Lowering CE = " << *CE << "\n";
 
-    Instruction* CEInst = CE->getAsInstruction();
+    Instruction* CEInst = getAsInstruction(CE);
     CEInst->insertBefore(InsertBefore);
     CEInst->setDebugLoc(InsertBefore->getDebugLoc());
 
@@ -7882,6 +7888,8 @@ class Pizlonator {
     if (GetElementPtrInst* GI = dyn_cast<GetElementPtrInst>(I)) {
       Value* HighP = GI->getOperand(0);
       GI->getOperandUse(0) = flightPtrPtr(HighP, GI);
+      if (GI->isInBounds())
+        errs() << "GI is in bounds: " << *GI << "\n";
       assert(!GI->isInBounds()); // Should have been cleared by dropUB().
       hackRAUW(GI, [&] () { return flightPtrWithPtr(HighP, GI, GI->getNextNode()); });
       return;
@@ -8461,7 +8469,7 @@ class Pizlonator {
       
       Use& U = I->getOperandUse(Index);
       if (ConstantExpr* CE = dyn_cast<ConstantExpr>(U)) {
-        Instruction* NewI = CE->getAsInstruction();
+        Instruction* NewI = getAsInstruction(CE);
         NewI->insertBefore(InsertBefore);
         expandConstantExprOperands(NewI);
         U = NewI;
@@ -9536,14 +9544,17 @@ class Pizlonator {
     }
   }
 
+  void dropUB(Instruction* I) {
+    I->dropUnknownNonDebugMetadata();
+    I->dropPoisonGeneratingAnnotations();
+    I->dropUBImplyingAttrsAndUnknownMetadata();
+  }
+
   void dropUB() {
     for (Function& F : M.functions()) {
       for (BasicBlock& BB : F) {
-        for (Instruction& I : BB) {
-          I.dropUnknownNonDebugMetadata();
-          I.dropPoisonGeneratingAnnotations();
-          I.dropUBImplyingAttrsAndUnknownMetadata();
-        }
+        for (Instruction& I : BB)
+          dropUB(&I);
       }
     }
   }
@@ -10719,7 +10730,7 @@ public:
       int64_t Offset = 0;
       if (ConstantExpr* CE = dyn_cast<ConstantExpr>(C)) {
         assert(CE->getOpcode() == Instruction::GetElementPtr);
-        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(getAsInstruction(CE));
         APInt OffsetAP(64, 0, false);
         bool Result = GEP->accumulateConstantOffset(DLBefore, OffsetAP);
         assert(Result);
