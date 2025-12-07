@@ -3856,6 +3856,70 @@ class Pizlonator {
         }
         assert(!hasPtrs(IAD.T));
         break;
+      case Intrinsic::x86_avx_maskload_pd:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(DoubleTy, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskload_ps:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(FloatTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskload_pd_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(DoubleTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskload_ps_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(FloatTy, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_pd:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(DoubleTy, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_ps:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(FloatTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_pd_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(DoubleTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_ps_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(FloatTy, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
       case Intrinsic::x86_avx512_mask_pmov_wb_mem_512:
         IAD.AK = AccessKind::Write;
         IAD.T = FixedVectorType::get(Int8Ty, 32);
@@ -6053,12 +6117,6 @@ class Pizlonator {
     Value* Ptr = IAD.Ptr;
     Value* Mask = IAD.Mask;
     assert(!hasPtrs(T));
-    uint64_t MaskSize = DL.getTypeSizeInBits(Mask->getType()).getFixedValue();
-    // Currently filc_masked_access_check_fail can only handle 64 bit masks max.
-    assert(MaskSize <= 64);
-    assert(MaskSize == T->getElementCount().getFixedValue());
-    assert(MaskSize * DL.getTypeAllocSize(T->getElementType()) == DL.getTypeAllocSize(T));
-    Type* MaskIntTy = Type::getIntNTy(C, MaskSize);
         
     // FIXME: We could query the abstract state to see if this is already above this lower bound.
     Instruction* IsBelowLowerFast = new ICmpInst(
@@ -6088,8 +6146,31 @@ class Pizlonator {
     //
     // This is an overflow-free way of saying:
     // Ptr + Offset >= Lower
-    Instruction* MaskInt = new BitCastInst(Mask, MaskIntTy, "filc_mask_as_int", BelowLowerTerm);
-    MaskInt->setDebugLoc(II->getDebugLoc());
+    uint64_t MaskSize = T->getElementCount().getFixedValue();
+    // Currently filc_masked_access_check_fail can only handle 64 bit masks max.
+    assert(MaskSize <= 64);
+    assert(MaskSize * DL.getTypeAllocSize(T->getElementType()) == DL.getTypeAllocSize(T));
+    Type* MaskIntTy = Type::getIntNTy(C, MaskSize);
+    auto FixMask = [&] (Instruction* Before) -> Value* {
+      Value* Result = Mask;
+      if (FixedVectorType* MaskVT = dyn_cast<FixedVectorType>(Result->getType())) {
+        assert(MaskVT->getElementCount().getFixedValue() == MaskSize);
+        if (MaskVT->getElementType() != Int1Ty) {
+          Instruction* Bools = new ICmpInst(
+            Before, ICmpInst::ICMP_SLT, Result, ConstantAggregateZero::get(Result->getType()),
+            "filc_mask_get_bools");
+          Bools->setDebugLoc(II->getDebugLoc());
+          Result = Bools;
+        }
+      }
+      if (Result->getType() != MaskIntTy) {
+        Instruction* MaskInt = new BitCastInst(Result, MaskIntTy, "filc_mask_as_int", Before);
+        MaskInt->setDebugLoc(II->getDebugLoc());
+        Result = MaskInt;
+      }
+      return Result;
+    };
+    Value* MaskInt = FixMask(BelowLowerTerm);
     Instruction* MaskIsZero = new ICmpInst(
       BelowLowerTerm, ICmpInst::ICMP_EQ, MaskInt, ConstantInt::get(MaskIntTy, 0),
       "filc_mask_is_zero");
@@ -6127,8 +6208,7 @@ class Pizlonator {
     //
     // This is an overflow-free way of saying:
     // Ptr + Size <= Upper
-    MaskInt = new BitCastInst(Mask, MaskIntTy, "filc_mask_as_int", AboveUpperTerm);
-    MaskInt->setDebugLoc(II->getDebugLoc());
+    MaskInt = FixMask(AboveUpperTerm);
     MaskIsZero = new ICmpInst(
       AboveUpperTerm, ICmpInst::ICMP_EQ, MaskInt, ConstantInt::get(MaskIntTy, 0),
       "filc_mask_is_zero");
