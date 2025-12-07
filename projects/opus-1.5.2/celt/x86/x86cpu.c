@@ -51,6 +51,15 @@ static _inline void cpuid(unsigned int CPUInfo[4], unsigned int InfoType)
 
 #else
 
+#ifdef __FILC__
+#ifdef CPU_INFO_BY_ASM
+#undef CPU_INFO_BY_ASM
+#endif
+#ifndef CPU_INFO_BY_C
+#define CPU_INFO_BY_C 1
+#endif
+#endif
+
 #if defined(CPU_INFO_BY_C)
 #include <cpuid.h>
 #endif
