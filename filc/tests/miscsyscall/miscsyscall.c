@@ -613,6 +613,13 @@ int main(int argc, char** argv)
     ZASSERT(prctl(PR_GET_THP_DISABLE) != -1);
     ZASSERT(prctl(PR_GET_TIMING) != -1);
 
+    fd = memfd_create(zasprintf("miscsyscall-%d", getpid()), 0);
+    ZASSERT(fd >= 2);
+    ZASSERT(!close(fd));
+    fd = syscall(SYS_memfd_create, zasprintf("miscsyscall-%d", getpid()), 0);
+    ZASSERT(fd >= 2);
+    ZASSERT(!close(fd));
+
     zprintf("No worries.\n");
     return 0;
 }

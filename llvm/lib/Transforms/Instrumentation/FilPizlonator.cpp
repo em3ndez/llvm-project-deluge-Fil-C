@@ -5863,6 +5863,8 @@ class Pizlonator {
       assert(!GlobalToGetter.count(nullptr));
       assert(!Getters.count(nullptr));
       assert(!Getters.count(G));
+      if (!GlobalToGetter.count(G))
+        errs() << "Cannot find getter for: " << *G << "\n";
       assert(GlobalToGetter.count(G));
       assert(MyThread);
       Function* Getter = GlobalToGetter[G];

@@ -636,6 +636,10 @@ long zsys_syscall(long n, ...)
         callee = zsys_request_key;
         break;
 
+    case 319 /* SYS_memfd_create */:
+        callee = zsys_memfd_create;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:
