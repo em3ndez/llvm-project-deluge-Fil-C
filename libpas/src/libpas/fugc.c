@@ -92,6 +92,8 @@ static pas_system_condition collector_thread_state_cond;
 static bool collector_thread_is_running = false;
 
 #define COLLECTOR_CONTROL_REQUEST_SUSPEND 1u
+#define COLLECTOR_CONTROL_REQUEST_SUSPEND_PARALLEL_WORKERS 2u
+#define COLLECTOR_CONTROL_REQUEST_HANDSHAKE 4u
 
 static unsigned collector_control_request = 0;
 
@@ -163,6 +165,9 @@ static unsigned num_workers_finished;
 
 static unsigned num_active_markers;
 
+static void (*handshake_callback)(void* arg);
+static void* handshake_callback_arg;
+
 static unsigned parallelism_target(void)
 {
     PAS_ASSERT(fugc_number_of_cores);
@@ -210,8 +215,7 @@ static pas_thread_return_type parallel_worker_thread(void* arg)
         } else
             my_worker = NULL;
         if (!my_worker || collector_control_request) {
-            if (threads_locked) {
-                PAS_ASSERT(!collector_control_request);
+            if (threads_locked && !collector_control_request) {
                 PAS_ASSERT(!my_worker);
                 continue;
             }
@@ -1420,6 +1424,27 @@ static pas_thread_return_type collector_thread(void* arg)
         pas_log("[%d] fugc: thread started\n", pas_getpid());
 
     while (!(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND)) {
+        if ((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE)) {
+            if (fugc_verbose >= VERBOSE_PHASES)
+                pas_log("[%d] fugc: handshaking\n", pas_getpid());
+            pas_system_mutex_lock(&collector_thread_state_lock);
+            PAS_ASSERT((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE));
+            PAS_ASSERT(handshake_callback);
+
+            /* The current handshake protocol requires us to wait until all worker threads are
+               suspended before we handshake. */
+            while (num_worker_threads_alive() > 1) {
+                pas_system_condition_wait(&collector_thread_state_cond,
+                                          &collector_thread_state_lock);
+            }
+            
+            handshake_callback(handshake_callback_arg);
+            collector_control_request &= ~COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
+            handshake_callback = NULL;
+            handshake_callback_arg = NULL;
+            pas_system_condition_broadcast(&collector_thread_state_cond);
+            pas_system_mutex_unlock(&collector_thread_state_lock);
+        }
         switch (current_collector_state) {
         case collector_waiting:
             wait_and_start_marking();
@@ -1577,7 +1602,9 @@ void fugc_suspend(void)
         return;
     }
     PAS_ASSERT(collector_thread_is_running);
-    PAS_ASSERT(!(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND));
+    /* FIXME: You could imagine having these different requests running concurrently. But we don't
+       allow it right now. */
+    PAS_ASSERT(!collector_control_request);
     collector_control_request |= COLLECTOR_CONTROL_REQUEST_SUSPEND;
     pas_system_condition_broadcast(&collector_thread_state_cond);
     while (collector_thread_is_running || num_worker_threads_alive() > 1)
@@ -1594,7 +1621,7 @@ void fugc_resume(void)
         return;
     }
     PAS_ASSERT(!collector_thread_is_running);
-    PAS_ASSERT(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND);
+    PAS_ASSERT(collector_control_request == COLLECTOR_CONTROL_REQUEST_SUSPEND);
     collector_control_request &= ~COLLECTOR_CONTROL_REQUEST_SUSPEND;
     collector_thread_is_running = true;
     create_thread();
@@ -1604,8 +1631,33 @@ void fugc_resume(void)
 void fugc_lock_threads(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
+    /* FIXME: Maybe it's better to wait until threads are not suspended? */
     PAS_ASSERT(!collector_suspend_count);
     threads_locked = true;
+    pas_system_mutex_unlock(&collector_thread_state_lock);
+}
+
+void fugc_handshake(void (*callback)(void* arg), void* arg)
+{
+    PAS_ASSERT(callback);
+    pas_system_mutex_lock(&collector_thread_state_lock);
+    /* FIXME: Maybe it's better to wait until threads are not suspended? */
+    PAS_ASSERT(!collector_suspend_count);
+    /* FIXME: You could imagine having these different requests running concurrently. But we don't
+       allow it right now. */
+    PAS_ASSERT(!collector_control_request);
+    
+    collector_control_request = COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
+    PAS_ASSERT(!handshake_callback);
+    PAS_ASSERT(!handshake_callback_arg);
+    handshake_callback = callback;
+    handshake_callback_arg = arg;
+    pas_system_condition_broadcast(&collector_thread_state_cond);
+    while (collector_control_request == COLLECTOR_CONTROL_REQUEST_HANDSHAKE)
+        pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
+    PAS_ASSERT(!handshake_callback);
+    PAS_ASSERT(!handshake_callback_arg);
+    
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }
 

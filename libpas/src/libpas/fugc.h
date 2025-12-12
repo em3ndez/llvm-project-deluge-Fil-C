@@ -79,6 +79,19 @@ PAS_API void fugc_resume(void);
 /* Forces the FUGC to not shut down any threads and not create new threads. */
 PAS_API void fugc_lock_threads(void);
 
+/* Causes all parallel worker threads to shut down, runs the given callback on the collector thread,
+   and then lets the collector proceed as normal (which may result in the parallel worker threads
+   being restarted).
+
+   Note that if you locked threads, then the parallel worker threads will not restart.
+
+   Users of this API require a looser contract: any thread left running after this call returns has
+   either run the callback, or was created by a thread that had run the callback.
+
+   It's a strong expectation that the callback will run exactly once per thread and will never run
+   on a thread created by a thread that had already run the callback. */
+PAS_API void fugc_handshake(void (*callback)(void* arg), void* arg);
+
 enum fugc_mark_fast_result {
     fugc_mark_fast_already_marked,
     fugc_mark_fast_marked_leaf,

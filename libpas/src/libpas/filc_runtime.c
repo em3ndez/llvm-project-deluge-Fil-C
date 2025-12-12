@@ -559,14 +559,23 @@ void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads)
             PAS_ASSERT(thread->next_thread->prev_thread == thread);
         (*num_threads)++;
     }
-    /* NOTE: This barely works with fork! We snapshot exited, which disagrees with the idea that
-       we can only bmalloc_allocate when entered. But, we snapshot when handshaking, an we cannot
-       have handshakes in progress at time of fork, so it's fine. */
-    *threads = (filc_thread**)bmalloc_allocate(sizeof(filc_thread*) * *num_threads);
-    size_t index = 0;
-    for (thread = filc_first_thread; thread; thread = thread->next_thread)
-        (*threads)[index++] = thread;
+    if (threads) {
+        /* NOTE: This barely works with fork! We snapshot exited, which disagrees with the idea that
+           we can only bmalloc_allocate when entered. But, we snapshot when handshaking, and we cannot
+           have handshakes in progress at time of fork, so it's fine. */
+        *threads = (filc_thread**)bmalloc_allocate(sizeof(filc_thread*) * *num_threads);
+        size_t index = 0;
+        for (thread = filc_first_thread; thread; thread = thread->next_thread)
+            (*threads)[index++] = thread;
+    }
     filc_thread_list_lock_unlock();
+}
+
+size_t filc_count_threads(void)
+{
+    size_t result;
+    filc_snapshot_threads(NULL, &result);
+    return result;
 }
 
 bool filc_thread_participates_in_handshakes(filc_thread* thread)
@@ -833,6 +842,16 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
     filc_soft_handshake_lock_unlock();
+}
+
+void filc_runtime_threads_handshake(void (*callback)(void* arg), void* arg)
+{
+    /* FIXME: This is currently quite inefficient because it does things sequentially. */
+    pas_scavenger_handshake(callback, arg);
+    fugc_handshake(callback, arg);
+
+    /* FIXME: We could support handshaking the profiler. */
+    PAS_ASSERT(!filc_sampling_profiler_enabled);
 }
 
 static void run_pollcheck_callback_if_necessary(filc_thread* my_thread)
@@ -8378,6 +8397,13 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
     pas_scavenger_suspend();
     if (verbose)
         pas_log("suspending GC\n");
+    /* Why can't we stop the world before suspending?
+     
+       If we could then it removes the risk of a confusing panic if someone uses
+       fugc_lock_threads() and fugc_handshake() while another thread is forking. That said, those
+       calls shouldn't be used in multithreaded processes that fork, since they have to do with
+       installing seccomp filters. The right way to install seccomp filters is early during 
+       startup before you have any threads. */
     fugc_suspend();
     if (verbose)
         pas_log("stopping world\n");
@@ -10749,6 +10775,38 @@ int filc_native_zsys_sigsuspend(filc_thread* my_thread, filc_ptr mask_ptr)
     return FILC_SYSCALL(my_thread, sigsuspend(&mask));
 }
 
+typedef struct {
+    unsigned long value;
+    int the_errno;
+} no_new_privs_data;
+
+static void no_new_privs_handshake_callback(void* arg)
+{
+    no_new_privs_data* data = (no_new_privs_data*)arg;
+    if (data->the_errno)
+        return;
+    int result = prctl(PR_SET_NO_NEW_PRIVS, data->value, 0, 0, 0);
+    PAS_ASSERT(!result || result == -1);
+    if (result < 0)
+        data->the_errno = errno;
+}
+
+typedef struct {
+    struct sock_fprog* fprog;
+    int the_errno;
+} set_seccomp_data;
+
+static void set_seccomp_handshake_callback(void* arg)
+{
+    set_seccomp_data* data = (set_seccomp_data*)arg;
+    if (data->the_errno)
+        return;
+    int result = prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, data->fprog, 0, 0);
+    PAS_ASSERT(!result || result == -1);
+    if (result < 0)
+        data->the_errno = errno;
+}
+
 int filc_native_zsys_prctl(filc_thread* my_thread, int option, filc_cc_cursor* args)
 {
     switch (option) {
@@ -10774,7 +10832,28 @@ int filc_native_zsys_prctl(filc_thread* my_thread, int option, filc_cc_cursor* a
         return FILC_SYSCALL(my_thread, prctl(PR_SET_PDEATHSIG, value, 0, 0, 0));
     }
 
-    case PR_SET_NO_NEW_PRIVS:
+    case PR_SET_NO_NEW_PRIVS: {
+        unsigned long value = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
+        size_t num_threads = filc_count_threads();
+        FILC_CHECK(
+            num_threads == 1,
+            NULL,
+            "cannot be multithreaded while doing PR_SET_NO_NEW_PRIVS (currently have %zu threads).",
+            num_threads);
+        filc_exit(my_thread);
+        no_new_privs_data data;
+        data.value = value;
+        data.the_errno = 0;
+        filc_runtime_threads_handshake(no_new_privs_handshake_callback, &data);
+        no_new_privs_handshake_callback(&data);
+        filc_enter(my_thread);
+        if (data.the_errno) {
+            filc_set_errno(data.the_errno);
+            return -1;
+        }
+        return 0;
+    }
+        
     case PR_GET_SPECULATION_CTRL:
     case PR_SET_SPECULATION_CTRL: {
         unsigned long value1 = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
@@ -10787,10 +10866,20 @@ int filc_native_zsys_prctl(filc_thread* my_thread, int option, filc_cc_cursor* a
     case PR_SET_SECCOMP: {
         unsigned long mode = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
 
-        if (mode == SECCOMP_MODE_STRICT)
-            return FILC_SYSCALL(my_thread, prctl(PR_SET_SECCOMP, mode, 0, 0, 0));
+        if (mode == SECCOMP_MODE_STRICT) {
+            filc_internal_panic(
+                NULL, "cannot PR_SET_SECCOMP SECCOMP_MODE_STRICT; that's currently too restrictive "
+                "for the Fil-C runtime.");
+        }
 
         if (mode == SECCOMP_MODE_FILTER) {
+            size_t num_threads = filc_count_threads();
+            FILC_CHECK(
+                num_threads == 1,
+                NULL,
+                "cannot be multithreaded while doing PR_SET_SECCOMP (currently have %zu threads).",
+                num_threads);
+            
             filc_ptr fprog_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
 
             /* Validate the sock_fprog structure is readable */
@@ -10801,15 +10890,26 @@ int filc_native_zsys_prctl(filc_thread* my_thread, int option, filc_cc_cursor* a
             filc_ptr filter_ptr = filc_load_ptr_at(my_thread, fprog_ptr, &fprog->filter);
 
             /* Validate the filter array is readable */
-            if (fprog->len > 0 && filc_ptr_ptr(filter_ptr))
+            if (fprog->len && filc_ptr_ptr(filter_ptr))
                 filc_check_read(filter_ptr, filc_mul_size(sizeof(struct sock_filter), fprog->len));
 
             /* Now create a native sock_fprog pointing to the validated filter */
             struct sock_fprog native_fprog;
             native_fprog.len = fprog->len;
             native_fprog.filter = (struct sock_filter*)filc_ptr_ptr(filter_ptr);
-
-            return FILC_SYSCALL(my_thread, prctl(PR_SET_SECCOMP, mode, &native_fprog, 0, 0));
+            
+            filc_exit(my_thread);
+            set_seccomp_data data;
+            data.fprog = &native_fprog;
+            data.the_errno = 0;
+            filc_runtime_threads_handshake(set_seccomp_handshake_callback, &data);
+            set_seccomp_handshake_callback(&data);
+            filc_enter(my_thread);
+            if (data.the_errno) {
+                filc_set_errno(data.the_errno);
+                return -1;
+            }
+            return 0;
         }
 
         /* Unknown or unsupported mode */

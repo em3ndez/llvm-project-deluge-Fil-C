@@ -65,6 +65,9 @@ double pas_scavenger_deep_sleep_timeout_in_milliseconds = 10. * 1000.;
 double pas_scavenger_period_in_milliseconds = 125.;
 uint64_t pas_scavenger_max_epoch_delta = 300ll * 1000ll * 1000ll;
 
+void (*pas_scavenger_handshake_callback)(void* arg);
+void* pas_scavenger_handshake_callback_arg;
+
 #if PAS_OS(DARWIN)
 static _Atomic qos_class_t pas_scavenger_requested_qos_class = QOS_CLASS_USER_INITIATED;
 
@@ -117,6 +120,21 @@ static bool handle_expendable_memory(pas_expendable_memory_scavenge_kind kind)
     should_go_again |= pas_large_expendable_memory_scavenge(kind);
     pas_heap_lock_unlock();
     return should_go_again;
+}
+
+static void service_handshake(void)
+{
+    pas_scavenger_data* instance = pas_scavenger_data_instance;
+    PAS_ASSERT(instance);
+    pas_system_mutex_assert_held(&instance->lock);
+    if (!pas_scavenger_handshake_callback) {
+        PAS_ASSERT(!pas_scavenger_handshake_callback_arg);
+        return;
+    }
+    pas_scavenger_handshake_callback(pas_scavenger_handshake_callback_arg);
+    pas_scavenger_handshake_callback = NULL;
+    pas_scavenger_handshake_callback_arg = NULL;
+    pas_system_condition_broadcast(&instance->cond);
 }
 
 static pas_thread_return_type scavenger_thread_main(void* arg)
@@ -285,6 +303,7 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
         should_shut_down = false;
         
         pas_system_mutex_lock(&data->lock);
+        service_handshake();
         
         PAS_ASSERT(pas_scavenger_current_state == pas_scavenger_state_polling ||
                    pas_scavenger_current_state == pas_scavenger_state_deep_sleep);
@@ -318,8 +337,10 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
                 pas_scavenger_current_state = pas_scavenger_state_deep_sleep;
             } else if (!pas_scavenger_shutdown_enabled) {
                 PAS_ASSERT(!pas_scavenger_should_suspend_count);
-                while (pas_scavenger_current_state == pas_scavenger_state_deep_sleep)
+                while (pas_scavenger_current_state == pas_scavenger_state_deep_sleep) {
                     pas_system_condition_wait(&data->cond, &data->lock);
+                    service_handshake();
+                }
             } else {
                 if (verbose)
                     pas_log("Considering deep sleep.\n");
@@ -336,6 +357,7 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
                     pas_system_condition_timed_wait(
                         &data->cond, &data->lock,
                         absolute_timeout_in_milliseconds_for_deep_pre_sleep);
+                    service_handshake();
                 }
                 
                 if (pas_scavenger_current_state == pas_scavenger_state_deep_sleep)
@@ -348,6 +370,7 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
             pas_system_condition_timed_wait(
                 &data->cond, &data->lock,
                 absolute_timeout_in_milliseconds_for_period_sleep);
+            service_handshake();
         }
         
         should_shut_down |= !!pas_scavenger_should_suspend_count;
@@ -355,6 +378,7 @@ static pas_thread_return_type scavenger_thread_main(void* arg)
         should_shut_down &= pas_scavenger_shutdown_enabled;
         
         if (should_shut_down) {
+            service_handshake();
             pas_scavenger_current_state = pas_scavenger_state_no_thread;
             pas_system_condition_broadcast(&data->cond);
         }
@@ -417,6 +441,23 @@ void pas_scavenger_lock_thread(void)
     PAS_ASSERT(!pas_scavenger_should_suspend_count);
     pas_scavenger_shutdown_enabled = false;
     ensure_thread_holding_lock();
+    pas_system_mutex_unlock(&data->lock);
+}
+
+void pas_scavenger_handshake(void (*callback)(void* arg), void* arg)
+{
+    pas_scavenger_data* data;
+    data = ensure_data_instance(pas_lock_is_not_held);
+    pas_system_mutex_lock(&data->lock);
+    while (pas_scavenger_handshake_callback)
+        pas_system_condition_wait(&data->cond, &data->lock);
+    if (pas_scavenger_current_state != pas_scavenger_state_no_thread) {
+        pas_scavenger_handshake_callback = callback;
+        pas_scavenger_handshake_callback_arg = arg;
+        pas_system_condition_broadcast(&data->cond);
+        while (pas_scavenger_handshake_callback)
+            pas_system_condition_wait(&data->cond, &data->lock);
+    }
     pas_system_mutex_unlock(&data->lock);
 }
 

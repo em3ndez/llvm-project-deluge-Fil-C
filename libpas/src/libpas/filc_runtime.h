@@ -1707,11 +1707,15 @@ PAS_API void filc_assert_my_thread_is_entered(void);
 PAS_API void filc_assert_my_thread_is_not_entered(void);
 
 PAS_API void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads);
+PAS_API size_t filc_count_threads(void);
 
 PAS_API void filc_soft_handshake_no_op_callback(filc_thread* my_thread, void* arg);
 
 /* Calls the callback from every thread. Returns when every thread has done so. */
 PAS_API void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), void* arg);
+
+/* Calls the callback from every runtime thread. */
+PAS_API void filc_runtime_threads_handshake(void (*callback)(void* arg), void* arg);
 
 PAS_API void filc_stop_the_world(void);
 PAS_API void filc_resume_the_world(void);
