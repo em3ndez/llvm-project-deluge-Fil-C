@@ -134,7 +134,6 @@ pas_system_thread_id filc_panicking_thread;
 
 FILC_FOR_EACH_LOCK(DEFINE_LOCK);
 
-PAS_DEFINE_LOCK(filc_soft_handshake);
 PAS_DEFINE_LOCK(filc_global_initialization);
 PAS_DEFINE_LOCK(filc_global_variable_roots);
 
@@ -147,7 +146,7 @@ filc_global_initialization_work_item_hash_map filc_global_initialization_map =
     PAS_HASHTABLE_INITIALIZER;
 
 unsigned filc_stop_the_world_count;
-pas_system_condition filc_stop_the_world_cond;
+pas_system_condition filc_handshake_cond;
 
 filc_thread* filc_first_thread;
 pthread_key_t filc_thread_key;
@@ -462,7 +461,7 @@ void filc_initialize(filc_stack_limit stack_limit)
     FILC_FOR_EACH_LOCK(INITIALIZE_LOCK);
 #undef INITIALIZE_LOCK
 
-    pas_system_condition_construct(&filc_stop_the_world_cond);
+    pas_system_condition_construct(&filc_handshake_cond);
 
     fugc_initialize_settings();
 
@@ -604,9 +603,9 @@ void filc_stop_the_world(void)
     static const bool verbose = false;
     
     filc_assert_my_thread_is_not_entered();
-    filc_stop_the_world_lock_lock();
+    filc_handshake_lock_lock();
     if (filc_stop_the_world_count++) {
-        filc_stop_the_world_lock_unlock();
+        filc_handshake_lock_unlock();
         return;
     }
     
@@ -655,7 +654,7 @@ void filc_stop_the_world(void)
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
 
-    filc_stop_the_world_lock_unlock();
+    filc_handshake_lock_unlock();
 }
 
 void filc_resume_the_world(void)
@@ -663,9 +662,9 @@ void filc_resume_the_world(void)
     static const bool verbose = false;
     
     filc_assert_my_thread_is_not_entered();
-    filc_stop_the_world_lock_lock();
+    filc_handshake_lock_lock();
     if (--filc_stop_the_world_count) {
-        filc_stop_the_world_lock_unlock();
+        filc_handshake_lock_unlock();
         return;
     }
 
@@ -702,15 +701,15 @@ void filc_resume_the_world(void)
     if (verbose)
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
-    pas_system_condition_broadcast(&filc_stop_the_world_cond);
-    filc_stop_the_world_lock_unlock();
+    pas_system_condition_broadcast(&filc_handshake_cond);
+    filc_handshake_lock_unlock();
 }
 
 void filc_wait_for_world_resumption_holding_lock(void)
 {
-    filc_stop_the_world_lock_assert_held();
+    filc_handshake_lock_assert_held();
     while (filc_stop_the_world_count)
-        pas_system_condition_wait(&filc_stop_the_world_cond, &filc_stop_the_world_lock);
+        pas_system_condition_wait(&filc_handshake_cond, &filc_handshake_lock);
 }
 
 static void run_pollcheck_callback(filc_thread* thread)
@@ -771,7 +770,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
     static const bool verbose = false;
 
     filc_assert_my_thread_is_not_entered();
-    filc_soft_handshake_lock_lock();
+    filc_handshake_lock_lock();
 
     sigset_t fullset;
     sigset_t oldset;
@@ -841,7 +840,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
     if (verbose)
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
-    filc_soft_handshake_lock_unlock();
+    filc_handshake_lock_unlock();
 }
 
 void filc_runtime_threads_handshake(void (*callback)(void* arg), void* arg)
@@ -8393,17 +8392,30 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
     static const bool verbose = false;
     filc_exit(my_thread);
     if (verbose)
+        pas_log("blocking signals in fork\n");
+    sigset_t fullset;
+    sigset_t oldset;
+    pas_reasonably_fill_sigset(&fullset);
+    PAS_ASSERT(!pthread_sigmask(SIG_BLOCK, &fullset, &oldset));
+    if (verbose)
         pas_log("suspending scavenger\n");
     pas_scavenger_suspend();
     if (verbose)
         pas_log("suspending GC\n");
     /* Why can't we stop the world before suspending?
      
-       If we could then it removes the risk of a confusing panic if someone uses
-       fugc_lock_threads() and fugc_handshake() while another thread is forking. That said, those
-       calls shouldn't be used in multithreaded processes that fork, since they have to do with
-       installing seccomp filters. The right way to install seccomp filters is early during 
-       startup before you have any threads. */
+       It's tempting. Like it seems that if we could STW before suspending the GC then it removes the
+       risk of a confusing panic if someone uses fugc_lock_threads() and fugc_handshake() while
+       another thread is forking. That said, those calls shouldn't be used in multithreaded processes
+       that fork, since they have to do with installing seccomp filters. The right way to install
+       seccomp filters is early during startup before you have any threads.
+    
+       Here's why that thinking is wrong: if we stop the world, then exited threads keep running. So,
+       stopping the world does not ensure that we won't have concurrent calls to things like
+       fugc_lock_threads(), fugc_handshake(), filc_soft_handshake(), etc.
+    
+       The only thing right about this style of thinking is that we don't *yet* have mutator threads
+       using soft handshake APIs. */
     fugc_suspend();
     if (verbose)
         pas_log("stopping world\n");
@@ -8411,9 +8423,11 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
     if (verbose)
         pas_log("telling sampling profiler about fork\n");
     filc_sampling_profiler_before_fork();
-    /* NOTE: We don't have to lock the soft handshake lock, since now that the world is stopped,
-       the FUGC is suspended, and the sampling profiler knows we're forking, nobody could be
-       using it. */
+    if (verbose)
+        pas_log("locking the handshake lock\n");
+    /* Eventually, we'll have exited threads using handshake APIs. Even with the world stopped, they
+       might go ahead and do that now. Let's make sure they don't. */
+    filc_handshake_lock_lock();
     if (verbose)
         pas_log("locking thread list\n");
     filc_thread_list_lock_lock();
@@ -8466,6 +8480,7 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
         for (thread = filc_first_thread; thread; thread = thread->next_thread)
             pas_system_mutex_unlock(&thread->lock);
     }
+    filc_handshake_lock_unlock();
     filc_thread_list_lock_unlock();
     if (!result)
         filc_sampling_profiler_after_fork_in_child();
@@ -8474,6 +8489,9 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
     filc_resume_the_world();
     fugc_resume();
     pas_scavenger_resume();
+    if (verbose)
+        pas_log("unblocking signals in fork\n");
+    PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
     filc_enter(my_thread);
     if (result < 0)
         filc_set_errno(my_errno);
@@ -12892,9 +12910,8 @@ bool filc_native_zthread_create2(filc_thread* my_thread, filc_ptr callback_ptr, 
     filc_exit(my_thread);
     /* Make sure we don't create threads while in a handshake. This will hold the thread in the
        !has_started && !thread state, so if the soft handshake doesn't see it, that's fine. */
-    filc_stop_the_world_lock_lock();
+    filc_handshake_lock_lock();
     filc_wait_for_world_resumption_holding_lock();
-    filc_soft_handshake_lock_lock();
     thread->has_started = true;
     pthread_t ignored_thread;
     sigset_t fullset;
@@ -12904,8 +12921,7 @@ bool filc_native_zthread_create2(filc_thread* my_thread, filc_ptr callback_ptr, 
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &thread->initial_blocked_sigs, NULL));
     if (result)
         thread->has_started = false;
-    filc_soft_handshake_lock_unlock();
-    filc_stop_the_world_lock_unlock();
+    filc_handshake_lock_unlock();
     if (result) {
         filc_enter(my_thread);
         pas_system_mutex_lock(&thread->lock);

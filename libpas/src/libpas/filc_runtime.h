@@ -1400,7 +1400,7 @@ PAS_API extern pas_system_thread_id filc_panicking_thread;
 
 #define FILC_FOR_EACH_LOCK(macro) \
     macro(thread_list); \
-    macro(stop_the_world)
+    macro(handshake)
 
 /* We use the system mutex for our global locks so that they are fork-friendly. The Darwin
    os_unfair_lock, which we use for most of libpas, is not fork-friendly. That's because
@@ -1420,7 +1420,6 @@ FILC_FOR_EACH_LOCK(FILC_DECLARE_LOCK);
 #undef FILC_DECLARE_LOCK
 
 /* These locks don't need to be held across fork, so no big deal. */
-PAS_DECLARE_LOCK(filc_soft_handshake);
 PAS_DECLARE_LOCK(filc_global_initialization);
 PAS_DECLARE_LOCK(filc_global_variable_roots);
 
@@ -1519,7 +1518,7 @@ PAS_CREATE_HASHTABLE(filc_global_initialization_work_item_hash_map,
 PAS_API extern filc_global_initialization_work_item_hash_map filc_global_initialization_map;
 
 PAS_API extern unsigned filc_stop_the_world_count;
-PAS_API extern pas_system_condition filc_stop_the_world_cond;
+PAS_API extern pas_system_condition filc_handshake_cond;
 
 PAS_API extern filc_thread* filc_first_thread;
 PAS_API extern pthread_key_t filc_thread_key;
