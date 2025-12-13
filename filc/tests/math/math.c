@@ -19,8 +19,10 @@ int main()
     ZASSERT(atanl(2.) < 1.1072);
     ZASSERT(logbl(2.) == 1.);
     ZASSERT(rintl(2.2) == 2.);
+#ifdef __USE_GNU
     ZASSERT(significandl(2.2) > 1.09);
     ZASSERT(significandl(2.2) < 1.11);
+#endif
     ZASSERT(asinl(.5) > 0.523);
     ZASSERT(asinl(.5) < 0.524);
     return 0;
