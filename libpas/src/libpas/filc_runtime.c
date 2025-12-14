@@ -8120,8 +8120,13 @@ int filc_native_zsys_sigaction(
     }
     if (user_oact) {
         check_user_sigaction(oact_ptr, filc_write_access);
-        if (is_unsafe_signal_for_handlers(signum))
+        if (is_unsafe_signal_for_handlers(signum)) {
+            if (oact.sa_handler != SIG_DFL) {
+                pas_log("Unexpected value of oact.sa_handler for signal %d: %p\n",
+                        signum, oact.sa_handler);
+            }
             PAS_ASSERT(oact.sa_handler == SIG_DFL);
+        }
         filc_signal_handler* old_handler = filc_signal_table[signum];
         if (is_special_signal_handler(oact.sa_handler)) {
             filc_store_ptr_at(my_thread, oact_ptr, &user_oact->sa_handler,
