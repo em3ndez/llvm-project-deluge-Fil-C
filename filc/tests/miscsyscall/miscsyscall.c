@@ -312,6 +312,8 @@ int main(int argc, char** argv)
     ZASSERT(!zis_unsafe_signal_for_handlers(SIGUSR1));
     ZASSERT(!zis_unsafe_signal_for_kill(SIGTRAP));
     ZASSERT(zis_unsafe_signal_for_handlers(SIGTRAP));
+    ZASSERT(!zis_unsafe_signal_for_kill(SIGSYS));
+    ZASSERT(zis_unsafe_signal_for_handlers(SIGSYS));
 
     struct statfs sfs;
     memset(&sfs, 0, sizeof(sfs));
@@ -619,6 +621,31 @@ int main(int argc, char** argv)
     fd = syscall(SYS_memfd_create, zasprintf("miscsyscall-%d", getpid()), 0);
     ZASSERT(fd >= 2);
     ZASSERT(!close(fd));
+
+    ZASSERT(signal(SIGILL, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGTRAP, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGBUS, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSEGV, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGFPE, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSYS, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGILL, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGTRAP, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGBUS, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSEGV, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGFPE, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSYS, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
 
     zprintf("No worries.\n");
     return 0;
