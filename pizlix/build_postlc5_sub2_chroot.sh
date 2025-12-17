@@ -42,3 +42,27 @@ make install
 cd ..
 rm -rf pizlonated-gnutls
 hash -r
+
+tar -xf gsettings-desktop-schemas-46.1.tar.xz
+cd gsettings-desktop-schemas-46.1
+sed -i -r 's:"(/system):"/org/gnome\1:g' schemas/*.in
+mkdir -v build
+cd build
+meson setup --prefix=/usr --buildtype=debugoptimized ..
+ninja
+ninja install
+cd ../..
+rm -rf gsettings-desktop-schemas-46.1
+hash -r
+
+tar -xf pizlonated-glib-networking.tar.gz
+cd pizlonated-glib-networking
+mkdir -v build
+cd build
+meson setup .. --prefix=/usr --buildtype=debugoptimized -D libproxy=disabled
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-glib-networking
+hash -r
+
