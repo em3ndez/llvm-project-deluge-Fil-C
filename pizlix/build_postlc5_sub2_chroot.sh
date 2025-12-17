@@ -66,3 +66,15 @@ cd ../..
 rm -rf pizlonated-glib-networking
 hash -r
 
+tar -xf pizlonated-libsoup.tar.gz
+cd pizlonated-libsoup
+mkdir -v build
+cd build
+# FIXME: Install vala and enable vapi!
+meson setup --prefix=/usr --buildtype=debugoptimized -D vapi=disabled -D gssapi=disabled -Dsysprof=disabled --wrap-mode=nofallback ..
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-libsoup
+hash -r
+
