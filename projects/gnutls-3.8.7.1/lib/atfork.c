@@ -45,11 +45,10 @@ static void fork_handler(void)
 #if defined(HAVE___REGISTER_ATFORK)
 extern int __register_atfork(void (*)(void), void (*)(void), void (*)(void),
 			     void *);
-extern void *__dso_handle;
 
 int _gnutls_register_fork_handler(void)
 {
-	if (__register_atfork(NULL, NULL, fork_handler, __dso_handle) != 0)
+	if (__register_atfork(NULL, NULL, fork_handler, NULL) != 0)
 		return gnutls_assert_val(GNUTLS_E_INTERNAL_ERROR);
 	return 0;
 }

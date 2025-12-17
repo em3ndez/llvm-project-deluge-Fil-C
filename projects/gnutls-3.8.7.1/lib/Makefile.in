@@ -175,7 +175,7 @@ host_triplet = @host@
 @ENABLE_FIPS140_TRUE@am__append_40 = $(FIPS140_LIBS) $(LTLIBDL)
 @ENABLE_FIPS140_TRUE@noinst_PROGRAMS = fipshmac$(EXEEXT)
 @NEED_LTLIBDL_TRUE@am__append_41 = $(LTLIBDL)
-@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_42 = -Wl,--version-script=$(srcdir)/libgnutls.map
+@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_42 = --version-script=$(srcdir)/libgnutls.map
 @HAVE_LD_VERSION_SCRIPT_FALSE@am__append_43 = -export-symbols-regex '^(gnutls|_gnutls).*'
 @ENABLE_MINITASN1_TRUE@am__append_44 = minitasn1/libminitasn1.la
 @ENABLE_MINITASN1_FALSE@am__append_45 = $(LIBTASN1_LIBS)

@@ -108,7 +108,7 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_1 = -Wl,--version-script=$(srcdir)/libdane.map
+@HAVE_LD_VERSION_SCRIPT_TRUE@am__append_1 = --version-script=$(srcdir)/libdane.map
 @HAVE_LD_VERSION_SCRIPT_FALSE@am__append_2 = -export-symbols-regex '^(dane).*'
 @HAVE_LD_OUTPUT_DEF_TRUE@am__append_3 = \
 @HAVE_LD_OUTPUT_DEF_TRUE@	-Wl,--output-def,libgnutls-dane-$(DLL_VERSION).def
