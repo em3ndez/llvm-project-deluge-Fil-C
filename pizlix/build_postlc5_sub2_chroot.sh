@@ -22,3 +22,12 @@ cd ..
 rm -rf sqlite-autoconf-3460100
 hash -r
 
+tar -xf pizlonated-nettle.tar.gz
+cd pizlonated-nettle
+./configure --prefix=/usr --disable-static --disable-assembler
+make
+make install
+cd ..
+rm -rf pizlonated-nettle
+hash -r
+

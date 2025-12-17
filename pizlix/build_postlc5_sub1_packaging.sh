@@ -14,4 +14,5 @@ test -d $FILCSRC/projects
 cd $FILCSRC
 
 rm -vf projects/*/pizlonated-*.tar.gz
+./package-source.sh projects/nettle-3.10 pizlonated-nettle
 

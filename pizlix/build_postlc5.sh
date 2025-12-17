@@ -30,7 +30,7 @@ su $FILCOWNER ./build_postlc5_sub1_packaging.sh
 ./build_unmount.sh
 ./build_mount.sh
 
-# cp -v $FILCSRC/projects/*/pizlonated-*.tar.gz $LFS/sources
+cp -v $FILCSRC/projects/*/pizlonated-*.tar.gz $LFS/sources
 cp -v sqlite-autoconf-3460100.tar.gz $LFS/sources
 cp -v build_postlc5_sub2_chroot.sh $LFS/sources
 
