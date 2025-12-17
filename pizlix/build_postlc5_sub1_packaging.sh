@@ -15,4 +15,6 @@ cd $FILCSRC
 
 rm -vf projects/*/pizlonated-*.tar.gz
 ./package-source.sh projects/nettle-3.10 pizlonated-nettle
+./package-source.sh projects/gnutls-3.8.7.1 pizlonated-gnutls
+
 

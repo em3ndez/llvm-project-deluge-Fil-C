@@ -31,3 +31,14 @@ cd ..
 rm -rf pizlonated-nettle
 hash -r
 
+tar -xf pizlonated-gnutls.tar.gz
+cd pizlonated-gnutls
+./configure --prefix=/usr \
+            --docdir=/usr/share/doc/gnutls-3.8.7.1 \
+            --with-default-trust-store-pkcs11="pkcs11:" \
+            --disable-hardware-acceleration
+make
+make install
+cd ..
+rm -rf pizlonated-gnutls
+hash -r
