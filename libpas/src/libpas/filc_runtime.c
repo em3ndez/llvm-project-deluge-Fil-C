@@ -8024,17 +8024,6 @@ static bool is_special_signal_handler(void* handler)
     return handler == SIG_DFL || handler == SIG_IGN;
 }
 
-static bool is_user_special_signal_handler(void* handler)
-{
-    return is_special_signal_handler(handler);
-}
-
-static void* from_user_special_signal_handler(void* handler)
-{
-    PAS_ASSERT(is_user_special_signal_handler(handler));
-    return handler;
-}
-
 static filc_ptr to_user_special_signal_handler(void* handler)
 {
     PAS_ASSERT(is_special_signal_handler(handler));
@@ -8049,12 +8038,6 @@ int filc_native_zsys_sigaction(
     if (verbose)
         pas_log("[%d] sigaction on signum = %d\n", getpid(), signum);
     
-    if (is_unsafe_signal_for_handlers(signum) && filc_ptr_ptr(act_ptr)) {
-        if (verbose)
-            pas_log("invalid signum and act is non-null.\n");
-        filc_set_errno(ENOSYS);
-        return -1;
-    }
     if (signum > FILC_MAX_USER_SIGNUM) {
         if (verbose)
             pas_log("bogus signum.\n");
@@ -8079,11 +8062,18 @@ int filc_native_zsys_sigaction(
         if (verbose)
             pas_log("restart = %s\n", (act.sa_flags & SA_RESTART) ? "yes" : "no");
         filc_ptr user_handler = filc_load_ptr_at(my_thread, act_ptr, &user_act->sa_handler);
-        if (is_user_special_signal_handler(filc_ptr_ptr(user_handler))) {
+        if (is_unsafe_signal_for_handlers(signum) && filc_ptr_ptr(act_ptr) != SIG_DFL) {
+            if (verbose)
+                pas_log("invalid signum and act's handler is not SIG_DFL.\n");
+            filc_set_errno(ENOSYS);
+            return -1;
+        }
+        if (is_special_signal_handler(filc_ptr_ptr(user_handler))) {
             if (verbose)
                 pas_log("setting special handler %p\n", filc_ptr_ptr(user_handler));
-            act.sa_handler = from_user_special_signal_handler(filc_ptr_ptr(user_handler));
+            act.sa_handler = filc_ptr_ptr(user_handler);
         } else {
+            PAS_ASSERT(!is_unsafe_signal_for_handlers(signum));
             if (verbose)
                 pas_log("setting user handler %p\n", filc_ptr_ptr(user_handler));
             filc_check_function_call(user_handler);
@@ -8120,11 +8110,13 @@ int filc_native_zsys_sigaction(
     if (user_oact) {
         check_user_sigaction(oact_ptr, filc_write_access);
         if (is_unsafe_signal_for_handlers(signum)) {
-            if (oact.sa_handler != SIG_DFL) {
+            if (oact.sa_handler != SIG_DFL &&
+                oact.sa_handler != SIG_IGN) {
                 pas_log("Unexpected value of oact.sa_handler for signal %d: %p\n",
                         signum, oact.sa_handler);
             }
-            PAS_ASSERT(oact.sa_handler == SIG_DFL);
+            PAS_ASSERT(oact.sa_handler == SIG_DFL ||
+                       oact.sa_handler == SIG_IGN);
         }
         filc_signal_handler* old_handler = filc_signal_table[signum];
         if (is_special_signal_handler(oact.sa_handler)) {
