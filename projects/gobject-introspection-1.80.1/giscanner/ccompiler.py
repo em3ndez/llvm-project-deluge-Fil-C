@@ -82,7 +82,7 @@ def customize_compiler(compiler):
         else:
             archiver = ar + ' ' + ar_flags
 
-        cc_cmd = cc + ' ' + cflags
+        cc_cmd = cc + ' ' + cflags + ' -g'
         compiler.set_executables(
             preprocessor=cpp,
             compiler=cc_cmd,
