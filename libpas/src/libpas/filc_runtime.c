@@ -105,6 +105,7 @@
 #include <sys/reboot.h>
 #include <linux/keyctl.h>
 #include <fenv.h>
+#include <dlfcn.h>
 
 #if PAS_GLIBC
 #include <sys/pidfd.h>
@@ -1653,6 +1654,11 @@ const filc_origin* filc_origin_next_inline(const filc_origin* origin)
 
 void filc_origin_dump_self(const filc_origin* origin, pas_stream* stream)
 {
+    Dl_info dl_info;
+    if (dladdr(origin, &dl_info)) {
+        if (dl_info.dli_fname)
+            pas_stream_printf(stream, "%s:", dl_info.dli_fname);
+    }
     if (origin) {
         PAS_ASSERT(origin->origin_node);
         if (origin->origin_node->filename)
