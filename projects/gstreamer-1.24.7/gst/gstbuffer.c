@@ -2680,9 +2680,9 @@ gst_parent_buffer_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { GST_META_TAG_MEMORY_REFERENCE_STR, NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstParentBufferMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
 
   return type;
@@ -2702,7 +2702,7 @@ gst_parent_buffer_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (gst_parent_buffer_meta_api_get_type (),
         "GstParentBufferMeta",
@@ -2710,7 +2710,7 @@ gst_parent_buffer_meta_get_info (void)
         (GstMetaInitFunction) _gst_parent_buffer_meta_init,
         (GstMetaFreeFunction) _gst_parent_buffer_meta_free,
         _gst_parent_buffer_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
   }
 
   return meta_info;
@@ -2851,10 +2851,10 @@ gst_reference_timestamp_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type =
         gst_meta_api_type_register ("GstReferenceTimestampMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
 
   return type;
@@ -2917,7 +2917,7 @@ gst_reference_timestamp_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *meta = NULL;
     GstMetaInfo *info =
         gst_meta_info_new (gst_reference_timestamp_meta_api_get_type (),
@@ -2929,7 +2929,7 @@ gst_reference_timestamp_meta_get_info (void)
     info->serialize_func = timestamp_meta_serialize;
     info->deserialize_func = timestamp_meta_deserialize;
     meta = gst_meta_info_register (info);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
   }
 
   return meta_info;

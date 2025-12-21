@@ -119,7 +119,7 @@ gst_aggregator_start_time_selection_get_type (void)
 {
   static GType gtype = 0;
 
-  if (g_once_init_enter (&gtype)) {
+  if (g_once_init_enter_pointer (&gtype)) {
     static const GEnumValue values[] = {
       {GST_AGGREGATOR_START_TIME_SELECTION_ZERO,
           "GST_AGGREGATOR_START_TIME_SELECTION_ZERO", "zero"},
@@ -132,7 +132,7 @@ gst_aggregator_start_time_selection_get_type (void)
     GType new_type =
         g_enum_register_static ("GstAggregatorStartTimeSelection", values);
 
-    g_once_init_leave (&gtype, new_type);
+    g_once_init_leave_pointer (&gtype, new_type);
   }
   return gtype;
 }

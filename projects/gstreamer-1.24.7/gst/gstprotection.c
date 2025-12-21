@@ -68,9 +68,9 @@ gst_protection_meta_api_get_type (void)
   static GType type;
   static const gchar *tags[] = { NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstProtectionMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -121,13 +121,13 @@ gst_protection_meta_get_info (void)
 {
   static const GstMetaInfo *protection_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & protection_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & protection_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_PROTECTION_META_API_TYPE, "GstProtectionMeta",
         sizeof (GstProtectionMeta), gst_protection_meta_init,
         gst_protection_meta_free, gst_protection_meta_transform);
 
-    g_once_init_leave ((GstMetaInfo **) & protection_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & protection_meta_info,
         (GstMetaInfo *) meta);
   }
   return protection_meta_info;
