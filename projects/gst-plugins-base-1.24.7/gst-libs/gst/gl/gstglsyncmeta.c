@@ -362,9 +362,9 @@ gst_gl_sync_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstGLSyncMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
 
   return type;
@@ -375,13 +375,13 @@ gst_gl_sync_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter (&meta_info)) {
+  if (g_once_init_enter_pointer (&meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_GL_SYNC_META_API_TYPE, "GstGLSyncMeta",
         sizeof (GstGLSyncMeta), (GstMetaInitFunction) _gst_gl_sync_meta_init,
         (GstMetaFreeFunction) _gst_gl_sync_meta_free,
         _gst_gl_sync_meta_transform);
-    g_once_init_leave (&meta_info, meta);
+    g_once_init_leave_pointer (&meta_info, meta);
   }
 
   return meta_info;

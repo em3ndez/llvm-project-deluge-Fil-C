@@ -103,6 +103,8 @@
 #include "gstrawcaps.h"
 #include "gstplaybackutils.h"
 
+#include <stdfil.h>
+
 /* generic templates */
 static GstStaticPadTemplate decoder_bin_sink_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
@@ -797,7 +799,7 @@ gst_decode_bin_class_init (GstDecodeBinClass * klass)
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstDecodeBinClass, autoplug_sort),
       _gst_array_hasvalue_accumulator, NULL,
       NULL, G_TYPE_VALUE_ARRAY, 3, GST_TYPE_PAD, GST_TYPE_CAPS,
-      G_TYPE_VALUE_ARRAY | G_SIGNAL_TYPE_STATIC_SCOPE);
+      zorptr (G_TYPE_VALUE_ARRAY, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE));
 
   /**
    * GstDecodeBin::autoplug-select:
@@ -857,7 +859,7 @@ gst_decode_bin_class_init (GstDecodeBinClass * klass)
       g_signal_new ("autoplug-query", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstDecodeBinClass, autoplug_query),
       _gst_boolean_or_accumulator, NULL, NULL, G_TYPE_BOOLEAN, 3, GST_TYPE_PAD,
-      GST_TYPE_ELEMENT, GST_TYPE_QUERY | G_SIGNAL_TYPE_STATIC_SCOPE);
+      GST_TYPE_ELEMENT, zorptr (GST_TYPE_QUERY, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE));
 
   /**
    * GstDecodeBin::drained

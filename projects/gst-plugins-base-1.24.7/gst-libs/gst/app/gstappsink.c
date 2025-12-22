@@ -74,6 +74,8 @@
 #include "gstappsink.h"
 #include "gstapputils.h"
 
+#include <stdfil.h>
+
 typedef enum
 {
   NOONE_WAITING = 0,
@@ -391,7 +393,7 @@ gst_app_sink_class_init (GstAppSinkClass * klass)
   gst_app_sink_signals[SIGNAL_PROPOSE_ALLOCATION] =
       g_signal_new_class_handler ("propose-allocation",
       G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, NULL, NULL, NULL, NULL,
-      G_TYPE_BOOLEAN, 1, GST_TYPE_QUERY | G_SIGNAL_TYPE_STATIC_SCOPE);
+      G_TYPE_BOOLEAN, 1, zorptr (GST_TYPE_QUERY, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE));
   /**
    * GstAppSink::new-serialized-event:
    * @appsink: the appsink element that emitted the signal

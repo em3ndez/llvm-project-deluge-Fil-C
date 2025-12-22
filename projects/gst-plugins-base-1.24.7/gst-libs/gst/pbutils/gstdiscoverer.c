@@ -56,6 +56,8 @@
 /* For g_stat () */
 #include <glib/gstdio.h>
 
+#include <stdfil.h>
+
 GST_DEBUG_CATEGORY_STATIC (discoverer_debug);
 #define GST_CAT_DEFAULT discoverer_debug
 #define CACHE_DIRNAME "discoverer"
@@ -324,7 +326,7 @@ gst_discoverer_class_init (GstDiscovererClass * klass)
       g_signal_new ("discovered", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
       G_STRUCT_OFFSET (GstDiscovererClass, discovered), NULL, NULL, NULL,
       G_TYPE_NONE, 2, GST_TYPE_DISCOVERER_INFO,
-      G_TYPE_ERROR | G_SIGNAL_TYPE_STATIC_SCOPE);
+      zorptr (G_TYPE_ERROR, (uintptr_t) G_SIGNAL_TYPE_STATIC_SCOPE));
 
   /**
    * GstDiscoverer::source-setup:

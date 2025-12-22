@@ -58,14 +58,14 @@ G_DEFINE_TYPE_WITH_PRIVATE (GstVideoSink, gst_video_sink, GST_TYPE_BASE_SINK);
 static GstDebugCategory *
 gst_video_sink_ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
+  if (g_once_init_enter_pointer (&cat_gonce)) {
     GstDebugCategory *cat = NULL;
 
     GST_DEBUG_CATEGORY_INIT (cat, "videosink", 0, "GstVideoSink");
 
-    g_once_init_leave (&cat_gonce, (gsize) cat);
+    g_once_init_leave_pointer (&cat_gonce, (gpointer) cat);
   }
 
   return (GstDebugCategory *) cat_gonce;

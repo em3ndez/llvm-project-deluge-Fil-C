@@ -50,15 +50,15 @@
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("tag-licenses", 0,
+    cat_done = (gpointer) _gst_debug_category_new ("tag-licenses", 0,
         "GstTag licenses");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -78,9 +78,9 @@ ensure_debug_category (void)
 static GVariant *
 gst_tag_get_license_translations_dictionary (void)
 {
-  static gsize var_gonce = 0;
+  static gpointer var_gonce = 0;
 
-  if (g_once_init_enter (&var_gonce)) {
+  if (g_once_init_enter_pointer (&var_gonce)) {
     const gchar *dict_path;
     GVariant *var = NULL;
     GError *err = NULL;
@@ -103,7 +103,7 @@ gst_tag_get_license_translations_dictionary (void)
       var = g_variant_new_array (G_VARIANT_TYPE ("{sa{ss}}"), NULL, 0);
     }
 
-    g_once_init_leave (&var_gonce, (gsize) var);
+    g_once_init_leave_pointer (&var_gonce, var);
   }
 
   return (GVariant *) var_gonce;

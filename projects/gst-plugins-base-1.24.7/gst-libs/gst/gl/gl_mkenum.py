@@ -22,11 +22,11 @@ c_array = ['--fhead',
            '--fprod',
            "\n/* enumerations from \"@basename@\" */",
            '--vhead',
-           "GType\n@enum_name@_get_type (void)\n{\n  static gsize static_g_define_type_id = 0;\n  if (g_once_init_enter (&static_g_define_type_id)) {\n    static const G@Type@Value values[] = {",
+           "GType\n@enum_name@_get_type (void)\n{\n  static gpointer static_g_define_type_id = 0;\n  if (g_once_init_enter_pointer (&static_g_define_type_id)) {\n    static const G@Type@Value values[] = {",
            '--vprod',
            "      { C_@TYPE@ (@VALUENAME@), \"@VALUENAME@\", \"@valuenick@\" },",
            '--vtail',
-           "      { 0, NULL, NULL }\n    };\n    GType g_define_type_id = g_@type@_register_static (\"@EnumName@\", values);\n    g_once_init_leave (&static_g_define_type_id, g_define_type_id);\n  }\n  return static_g_define_type_id;\n}\n"
+           "      { 0, NULL, NULL }\n    };\n    GType g_define_type_id = g_@type@_register_static (\"@EnumName@\", values);\n    g_once_init_leave_pointer (&static_g_define_type_id, g_define_type_id);\n  }\n  return static_g_define_type_id;\n}\n"
 ]
 
 cmd = []

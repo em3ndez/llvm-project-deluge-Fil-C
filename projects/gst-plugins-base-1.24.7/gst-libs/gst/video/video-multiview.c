@@ -30,9 +30,9 @@ gst_video_multiview_flagset_get_type (void)
 {
   static GType type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_flagset_register (GST_TYPE_VIDEO_MULTIVIEW_FLAGS);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -411,9 +411,9 @@ gst_video_multiview_meta_api_get_type (void)
     NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstVideoMultiviewMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -441,7 +441,7 @@ gst_video_multiview_meta_get_info (void)
 {
   static const GstMetaInfo *video_meta_info = NULL;
 
-  if (g_once_init_enter (&video_meta_info)) {
+  if (g_once_init_enter_pointer (&video_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_VIDEO_MULTIVIEW_META_API_TYPE,
         "GstVideoMultiviewMeta",
@@ -449,7 +449,7 @@ gst_video_multiview_meta_get_info (void)
         (GstMetaInitFunction) gst_video_multiview_meta_init,
         (GstMetaFreeFunction) gst_video_multiview_meta_free,
         NULL);
-    g_once_init_leave (&video_meta_info, meta);
+    g_once_init_leave_pointer (&video_meta_info, meta);
   }
 
   return video_meta_info;

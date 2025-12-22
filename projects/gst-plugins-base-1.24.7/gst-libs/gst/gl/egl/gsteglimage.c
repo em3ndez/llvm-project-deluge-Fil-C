@@ -211,14 +211,14 @@ GST_DEFINE_MINI_OBJECT_TYPE (GstEGLImage, gst_egl_image);
 static GstDebugCategory *
 gst_egl_image_ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
+  if (g_once_init_enter_pointer (&cat_gonce)) {
     GstDebugCategory *cat = NULL;
 
     GST_DEBUG_CATEGORY_INIT (cat, "gleglimage", 0, "EGLImage wrapper");
 
-    g_once_init_leave (&cat_gonce, (gsize) cat);
+    g_once_init_leave_pointer (&cat_gonce, (gpointer) cat);
   }
 
   return (GstDebugCategory *) cat_gonce;

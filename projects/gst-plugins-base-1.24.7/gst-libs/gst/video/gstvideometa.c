@@ -43,14 +43,14 @@ default_unmap (GstVideoMeta * meta, guint plane, GstMapInfo * info);
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("videometa", 0, "videometa");
+    cat_done = (gpointer) _gst_debug_category_new ("videometa", 0, "videometa");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -134,9 +134,9 @@ gst_video_meta_api_get_type (void)
     GST_META_TAG_VIDEO_SIZE_STR, NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstVideoMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -251,7 +251,7 @@ gst_video_meta_get_info (void)
 {
   static const GstMetaInfo *video_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & video_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & video_meta_info)) {
     GstMetaInfo *info = gst_meta_info_new (GST_VIDEO_META_API_TYPE,
         "GstVideoMeta",
         sizeof (GstVideoMeta));
@@ -260,7 +260,7 @@ gst_video_meta_get_info (void)
     info->serialize_func = video_meta_serialize;
     info->deserialize_func = video_meta_deserialize;
     const GstMetaInfo *meta = gst_meta_info_register (info);
-    g_once_init_leave ((GstMetaInfo **) & video_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & video_meta_info,
         (GstMetaInfo *) meta);
   }
   return video_meta_info;
@@ -726,9 +726,9 @@ gst_video_crop_meta_api_get_type (void)
     GST_META_TAG_VIDEO_ORIENTATION_STR, NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstVideoCropMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -747,13 +747,13 @@ gst_video_crop_meta_get_info (void)
 {
   static const GstMetaInfo *video_crop_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & video_crop_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & video_crop_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_VIDEO_CROP_META_API_TYPE, "GstVideoCropMeta",
         sizeof (GstVideoCropMeta),
         (GstMetaInitFunction) gst_video_crop_meta_init,
         (GstMetaFreeFunction) NULL, gst_video_crop_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & video_crop_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & video_crop_meta_info,
         (GstMetaInfo *) meta);
   }
   return video_crop_meta_info;
@@ -785,10 +785,10 @@ gst_video_gl_texture_upload_meta_api_get_type (void)
   static const gchar *tags[] =
       { GST_META_TAG_VIDEO_STR, GST_META_TAG_MEMORY_STR, NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type =
         gst_meta_api_type_register ("GstVideoGLTextureUploadMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -865,7 +865,7 @@ gst_video_gl_texture_upload_meta_get_info (void)
 {
   static const GstMetaInfo *info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_VIDEO_GL_TEXTURE_UPLOAD_META_API_TYPE,
         "GstVideoGLTextureUploadMeta",
@@ -873,7 +873,7 @@ gst_video_gl_texture_upload_meta_get_info (void)
         gst_video_gl_texture_upload_meta_init,
         gst_video_gl_texture_upload_meta_free,
         gst_video_gl_texture_upload_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & info, (GstMetaInfo *) meta);
+    g_once_init_leave_pointer ((GstMetaInfo **) & info, (GstMetaInfo *) meta);
   }
   return info;
 }
@@ -955,11 +955,11 @@ gst_video_region_of_interest_meta_api_get_type (void)
     GST_META_TAG_VIDEO_SIZE_STR, NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type =
         gst_meta_api_type_register ("GstVideoRegionOfInterestMetaAPI", tags);
     GST_INFO ("registering");
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -1044,7 +1044,7 @@ gst_video_region_of_interest_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi =
         gst_meta_register (GST_VIDEO_REGION_OF_INTEREST_META_API_TYPE,
         "GstVideoRegionOfInterestMeta",
@@ -1052,7 +1052,7 @@ gst_video_region_of_interest_meta_get_info (void)
         gst_video_region_of_interest_meta_init,
         gst_video_region_of_interest_meta_free,
         gst_video_region_of_interest_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 }
@@ -1209,11 +1209,11 @@ gst_video_time_code_meta_api_get_type (void)
 {
   static GType type;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     static const gchar *tags[] = { NULL };
     GType _type = gst_meta_api_type_register ("GstVideoTimeCodeMetaAPI", tags);
     GST_INFO ("registering");
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -1267,7 +1267,7 @@ gst_video_time_code_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi =
         gst_meta_register (GST_VIDEO_TIME_CODE_META_API_TYPE,
         "GstVideoTimeCodeMeta",
@@ -1275,7 +1275,7 @@ gst_video_time_code_meta_get_info (void)
         gst_video_time_code_meta_init,
         gst_video_time_code_meta_free,
         gst_video_time_code_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 }

@@ -151,15 +151,15 @@ struct _GstVideoOverlayRectangle
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("video-composition", 0,
+    cat_done = (gpointer) _gst_debug_category_new ("video-composition", 0,
         "video overlay composition");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -239,10 +239,10 @@ gst_video_overlay_composition_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type =
         gst_meta_api_type_register ("GstVideoOverlayCompositionMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -253,7 +253,7 @@ gst_video_overlay_composition_meta_get_info (void)
 {
   static const GstMetaInfo *video_overlay_composition_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) &
+  if (g_once_init_enter_pointer ((GstMetaInfo **) &
           video_overlay_composition_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_VIDEO_OVERLAY_COMPOSITION_META_API_TYPE,
@@ -263,7 +263,7 @@ gst_video_overlay_composition_meta_get_info (void)
         (GstMetaFreeFunction) gst_video_overlay_composition_meta_free,
         (GstMetaTransformFunction)
         gst_video_overlay_composition_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & video_overlay_composition_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & video_overlay_composition_meta_info,
         (GstMetaInfo *) meta);
   }
   return video_overlay_composition_meta_info;

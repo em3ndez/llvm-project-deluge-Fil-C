@@ -660,9 +660,9 @@ gst_gl_effects_filters_descriptors (void)
 gboolean
 gst_gl_effects_register_filters (GstPlugin * plugin, GstRank rank)
 {
-  static gsize registered = 0;
+  static gpointer registered = 0;
 
-  if (g_once_init_enter (&registered)) {
+  if (g_once_init_enter_pointer (&registered)) {
     GTypeInfo info = {
       sizeof (GstGLEffectsClass),
       NULL,
@@ -702,7 +702,7 @@ gst_gl_effects_register_filters (GstPlugin * plugin, GstRank rank)
         g_free (name);
       }
     }
-    g_once_init_leave (&registered, generic_type);
+    g_once_init_leave_pointer (&registered, generic_type);
   }
-  return registered;
+  return !!registered;
 }

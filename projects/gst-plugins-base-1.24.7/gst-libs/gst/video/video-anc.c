@@ -45,15 +45,15 @@
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("video-anc", 0,
+    cat_done = (gpointer) _gst_debug_category_new ("video-anc", 0,
         "Ancillary data, VBI and CC utilities");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -928,11 +928,11 @@ gst_video_caption_meta_api_get_type (void)
 {
   static GType type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     static const gchar *tags[] = { NULL };
     GType _type = gst_meta_api_type_register ("GstVideoCaptionMetaAPI", tags);
     GST_INFO ("registering");
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -983,14 +983,14 @@ gst_video_caption_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi = gst_meta_register (GST_VIDEO_CAPTION_META_API_TYPE,
         "GstVideoCaptionMeta",
         sizeof (GstVideoCaptionMeta),
         gst_video_caption_meta_init,
         gst_video_caption_meta_free,
         gst_video_caption_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 }
@@ -1131,11 +1131,11 @@ gst_ancillary_meta_api_get_type (void)
 {
   static GType type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     static const gchar *tags[] = { NULL };
     GType _type = gst_meta_api_type_register ("GstAncillaryMetaAPI", tags);
     GST_INFO ("registering");
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -1197,14 +1197,14 @@ gst_ancillary_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi = gst_meta_register (GST_ANCILLARY_META_API_TYPE,
         "GstAncillaryMeta",
         sizeof (GstAncillaryMeta),
         gst_ancillary_meta_init,
         gst_ancillary_meta_free,
         gst_ancillary_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 
@@ -1242,7 +1242,7 @@ gst_video_afd_meta_api_get_type (void)
 {
   static GType type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     static const gchar *tags[] = {
       GST_META_TAG_VIDEO_SIZE_STR,
       GST_META_TAG_VIDEO_ORIENTATION_STR,
@@ -1250,7 +1250,7 @@ gst_video_afd_meta_api_get_type (void)
       NULL
     };
     GType _type = gst_meta_api_type_register ("GstVideoAFDMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -1319,14 +1319,14 @@ gst_video_afd_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi = gst_meta_register (GST_VIDEO_AFD_META_API_TYPE,
         "GstVideoAFDMeta",
         sizeof (GstVideoAFDMeta),
         gst_video_afd_meta_init,
         NULL,
         gst_video_afd_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 }
@@ -1381,7 +1381,7 @@ gst_video_bar_meta_api_get_type (void)
 {
   static GType type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     static const gchar *tags[] = {
       GST_META_TAG_VIDEO_SIZE_STR,
       GST_META_TAG_VIDEO_ORIENTATION_STR,
@@ -1389,7 +1389,7 @@ gst_video_bar_meta_api_get_type (void)
       NULL
     };
     GType _type = gst_meta_api_type_register ("GstVideoBarMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -1429,14 +1429,14 @@ gst_video_bar_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi = gst_meta_register (GST_VIDEO_BAR_META_API_TYPE,
         "GstVideoBarMeta",
         sizeof (GstVideoBarMeta),
         gst_video_bar_meta_init,
         NULL,
         gst_video_bar_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 }

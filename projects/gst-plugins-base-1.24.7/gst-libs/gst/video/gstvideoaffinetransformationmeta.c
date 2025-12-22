@@ -42,10 +42,10 @@ gst_video_affine_transformation_meta_api_get_type (void)
     GST_META_TAG_VIDEO_ORIENTATION_STR, NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type =
         gst_meta_api_type_register ("GstVideoAffineTransformationAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -94,7 +94,7 @@ gst_video_affine_transformation_meta_get_info (void)
 {
   static const GstMetaInfo *info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_VIDEO_AFFINE_TRANSFORMATION_META_API_TYPE,
         "GstVideoAffineTransformationMeta",
@@ -102,7 +102,7 @@ gst_video_affine_transformation_meta_get_info (void)
         gst_video_affine_transformation_meta_init,
         NULL,
         gst_video_affine_transformation_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & info, (GstMetaInfo *) meta);
+    g_once_init_leave_pointer ((GstMetaInfo **) & info, (GstMetaInfo *) meta);
   }
   return info;
 }

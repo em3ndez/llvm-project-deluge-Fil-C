@@ -192,7 +192,7 @@ gst_rtp_base_depayload_get_type (void)
 {
   static GType rtp_base_depayload_type = 0;
 
-  if (g_once_init_enter ((gsize *) & rtp_base_depayload_type)) {
+  if (g_once_init_enter_pointer ((gpointer *) & rtp_base_depayload_type)) {
     static const GTypeInfo rtp_base_depayload_info = {
       sizeof (GstRTPBaseDepayloadClass),
       NULL,
@@ -213,7 +213,7 @@ gst_rtp_base_depayload_get_type (void)
         g_type_add_instance_private (_type,
         sizeof (GstRTPBaseDepayloadPrivate));
 
-    g_once_init_leave ((gsize *) & rtp_base_depayload_type, _type);
+    g_once_init_leave_pointer ((gpointer *) & rtp_base_depayload_type, _type);
   }
   return rtp_base_depayload_type;
 }

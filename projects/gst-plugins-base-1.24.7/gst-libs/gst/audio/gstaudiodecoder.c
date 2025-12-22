@@ -340,9 +340,9 @@ static void gst_audio_decoder_init (GstAudioDecoder * dec,
 GType
 gst_audio_decoder_get_type (void)
 {
-  static gsize audio_decoder_type = 0;
+  static gpointer audio_decoder_type = 0;
 
-  if (g_once_init_enter (&audio_decoder_type)) {
+  if (g_once_init_enter_pointer (&audio_decoder_type)) {
     GType _type;
     static const GTypeInfo audio_decoder_info = {
       sizeof (GstAudioDecoderClass),
@@ -362,7 +362,7 @@ gst_audio_decoder_get_type (void)
     private_offset =
         g_type_add_instance_private (_type, sizeof (GstAudioDecoderPrivate));
 
-    g_once_init_leave (&audio_decoder_type, _type);
+    g_once_init_leave_pointer (&audio_decoder_type, _type);
   }
   return audio_decoder_type;
 }

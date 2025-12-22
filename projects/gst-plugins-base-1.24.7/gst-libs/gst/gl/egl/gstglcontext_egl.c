@@ -1352,10 +1352,10 @@ gst_gl_context_egl_get_proc_address (GstGLAPI gl_api, const gchar * name)
 #if GST_GL_HAVE_OPENGL && !defined(GST_GL_LIBGL_MODULE_NAME)
   if (!result && (gl_api & (GST_GL_API_OPENGL | GST_GL_API_OPENGL3))) {
     static GModule *module_opengl = NULL;
-    if (g_once_init_enter (&module_opengl)) {
+    if (g_once_init_enter_pointer (&module_opengl)) {
       GModule *setup_module_opengl =
           g_module_open ("libGL.dylib", G_MODULE_BIND_LAZY);
-      g_once_init_leave (&module_opengl, setup_module_opengl);
+      g_once_init_leave_pointer (&module_opengl, setup_module_opengl);
     }
     if (module_opengl)
       g_module_symbol (module_opengl, name, &result);
@@ -1364,10 +1364,10 @@ gst_gl_context_egl_get_proc_address (GstGLAPI gl_api, const gchar * name)
 #if GST_GL_HAVE_GLES2 && !defined(GST_GL_LIBGLESV2_MODULE_NAME)
   if (!result && (gl_api & (GST_GL_API_GLES2))) {
     static GModule *module_gles2 = NULL;
-    if (g_once_init_enter (&module_gles2)) {
+    if (g_once_init_enter_pointer (&module_gles2)) {
       GModule *setup_module_gles2 =
           g_module_open ("libGLESv2.dylib", G_MODULE_BIND_LAZY);
-      g_once_init_leave (&module_gles2, setup_module_gles2);
+      g_once_init_leave_pointer (&module_gles2, setup_module_gles2);
     }
     if (module_gles2)
       g_module_symbol (module_gles2, name, &result);

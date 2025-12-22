@@ -278,15 +278,15 @@
 static GstDebugCategory *
 gst_pb_utils_install_plugins_ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
+  if (g_once_init_enter_pointer (&cat_gonce)) {
     GstDebugCategory *cat = NULL;
 
     GST_DEBUG_CATEGORY_INIT (cat, "install-plugins", 0,
         "GstPbUtils plugins installation helper");
 
-    g_once_init_leave (&cat_gonce, (gsize) cat);
+    g_once_init_leave_pointer (&cat_gonce, (gpointer) cat);
   }
 
   return (GstDebugCategory *) cat_gonce;

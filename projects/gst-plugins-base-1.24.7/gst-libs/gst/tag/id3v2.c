@@ -38,14 +38,14 @@ static gboolean id3v2_frames_to_tag_list (ID3TagsWorking * work, guint size);
 GstDebugCategory *
 id3v2_ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat;
 
-    cat = (gsize) _gst_debug_category_new ("id3v2", 0, "ID3v2 tag parsing");
+    cat = (gpointer) _gst_debug_category_new ("id3v2", 0, "ID3v2 tag parsing");
 
-    g_once_init_leave (&cat_gonce, cat);
+    g_once_init_leave_pointer (&cat_gonce, cat);
   }
 
   return (GstDebugCategory *) cat_gonce;

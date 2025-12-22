@@ -182,9 +182,9 @@ gst_audio_downmix_meta_api_get_type (void)
   static const gchar *tags[] =
       { GST_META_TAG_AUDIO_STR, GST_META_TAG_AUDIO_CHANNELS_STR, NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstAudioDownmixMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -194,13 +194,13 @@ gst_audio_downmix_meta_get_info (void)
 {
   static const GstMetaInfo *audio_downmix_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & audio_downmix_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & audio_downmix_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_AUDIO_DOWNMIX_META_API_TYPE,
         "GstAudioDownmixMeta", sizeof (GstAudioDownmixMeta),
         gst_audio_downmix_meta_init, gst_audio_downmix_meta_free,
         gst_audio_downmix_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & audio_downmix_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & audio_downmix_meta_info,
         (GstMetaInfo *) meta);
   }
   return audio_downmix_meta_info;
@@ -285,9 +285,9 @@ gst_audio_clipping_meta_api_get_type (void)
   static const gchar *tags[] =
       { GST_META_TAG_AUDIO_STR, GST_META_TAG_AUDIO_RATE_STR, NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstAudioClippingMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -297,13 +297,13 @@ gst_audio_clipping_meta_get_info (void)
 {
   static const GstMetaInfo *audio_clipping_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & audio_clipping_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & audio_clipping_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_AUDIO_CLIPPING_META_API_TYPE,
         "GstAudioClippingMeta", sizeof (GstAudioClippingMeta),
         gst_audio_clipping_meta_init, NULL,
         gst_audio_clipping_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & audio_clipping_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & audio_clipping_meta_info,
         (GstMetaInfo *) meta);
   }
   return audio_clipping_meta_info;
@@ -575,9 +575,9 @@ gst_audio_meta_api_get_type (void)
     GST_META_TAG_AUDIO_RATE_STR, NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstAudioMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -587,7 +587,7 @@ gst_audio_meta_get_info (void)
 {
   static const GstMetaInfo *audio_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & audio_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & audio_meta_info)) {
     GstMetaInfo *info = gst_meta_info_new (GST_AUDIO_META_API_TYPE,
         "GstAudioMeta", sizeof (GstAudioMeta));
 
@@ -598,7 +598,7 @@ gst_audio_meta_get_info (void)
     info->deserialize_func = gst_audio_meta_deserialize;
     const GstMetaInfo *meta = gst_meta_info_register (info);
 
-    g_once_init_leave ((GstMetaInfo **) & audio_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & audio_meta_info,
         (GstMetaInfo *) meta);
   }
   return audio_meta_info;
@@ -619,9 +619,9 @@ gst_audio_level_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstAudioLevelMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -671,14 +671,14 @@ gst_audio_level_meta_get_info (void)
 {
   static const GstMetaInfo *audio_level_meta_info = NULL;
 
-  if (g_once_init_enter (&audio_level_meta_info)) {
+  if (g_once_init_enter_pointer (&audio_level_meta_info)) {
     const GstMetaInfo *meta = gst_meta_register (GST_AUDIO_LEVEL_META_API_TYPE,
         "GstAudioLevelMeta",
         sizeof (GstAudioLevelMeta),
         gst_audio_level_meta_init,
         (GstMetaFreeFunction) NULL,
         gst_audio_level_meta_transform);
-    g_once_init_leave (&audio_level_meta_info, meta);
+    g_once_init_leave_pointer (&audio_level_meta_info, meta);
   }
   return audio_level_meta_info;
 }

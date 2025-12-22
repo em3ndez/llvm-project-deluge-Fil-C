@@ -54,15 +54,15 @@
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("tag-langcodes", 0,
+    cat_done = (gpointer) _gst_debug_category_new ("tag-langcodes", 0,
         "GstTag language codes and names");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -190,12 +190,12 @@ gst_tag_load_iso_639_xml (GHashTable * ht)
 static GHashTable *
 gst_tag_get_iso_639_ht (void)
 {
-  static gsize once_val = 0;
+  static gpointer once_val = 0;
   int i;
 
-  if (g_once_init_enter (&once_val)) {
+  if (g_once_init_enter_pointer (&once_val)) {
     GHashTable *ht;
-    gsize done_val;
+    gpointer done_val;
 
     GST_MEMDUMP ("iso 639 language names (internal default/fallback)",
         (guint8 *) iso_639_names, sizeof (iso_639_names));
@@ -241,8 +241,8 @@ gst_tag_get_iso_639_ht (void)
     GST_INFO ("iso-codes disabled or not available");
 #endif
 
-    done_val = (gsize) ht;
-    g_once_init_leave (&once_val, done_val);
+    done_val = (gpointer) ht;
+    g_once_init_leave_pointer (&once_val, done_val);
   }
 
   return (GHashTable *) once_val;

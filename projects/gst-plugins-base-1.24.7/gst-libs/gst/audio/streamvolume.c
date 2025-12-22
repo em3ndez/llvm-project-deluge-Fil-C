@@ -66,8 +66,8 @@ gst_stream_volume_class_init (GstStreamVolumeInterface * iface)
 GType
 gst_stream_volume_get_type (void)
 {
-  static gsize type = 0;
-  if (g_once_init_enter (&type)) {
+  static gpointer type = 0;
+  if (g_once_init_enter_pointer (&type)) {
     GType tmp;
     static const GTypeInfo info = {
       sizeof (GstStreamVolumeInterface),
@@ -84,7 +84,7 @@ gst_stream_volume_get_type (void)
         "GstStreamVolume", &info, 0);
     g_type_interface_add_prerequisite (tmp, G_TYPE_OBJECT);
 
-    g_once_init_leave (&type, tmp);
+    g_once_init_leave_pointer (&type, tmp);
   }
   return type;
 }

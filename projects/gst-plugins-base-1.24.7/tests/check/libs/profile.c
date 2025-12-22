@@ -331,8 +331,8 @@ GST_START_TEST (test_saving_profile)
   proforig =
       (GstEncodingProfile *) gst_encoding_target_get_profiles (orig)->data;
 
-  fail_unless_equals_int (G_TYPE_FROM_INSTANCE (profloaded),
-      G_TYPE_FROM_INSTANCE (proforig));
+  fail_unless_equals_int ((gsize) G_TYPE_FROM_INSTANCE (profloaded),
+      (gsize) G_TYPE_FROM_INSTANCE (proforig));
   GST_DEBUG ("Comparing loaded:%p to original:%p", profloaded, proforig);
   fail_unless (gst_encoding_profile_is_equal (profloaded, proforig));
 

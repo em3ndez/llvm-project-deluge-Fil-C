@@ -503,9 +503,9 @@ gst_audio_visualizer_change_shader (GstAudioVisualizer * scope)
 GType
 gst_audio_visualizer_get_type (void)
 {
-  static gsize audio_visualizer_type = 0;
+  static gpointer audio_visualizer_type = 0;
 
-  if (g_once_init_enter (&audio_visualizer_type)) {
+  if (g_once_init_enter_pointer (&audio_visualizer_type)) {
     static const GTypeInfo audio_visualizer_info = {
       sizeof (GstAudioVisualizerClass),
       NULL,
@@ -526,7 +526,7 @@ gst_audio_visualizer_get_type (void)
     private_offset =
         g_type_add_instance_private (_type, sizeof (GstAudioVisualizerPrivate));
 
-    g_once_init_leave (&audio_visualizer_type, _type);
+    g_once_init_leave_pointer (&audio_visualizer_type, _type);
   }
   return (GType) audio_visualizer_type;
 }

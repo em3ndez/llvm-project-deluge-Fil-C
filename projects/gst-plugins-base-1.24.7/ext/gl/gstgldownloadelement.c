@@ -449,9 +449,9 @@ gst_nvmm_parent_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { GST_META_TAG_MEMORY_STR, NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstNVMMParentMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
 
   return type;
@@ -462,7 +462,7 @@ gst_nvmm_parent_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (gst_nvmm_parent_meta_api_get_type (),
         "GstNVMMParentMeta",
@@ -470,7 +470,7 @@ gst_nvmm_parent_meta_get_info (void)
         (GstMetaInitFunction) _gst_nvmm_parent_meta_init,
         (GstMetaFreeFunction) _gst_nvmm_parent_meta_free,
         _gst_nvmm_parent_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
   }
 
   return meta_info;

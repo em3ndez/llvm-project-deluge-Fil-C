@@ -29,14 +29,14 @@
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("gst-dsd", 0, "GStreamer DSD");
+    cat_done = (gpointer) _gst_debug_category_new ("gst-dsd", 0, "GStreamer DSD");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -149,9 +149,9 @@ gst_dsd_plane_offset_meta_api_get_type (void)
     NULL
   };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstDsdPlaneOffsetMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -161,7 +161,7 @@ gst_dsd_plane_offset_meta_get_info (void)
 {
   static const GstMetaInfo *dsd_plane_offset_meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & dsd_plane_offset_meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & dsd_plane_offset_meta_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (GST_DSD_PLANE_OFFSET_META_API_TYPE,
         "GstDsdPlaneOffsetMeta",
@@ -169,7 +169,7 @@ gst_dsd_plane_offset_meta_get_info (void)
         gst_dsd_plane_offset_meta_init,
         gst_dsd_plane_offset_meta_free,
         gst_dsd_plane_offset_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & dsd_plane_offset_meta_info,
+    g_once_init_leave_pointer ((GstMetaInfo **) & dsd_plane_offset_meta_info,
         (GstMetaInfo *) meta);
   }
   return dsd_plane_offset_meta_info;

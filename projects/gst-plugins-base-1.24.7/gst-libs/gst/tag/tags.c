@@ -48,14 +48,14 @@
 static GstDebugCategory *
 gst_tag_ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
+  if (g_once_init_enter_pointer (&cat_gonce)) {
     GstDebugCategory *cat = NULL;
 
     GST_DEBUG_CATEGORY_INIT (cat, "tag-tags", 0, "GstTag helper functions");
 
-    g_once_init_leave (&cat_gonce, (gsize) cat);
+    g_once_init_leave_pointer (&cat_gonce, (gpointer) cat);
   }
 
   return (GstDebugCategory *) cat_gonce;

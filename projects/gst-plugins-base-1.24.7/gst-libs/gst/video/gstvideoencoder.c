@@ -294,9 +294,9 @@ static gboolean gst_video_encoder_transform_meta_default (GstVideoEncoder *
 GType
 gst_video_encoder_get_type (void)
 {
-  static gsize type = 0;
+  static gpointer type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type;
     static const GTypeInfo info = {
       sizeof (GstVideoEncoderClass),
@@ -321,7 +321,7 @@ gst_video_encoder_get_type (void)
         g_type_add_instance_private (_type, sizeof (GstVideoEncoderPrivate));
     g_type_add_interface_static (_type, GST_TYPE_PRESET,
         &preset_interface_info);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }

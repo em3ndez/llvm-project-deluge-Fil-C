@@ -82,12 +82,12 @@ gst_opus_enc_bandwidth_get_type (void)
   };
   static GType id = 0;
 
-  if (g_once_init_enter ((gsize *) & id)) {
+  if (g_once_init_enter_pointer ((gpointer *) & id)) {
     GType _id;
 
     _id = g_enum_register_static ("GstOpusEncBandwidth", values);
 
-    g_once_init_leave ((gsize *) & id, _id);
+    g_once_init_leave_pointer ((gpointer *) & id, _id);
   }
 
   return id;
@@ -108,12 +108,12 @@ gst_opus_enc_frame_size_get_type (void)
   };
   static GType id = 0;
 
-  if (g_once_init_enter ((gsize *) & id)) {
+  if (g_once_init_enter_pointer ((gpointer *) & id)) {
     GType _id;
 
     _id = g_enum_register_static ("GstOpusEncFrameSize", values);
 
-    g_once_init_leave ((gsize *) & id, _id);
+    g_once_init_leave_pointer ((gpointer *) & id, _id);
   }
 
   return id;
@@ -132,12 +132,12 @@ gst_opus_enc_audio_type_get_type (void)
   };
   static GType id = 0;
 
-  if (g_once_init_enter ((gsize *) & id)) {
+  if (g_once_init_enter_pointer ((gpointer *) & id)) {
     GType _id;
 
     _id = g_enum_register_static ("GstOpusEncAudioType", values);
 
-    g_once_init_leave ((gsize *) & id, _id);
+    g_once_init_leave_pointer ((gointer *) & id, _id);
   }
 
   return id;
@@ -155,12 +155,12 @@ gst_opus_enc_bitrate_type_get_type (void)
   };
   static GType id = 0;
 
-  if (g_once_init_enter ((gsize *) & id)) {
+  if (g_once_init_enter_pointer ((gpointer *) & id)) {
     GType _id;
 
     _id = g_enum_register_static ("GstOpusEncBitrateType", values);
 
-    g_once_init_leave ((gsize *) & id, _id);
+    g_once_init_leave_pointer ((gpointer *) & id, _id);
   }
 
   return id;

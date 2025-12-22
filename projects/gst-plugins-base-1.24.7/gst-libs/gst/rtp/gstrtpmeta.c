@@ -193,9 +193,9 @@ gst_rtp_source_meta_api_get_type (void)
   static GType type = 0;
   static const gchar *tags[] = { NULL };
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     GType _type = gst_meta_api_type_register ("GstRTPSourceMetaAPI", tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -216,14 +216,14 @@ gst_rtp_source_meta_get_info (void)
 {
   static const GstMetaInfo *rtp_source_meta_info = NULL;
 
-  if (g_once_init_enter (&rtp_source_meta_info)) {
+  if (g_once_init_enter_pointer (&rtp_source_meta_info)) {
     const GstMetaInfo *meta = gst_meta_register (GST_RTP_SOURCE_META_API_TYPE,
         "GstRTPSourceMeta",
         sizeof (GstRTPSourceMeta),
         gst_rtp_source_meta_init,
         (GstMetaFreeFunction) NULL,
         gst_rtp_source_meta_transform);
-    g_once_init_leave (&rtp_source_meta_info, meta);
+    g_once_init_leave_pointer (&rtp_source_meta_info, meta);
   }
   return rtp_source_meta_info;
 }

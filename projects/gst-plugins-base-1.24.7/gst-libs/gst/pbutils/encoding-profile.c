@@ -305,15 +305,15 @@
 static GstDebugCategory *
 gst_pb_utils_encoding_profile_ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
+  if (g_once_init_enter_pointer (&cat_gonce)) {
     GstDebugCategory *cat = NULL;
 
     GST_DEBUG_CATEGORY_INIT (cat, "encoding-profile", 0,
         "GstPbUtils encoding profile");
 
-    g_once_init_leave (&cat_gonce, (gsize) cat);
+    g_once_init_leave_pointer (&cat_gonce, (gpointer) cat);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -381,9 +381,9 @@ gst_encoding_profile_class_intern_init (gpointer klass)
 GType
 gst_encoding_profile_get_type (void)
 {
-  static gsize g_define_type_id_init = 0;
+  static gpointer g_define_type_id_init = 0;
 
-  if (g_once_init_enter (&g_define_type_id_init)) {
+  if (g_once_init_enter_pointer (&g_define_type_id_init)) {
     GType g_define_type_id = g_type_register_static_simple (G_TYPE_OBJECT,
         g_intern_static_string ("GstEncodingProfile"),
         sizeof (GstEncodingProfileClass),
@@ -406,7 +406,7 @@ gst_encoding_profile_get_type (void)
     /* Register gst-specific GValue functions */
     gst_value_register (&gstvtable);
 
-    g_once_init_leave (&g_define_type_id_init, g_define_type_id);
+    g_once_init_leave_pointer (&g_define_type_id_init, g_define_type_id);
   }
   return g_define_type_id_init;
 }

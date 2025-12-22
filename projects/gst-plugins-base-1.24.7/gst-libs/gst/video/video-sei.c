@@ -42,15 +42,15 @@
 static GstDebugCategory *
 ensure_debug_category (void)
 {
-  static gsize cat_gonce = 0;
+  static gpointer cat_gonce = 0;
 
-  if (g_once_init_enter (&cat_gonce)) {
-    gsize cat_done;
+  if (g_once_init_enter_pointer (&cat_gonce)) {
+    gpointer cat_done;
 
-    cat_done = (gsize) _gst_debug_category_new ("video-sei", 0,
+    cat_done = (gpointer) _gst_debug_category_new ("video-sei", 0,
         "H.264 / H.265 SEI messages utilities");
 
-    g_once_init_leave (&cat_gonce, cat_done);
+    g_once_init_leave_pointer (&cat_gonce, cat_done);
   }
 
   return (GstDebugCategory *) cat_gonce;
@@ -73,7 +73,7 @@ gst_video_sei_user_data_unregistered_meta_api_get_type (void)
 {
   static GType type = 0;
 
-  if (g_once_init_enter (&type)) {
+  if (g_once_init_enter_pointer (&type)) {
     static const gchar *tags[] = {
       GST_META_TAG_VIDEO_STR,
       NULL
@@ -81,7 +81,7 @@ gst_video_sei_user_data_unregistered_meta_api_get_type (void)
     GType _type =
         gst_meta_api_type_register ("GstVideoSEIUserDataUnregisteredMetaAPI",
         tags);
-    g_once_init_leave (&type, _type);
+    g_once_init_leave_pointer (&type, _type);
   }
   return type;
 }
@@ -139,7 +139,7 @@ gst_video_sei_user_data_unregistered_meta_get_info (void)
 {
   static const GstMetaInfo *meta_info = NULL;
 
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
+  if (g_once_init_enter_pointer ((GstMetaInfo **) & meta_info)) {
     const GstMetaInfo *mi =
         gst_meta_register (GST_VIDEO_SEI_USER_DATA_UNREGISTERED_META_API_TYPE,
         "GstVideoSEIUserDataUnregisteredMeta",
@@ -147,7 +147,7 @@ gst_video_sei_user_data_unregistered_meta_get_info (void)
         gst_video_sei_user_data_unregistered_meta_init,
         gst_video_sei_user_data_unregistered_meta_free,
         gst_video_sei_user_data_unregistered_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
+    g_once_init_leave_pointer ((GstMetaInfo **) & meta_info, (GstMetaInfo *) mi);
   }
   return meta_info;
 }

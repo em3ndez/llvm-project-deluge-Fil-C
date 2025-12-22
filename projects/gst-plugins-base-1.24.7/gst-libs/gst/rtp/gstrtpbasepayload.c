@@ -190,7 +190,7 @@ gst_rtp_base_payload_get_type (void)
 {
   static GType rtpbasepayload_type = 0;
 
-  if (g_once_init_enter ((gsize *) & rtpbasepayload_type)) {
+  if (g_once_init_enter_pointer ((gpointer *) & rtpbasepayload_type)) {
     static const GTypeInfo rtpbasepayload_info = {
       sizeof (GstRTPBasePayloadClass),
       NULL,
@@ -210,7 +210,7 @@ gst_rtp_base_payload_get_type (void)
     private_offset =
         g_type_add_instance_private (_type, sizeof (GstRTPBasePayloadPrivate));
 
-    g_once_init_leave ((gsize *) & rtpbasepayload_type, _type);
+    g_once_init_leave_pointer ((gpointer *) & rtpbasepayload_type, _type);
   }
   return rtpbasepayload_type;
 }
