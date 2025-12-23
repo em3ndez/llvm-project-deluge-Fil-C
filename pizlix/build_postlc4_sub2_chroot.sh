@@ -77,6 +77,61 @@ hash -r
 
 ./build_postlc4_chroot_project_pango.sh
 ./build_postlc4_chroot_project_gdk-pixbuf.sh
+hash -r
+
+tar -xf pizlonated-nettle.tar.gz
+cd pizlonated-nettle
+./configure --prefix=/usr --disable-static --disable-assembler
+make
+make install
+cd ..
+rm -rf pizlonated-nettle
+hash -r
+
+tar -xf pizlonated-libgudev.tar.gz
+cd pizlonated-libgudev
+mkdir -v build
+cd build
+meson setup --prefix=/usr --buildtype=debugoptimized ..
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-libgudev
+hash -r
+
+tar -xf pizlonated-gstreamer.tar.gz
+cd pizlonated-gstreamer
+mkdir -v build
+cd build
+meson setup .. --prefix=/usr --buildtype=debugoptimized -D gst_debug=false
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-gstreamer
+hash -r
+
+tar -xf pizlonated-gst-plugins-base.tar.gz
+cd pizlonated-gst-plugins-base
+mkdir -v build
+cd build
+meson setup .. --prefix=/usr --buildtype=debugoptimized --wrap-mode=nodownload
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-gst-plugins-base
+hash -r
+
+tar -xf pizlonated-gst-plugins-bad.tar.gz
+cd pizlonated-gst-plugins-bad
+mkdir -v build
+cd build
+meson setup .. --prefix=/usr --buildtype=debugoptimized -D gpl=enabled
+ninja
+ninja install
+cd ../..
+rm -rf pizlonated-gst-plugins-bad
+hash -r
+
 ./build_postlc4_chroot_project_gtk4.sh
 hash -r
 

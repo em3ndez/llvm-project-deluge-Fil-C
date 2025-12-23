@@ -22,15 +22,6 @@ cd ..
 rm -rf sqlite-autoconf-3460100
 hash -r
 
-tar -xf pizlonated-nettle.tar.gz
-cd pizlonated-nettle
-./configure --prefix=/usr --disable-static --disable-assembler
-make
-make install
-cd ..
-rm -rf pizlonated-nettle
-hash -r
-
 tar -xf pizlonated-gnutls.tar.gz
 cd pizlonated-gnutls
 ./configure --prefix=/usr \
@@ -89,17 +80,6 @@ ninja
 ninja install
 cd ../..
 rm -rf libsecret-0.21.4
-hash -r
-
-tar -xf pizlonated-libgudev.tar.gz
-cd pizlonated-libgudev
-mkdir -v build
-cd build
-meson setup --prefix=/usr --buildtype=debugoptimized ..
-ninja
-ninja install
-cd ../..
-rm -rf pizlonated-libgudev
 hash -r
 
 tar -xf libseccomp-2.5.5.tar.gz
