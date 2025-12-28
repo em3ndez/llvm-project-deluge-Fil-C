@@ -26,38 +26,39 @@
 set -e
 
 # Parse command-line options
-ROOTFUL=false
-PIZLIX=false
+MODE=rootless
 
 print_help() {
     cat <<EOF
-Usage: $0 [-r] [-p' [-h]
+Usage: $0 [-o] [-p] [-n] [-h]
 
 Delete the container image for this checkout, forcing a rebuild on next run.
 
 Options:
-  -r    Reset rootful mode image (requires sudo)
-  -p    Reset pizlix image
+  -o    Reset /opt/fil mode image (requires sudo)
+  -p    Reset pizlix image (requires sudo)
+  -n    Reset normal rootless image (this is the default)
   -h    Show this help message
 
 EOF
     exit 0
 }
 
-while getopts "rph" opt; do
+while getopts "noph" opt; do
     case $opt in
-        r)
-            ROOTFUL=true
+        n)
+            MODE=rootless
             ;;
         p)
-            PIZLIX=true
-            ROOTFUL=true
+            MODE=pizlix
+            ;;
+        o)
+            MODE=optfil
             ;;
         h)
             print_help
             ;;
         \?)
-            echo "Invalid option: -$OPTARG" >&2
             echo "Use -h for help" >&2
             exit 1
             ;;
@@ -65,35 +66,66 @@ while getopts "rph" opt; do
 done
 
 # Check if rootful mode requires sudo
-if [ "$ROOTFUL" = true ] && [ $EUID -ne 0 ]; then
-    if [ "$PIZLIX" = true ]; then
-        echo "Error: Pizlix mode (-p) requires running with sudo"
-        echo "Run: sudo $0 -p"
-    else
-        echo "Error: Rootful mode (-r) requires running with sudo"
-        echo "Run: sudo $0 -r"
-    fi
-    exit 1
+if [ $EUID -ne 0 ]; then
+    case "$MODE" in
+        rootless)
+            :
+            ;;
+        pizlix)
+            echo "Error: Pizlix mode (-p) requires running with sudo"
+            echo "Run: sudo $0 -p"
+            exit 1
+            ;;
+        optfil)
+            echo "Error: /opt/fil mode (-o) requires running with sudo"
+            echo "Run: sudo $0 -o"
+            exit 1
+            ;;
+        *)
+            echo "Bad mode = $MODE"
+            exit 1
+            ;;
+    esac
 fi
 
 # Get the directory where this script lives
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Detect file owner UID/GID
+FILE_OWNER_UID=$(stat -c %u "${SCRIPT_DIR}")
+FILE_OWNER_GID=$(stat -c %g "${SCRIPT_DIR}")
+
+# Check that rootless mode is run as the file owner
+if [ "$MODE" = rootless ]; then
+    CURRENT_UID=$(id -u)
+    if [ "$CURRENT_UID" -ne "$FILE_OWNER_UID" ]; then
+        FILE_OWNER_NAME=$(stat -c %U "${SCRIPT_DIR}")
+        echo "Error: Rootless mode must be run as the checkout owner"
+        echo "  Checkout owner: ${FILE_OWNER_NAME} (UID ${FILE_OWNER_UID})"
+        echo "  Current user: $(whoami) (UID ${CURRENT_UID})"
+        exit 1
+    fi
+fi
 
 # Create the same image tag that enter_container.sh uses
 CHECKOUT_HASH=$(echo -n "${SCRIPT_DIR}" | sha256sum | cut -c1-8)
 IMAGE_NAME="fil-c-dev"
 
 # Compute image tag based on mode (same logic as enter_container.sh)
-if [ "$ROOTFUL" = true ]; then
-    FILE_OWNER_UID=$(stat -c %u "${SCRIPT_DIR}")
-    if [ "$PIZLIX" = true ]; then
+case "$MODE" in
+    pizlix)
         IMAGE_TAG="${CHECKOUT_HASH}-pizlix-uid${FILE_OWNER_UID}"
-    else
-        IMAGE_TAG="${CHECKOUT_HASH}-rootful-uid${FILE_OWNER_UID}"
-    fi
-else
-    IMAGE_TAG="${CHECKOUT_HASH}"
-fi
+        ;;
+    optfil)
+        IMAGE_TAG="${CHECKOUT_HASH}-optfil-uid${FILE_OWNER_UID}"
+        ;;
+    rootless)
+        IMAGE_TAG="${CHECKOUT_HASH}"
+        ;;
+    *)
+        echo "Bad mode: $MODE"
+        exit 1
+esac
 
 DOCKERFILE_PATH="${SCRIPT_DIR}/.dockerfile-${IMAGE_TAG}"
 

@@ -27,12 +27,11 @@ set -e
 
 # Parse command-line options
 FORCE_NEW=false
-ROOTFUL=false
-PIZLIX=false
+MODE=rootless
 
 print_help() {
     cat <<EOF
-Usage: $0 [-f] [-r] [-p] [-h] command...
+Usage: $0 [-f] [-o] [-p] [-h] command...
 
 Enter the Fil-C development container for this checkout.
 
@@ -41,44 +40,49 @@ will attach to it. Otherwise, it will create a new container instance.
 
 Options:
   -f    Force creation of a new container instance (don't attach to existing)
-  -r    Use rootful mode (requires sudo, for /opt/fil development)
-  -p    Use container suitable for building Pizlix. Also rootful.
+  -o    Use container suitable for /opt/fil development.
+  -p    Use container suitable for building Pizlix.
+  -n    Use a normal rootless container (this is the default).
   -h    Show this help message
 
-Rootful mode (-r) and pizlix mode (-p):
+/opt/fil mode (-o) and pizlix mode (-p):
   - Runs container as real root (requires sudo)
   - Creates user matching file owner for su commands
 
-Rootful mode (-r):
+/opt/fil mode (-o):
   - Mounts /opt/fil (if it exists) shared with host
   - Use for /opt/fil development and testing
+  - NOTE: It's possible to build /opt/fil in a normal rootless container, but
+    then the resulting build isn't available for use on the host.
 
 Pizlix mode (-p):
   - Uses the pizlix directory as the working directory
   - Sets up lfs user and group
   - Runs a privileged container
+  - Mounts pizlix/lfs on host as /mnt/lfs in guest.
 
 EOF
     exit 0
 }
 
-while getopts "fprh" opt; do
+while getopts "fpoh" opt; do
     case $opt in
         f)
             FORCE_NEW=true
             ;;
-        r)
-            ROOTFUL=true
+        o)
+            MODE=optfil
             ;;
         p)
-            PIZLIX=true
-            ROOTFUL=true
+            MODE=pizlix
+            ;;
+        n)
+            MODE=rootless
             ;;
         h)
             print_help
             ;;
         \?)
-            echo "Invalid option: -$OPTARG" >&2
             echo "Use -h for help" >&2
             exit 1
             ;;
@@ -94,15 +98,26 @@ else
 fi
 
 # Check if rootful mode requires sudo
-if [ "$ROOTFUL" = true ] && [ $EUID -ne 0 ]; then
-    if [ "$PIZLIX" = true ]; then
-        echo "Error: Pizlix mode (-p) requires running with sudo"
-        echo "Run: sudo $0 -p"
-    else
-        echo "Error: Rootful mode (-r) requires running with sudo"
-        echo "Run: sudo $0 -r"
-    fi
-    exit 1
+if [ $EUID -ne 0 ]; then
+    case "$MODE" in
+        rootless)
+            :
+            ;;
+        pizlix)
+            echo "Error: Pizlix mode (-p) requires running with sudo"
+            echo "Run: sudo $0 -p"
+            exit 1
+            ;;
+        optfil)
+            echo "Error: /opt/fil mode (-o) requires running with sudo"
+            echo "Run: sudo $0 -o"
+            exit 1
+            ;;
+        *)
+            echo "Bad mode = $MODE"
+            exit 1
+            ;;
+    esac
 fi
 
 # Get the directory where this script lives
@@ -113,17 +128,13 @@ FILE_OWNER_UID=$(stat -c %u "${SCRIPT_DIR}")
 FILE_OWNER_GID=$(stat -c %g "${SCRIPT_DIR}")
 
 # Check that rootless mode is run as the file owner
-if [ "$ROOTFUL" = false ]; then
+if [ "$MODE" = rootless ]; then
     CURRENT_UID=$(id -u)
     if [ "$CURRENT_UID" -ne "$FILE_OWNER_UID" ]; then
         FILE_OWNER_NAME=$(stat -c %U "${SCRIPT_DIR}")
         echo "Error: Rootless mode must be run as the checkout owner"
         echo "  Checkout owner: ${FILE_OWNER_NAME} (UID ${FILE_OWNER_UID})"
         echo "  Current user: $(whoami) (UID ${CURRENT_UID})"
-        echo ""
-        echo "Either:"
-        echo "  1. Run as ${FILE_OWNER_NAME}: sudo -u ${FILE_OWNER_NAME} $0"
-        echo "  2. Use rootful mode: sudo $0 -r"
         exit 1
     fi
 fi
@@ -137,21 +148,27 @@ IMAGE_NAME="fil-c-dev"
 HOST_UID=$(id -u)
 
 # Set image tag and container label based on mode
-if [ "$ROOTFUL" = true ]; then
-    if [ "$PIZLIX" = true ]; then
+case "$MODE" in
+    pizlix)
         IMAGE_TAG="${CHECKOUT_HASH}-pizlix-uid${FILE_OWNER_UID}"
         CONTAINER_LABEL="fil-c-checkout-pizlix=${CHECKOUT_HASH}"
         WORKDIR="/fil-c/pizlix"
-    else
-        IMAGE_TAG="${CHECKOUT_HASH}-rootful-uid${FILE_OWNER_UID}"
-        CONTAINER_LABEL="fil-c-checkout-rootful=${CHECKOUT_HASH}"
+        ;;
+    optfil)
+        IMAGE_TAG="${CHECKOUT_HASH}-optfil-uid${FILE_OWNER_UID}"
+        CONTAINER_LABEL="fil-c-checkout-optfil=${CHECKOUT_HASH}"
         WORKDIR="/fil-c"
-    fi
-else
-    IMAGE_TAG="${CHECKOUT_HASH}"
-    CONTAINER_LABEL="fil-c-checkout=${CHECKOUT_HASH}"
-    WORKDIR="/fil-c"
-fi
+        ;;
+    rootless)
+        IMAGE_TAG="${CHECKOUT_HASH}"
+        CONTAINER_LABEL="fil-c-checkout=${CHECKOUT_HASH}"
+        WORKDIR="/fil-c"
+        ;;
+    *)
+        echo "Bad mode: $MODE"
+        exit 1
+        ;;
+esac
 
 # If not forcing a new container, check if one is already running
 if [ "$FORCE_NEW" = false ]; then
@@ -271,7 +288,7 @@ RUN pip install meson
 DOCKERFILE_END
 
 # Add user creation for rootful mode
-if [ "$ROOTFUL" = true ]; then
+if [ "$MODE" != rootless ]; then
     cat >> "${DOCKERFILE_PATH}" <<DOCKERFILE_END
 
 # Configure passwordless sudo for all users (dev container only)
@@ -290,7 +307,15 @@ RUN groupadd -g ${FILE_OWNER_GID} builder 2>/dev/null || true && \
 DOCKERFILE_END
 fi
 
-if [ "$PIZLIX" = true ]; then
+if [ "$MODE" != pizlix ]; then
+    cat >> "${DOCKERFILE_PATH}" <<'DOCKERFILE_END'
+# The optfil build expects /opt/fil to exist already. We support building /opt/fil in everything
+# but pizlix mode.
+RUN mkdir -p /opt/fil
+DOCKERFILE_END
+fi
+
+if [ "$MODE" = pizlix ]; then
     cat >> "${DOCKERFILE_PATH}" <<'DOCKERFILE_END'
 RUN groupadd lfs && \
     useradd -s /bin/bash -g lfs -m -k /dev/null lfs && \
@@ -311,9 +336,6 @@ RUN mkdir -p /fil-c
 
 # OpenSSH server install will want this.
 RUN mkdir -p /var/empty
-
-# The optfil build expects /opt/fil to exist already.
-RUN mkdir -p /opt/fil
 
 # Make sure that we have a place to put coredumps and Fil-C panics
 RUN mkdir -p /var/coredumps /var/filc/panics
@@ -337,17 +359,19 @@ if ! podman image exists "${IMAGE_NAME}:${IMAGE_TAG}"; then
 fi
 
 # Prepare volume mounts and run command based on mode
-if [ "$ROOTFUL" = true ]; then
+if [ "$MODE" != rootless ]; then
     # Rootful mode: mount checkout and /opt/fil if it exists
     EXTRA_ARGS="--volume ${SCRIPT_DIR}:/fil-c:rw"
-    if [ "$PIZLIX" = true ]; then
-        EXTRA_ARGS="${EXTRA_ARGS} --privileged"
+    if [ "$MODE" = pizlix ]; then
+        mkdir -p ${SCRIPT_DIR}/pizlix/lfs
+        EXTRA_ARGS="${EXTRA_ARGS} --privileged --volume ${SCRIPT_DIR}/pizlix/lfs:/mnt/lfs:rw,rslave"
         echo "Entering Fil-C development container (pizlix mode)..."
         echo "  - Running as real root"
         echo "  - Running privileged (no capability/resource restrictions)"
         echo "  - lfs user and group are available"
         echo "  - Files created will be owned by root"
-        echo "  - Working directory: /fil-c/pizlix (maps to ${SCRIPT_DIR/pizlix})"
+        echo "  - Working directory: /fil-c/pizlix (maps to ${SCRIPT_DIR}/pizlix)"
+        echo "  - /mnt/lfs maps to ${SCRIPT_DIR}/pizlix/lfs on host (and /fil-c/pizlix/lfs in container)"
     elif [ -d /opt/fil ]; then
         EXTRA_ARGS="${EXTRA_ARGS} --volume /opt/fil:/opt/fil:rw"
         echo "Entering Fil-C development container (rootful mode)..."

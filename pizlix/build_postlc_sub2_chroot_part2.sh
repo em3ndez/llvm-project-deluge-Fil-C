@@ -642,3 +642,6 @@ install uhci_hcd /sbin/modprobe ehci_hcd ; /sbin/modprobe -i uhci_hcd ; true
 EOF
 cd ..
 rm -rf pizlonated-linux
+
+mkdir -p /boot/grub
+cp -v etc/grub.cfg /boot/grub/grub.cfg

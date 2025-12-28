@@ -26,14 +26,9 @@
 set -e
 set -x
 
-ulimit -c unlimited
+test -e disk.img.loop
 
-TARBALL=$1
-LOOP=$2
-
-test -n "$TARBALL"
-test -n "$LOOP"
-test -e $TARBALL
+LOOP=`cat disk.img.loop`
 test -e $LOOP
 ls ${LOOP}*
 test -e ${LOOP}p1
@@ -45,44 +40,10 @@ test -d ../projects
 test -d ../llvm
 test -d etc
 test -e LFS-12.2-SYSV-BOOK.pdf
+test -e disk.vmdk.lck
+test ! -e disk.img.loop.lck
 
-umount image-mount || echo whatever
-rm -rf image-mount
-mkdir image-mount
-
-mkfs.ext4 -L root ${LOOP}p4
-mkswap -L swap ${LOOP}p3
-
-mount ${LOOP}p4 image-mount
-tar -xf $TARBALL -C image-mount
-
-mkdir image-mount/boot/grub
-
-cat > image-mount/boot/grub/grub.cfg <<EOF
-set timeout=5
-set default=0
-
-menuentry "Pizlix" {
-   set root=(hd0,4)
-   linux /boot/vmlinuz-6.10.5-lfs-12.2 root=/dev/sda4 ro console=ttyS0,115200 console=tty0 net.ifnames=0
-}
-EOF
-
-grub-install --target=i386-pc --boot-directory=image-mount/boot --modules="part_gpt ext2" $LOOP
-
-cat > disk.vmdk <<EOF
-# Disk DescriptorFile
-version=1
-CID=fffffffe
-parentCID=ffffffff
-createType="monolithicFlat"
-
-RW $(($(stat -c%s disk.img) / 512)) FLAT "disk.img" 0
-EOF
-
-FILCOWNER=`stat -c %U ..`
-FILCGROUP=`stat -c %G ..`
-id -u $FILCOWNER
-getent group $FILCGROUP
-chown $FILCOWNER:$FILCGROUP disk.img disk.vmdk
-
+umount lfs
+losetup -D $LOOP
+rmdir disk.vmdk.lck
+rm disk.img.loop

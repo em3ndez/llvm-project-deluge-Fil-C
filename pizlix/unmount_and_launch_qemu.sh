@@ -28,24 +28,14 @@ set -x
 
 ulimit -c unlimited
 
-if test -z "$1"
-then
-    TARBALL=lfs-postlc5.tar.gz
-else
-    TARBALL=$1
-fi
-
-if test "$TARBALL" != "--"
-then
-    test -e $TARBALL
-fi
-
 test $EUID -eq 0
 test -d ..
 test -d ../projects
 test -d ../llvm
 test -d etc
 test -e LFS-12.2-SYSV-BOOK.pdf
+FILCOWNER=`stat -c %U ..`
+id -u $FILCOWNER
 
 CLEANUP=""
 defer() {
@@ -53,65 +43,18 @@ defer() {
     trap "set +e; $CLEANUP" EXIT
 }
 
-test ! -d disk.vmdk.lck
-mkdir disk.vmdk.lck
-defer "rmdir disk.vmdk.lck"
-
-rm -f disk.img
-truncate -s 100G disk.img
-
-parted disk.img <<EOF
-mklabel gpt
-mkpart bios_boot 1MiB 2MiB
-set 1 bios_grub on
-mkpart dummy 2MiB 3MiB
-mkpart swap 3MiB 30GiB
-mkpart root 30GiB 100%
-EOF
-
-LOOP=$(losetup -Pf --show disk.img)
-defer "losetup -d $LOOP"
-udevadm settle
-
+test -e disk.img.loop
+LOOP=`cat disk.img.loop`
 test -e $LOOP
+ls ${LOOP}*
 test -e ${LOOP}p1
 test -e ${LOOP}p2
 test -e ${LOOP}p3
 test -e ${LOOP}p4
+test ! -d disk.img.loop.lck
+mkdir disk.img.loop.lck
+defer "rmdir disk.img.loop.lck"
+umount lfs
+defer "mount ${LOOP}p4 lfs"
 
-umount image-mount || echo whatever
-rm -rf image-mount
-mkdir image-mount
-
-mkfs.ext4 -L root ${LOOP}p4
-mkswap -L swap ${LOOP}p3
-
-mount ${LOOP}p4 image-mount
-defer "umount image-mount"
-
-if test "$TARBALL" != "--"
-then
-    tar -xf $TARBALL -C image-mount
-fi
-
-mkdir -p image-mount/boot/grub
-cp etc/grub.cfg image-mount/boot/grub/grub.cfg
-
-grub-install --target=i386-pc --boot-directory=image-mount/boot --modules="part_gpt ext2" $LOOP
-
-cat > disk.vmdk <<EOF
-# Disk DescriptorFile
-version=1
-CID=fffffffe
-parentCID=ffffffff
-createType="monolithicFlat"
-
-RW $(($(stat -c%s disk.img) / 512)) FLAT "disk.img" 0
-EOF
-
-FILCOWNER=`stat -c %U ..`
-FILCGROUP=`stat -c %G ..`
-id -u $FILCOWNER
-getent group $FILCGROUP
-chown $FILCOWNER:$FILCGROUP disk.img disk.vmdk
-
+su $FILCOWNER ./launch_qemu_impl.sh
