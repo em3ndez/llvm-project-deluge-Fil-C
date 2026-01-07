@@ -301,7 +301,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     setNumParameters(other.numParameters(), allocateArgumentValueProfiles);
 
     ASSERT(m_couldBeTainted == (taintednessToTriState(source().provider()->sourceTaintedOrigin()) != TriState::False));
-    vm.heap.codeBlockSet().add(this);
 }
 
 void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
@@ -348,7 +347,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
-    vm.heap.codeBlockSet().add(this);
 }
 
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process

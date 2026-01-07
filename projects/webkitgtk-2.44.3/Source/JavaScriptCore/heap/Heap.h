@@ -320,10 +320,25 @@ public:
 
     VM& vm() const;
 
-    MarkedSpace& objectSpace() { return m_objectSpace; }
-    MachineThreads& machineThreads() { return *m_machineThreads; }
+    MarkedSpace& objectSpace()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        MarkedSpace* ptr = nullptr;
+        return *ptr;
+    }
+    MachineThreads& machineThreads()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        MachineThreads* ptr = nullptr;
+        return *ptr;
+    }
 
-    SlotVisitor& collectorSlotVisitor() { return *m_collectorSlotVisitor; }
+    SlotVisitor& collectorSlotVisitor()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        SlotVisitor* ptr = nullptr;
+        return *ptr;
+    }
 
     JS_EXPORT_PRIVATE GCActivityCallback* fullActivityCallback();
     JS_EXPORT_PRIVATE GCActivityCallback* edenActivityCallback();
@@ -336,11 +351,22 @@ public:
 
     JS_EXPORT_PRIVATE IncrementalSweeper& sweeper();
 
-    void addObserver(HeapObserver* observer) { m_observers.append(observer); }
-    void removeObserver(HeapObserver* observer) { m_observers.removeFirst(observer); }
+    void addObserver(HeapObserver* observer)
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(observer);
+    }
+    void removeObserver(HeapObserver* observer)
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(observer);
+    }
 
-    MutatorState mutatorState() const { return m_mutatorState; }
-    std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
+    MutatorState mutatorState() const { return MutatorState::Running; }
+    std::optional<CollectionScope> collectionScope() const
+    {
+        return std::nullopt;
+    }
     bool hasHeapAccess() const;
     bool worldIsStopped() const;
     bool worldIsRunning() const { return !worldIsStopped(); }
@@ -355,9 +381,17 @@ public:
     JS_EXPORT_PRIVATE void addFinalizer(JSCell*, LambdaFinalizer);
 
     void notifyIsSafeToCollect();
-    bool isSafeToCollect() const { return m_isSafeToCollect; }
+    bool isSafeToCollect() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return false;
+    }
     
-    bool isShuttingDown() const { return m_isShuttingDown; }
+    bool isShuttingDown() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return false;
+    }
 
     JS_EXPORT_PRIVATE void sweepSynchronously();
 
@@ -431,19 +465,43 @@ public:
     template<typename Functor> void forEachCodeBlock(const Functor&);
     template<typename Functor> void forEachCodeBlockIgnoringJITPlans(const AbstractLocker& codeBlockSetLocker, const Functor&);
 
-    HandleSet* handleSet() { return &m_handleSet; }
+    HandleSet* handleSet()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
 
     void willStartIterating();
     void didFinishIterating();
 
-    Seconds lastFullGCLength() const { return m_lastFullGCLength; }
-    Seconds lastEdenGCLength() const { return m_lastEdenGCLength; }
-    void increaseLastFullGCLength(Seconds amount) { m_lastFullGCLength += amount; }
+    Seconds lastFullGCLength() const{ return Seconds(0); }
+    Seconds lastEdenGCLength() const { return Seconds(0); }
+    void increaseLastFullGCLength(Seconds amount)
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(amount);
+    }
 
-    size_t sizeBeforeLastEdenCollection() const { return m_sizeBeforeLastEdenCollect; }
-    size_t sizeAfterLastEdenCollection() const { return m_sizeAfterLastEdenCollect; }
-    size_t sizeBeforeLastFullCollection() const { return m_sizeBeforeLastFullCollect; }
-    size_t sizeAfterLastFullCollection() const { return m_sizeAfterLastFullCollect; }
+    size_t sizeBeforeLastEdenCollection() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
+    size_t sizeAfterLastEdenCollection() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
+    size_t sizeBeforeLastFullCollection() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
+    size_t sizeAfterLastFullCollection() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
 
     void deleteAllCodeBlocks(DeleteAllCodeEffort);
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort);
@@ -451,13 +509,23 @@ public:
     void didAllocate(size_t);
     bool isPagedOut();
     
-    const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
+    const JITStubRoutineSet& jitStubRoutines()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        JITStubRoutineSet* ptr = nullptr;
+        return *ptr;
+    }
     
     void addReference(JSCell*, ArrayBuffer*);
     
     bool isDeferred() const { return !!m_deferralDepth; }
 
-    CodeBlockSet& codeBlockSet() { return *m_codeBlocks; }
+    CodeBlockSet& codeBlockSet()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        CodeBlockSet* ptr = nullptr;
+        return *ptr;
+    }
 
 #if USE(FOUNDATION)
     template<typename T> void releaseSoon(RetainPtr<T>&&);
@@ -472,17 +540,32 @@ public:
     void addLogicallyEmptyWeakBlock(WeakBlock*);
 
 #if ENABLE(RESOURCE_USAGE)
-    size_t blockBytesAllocated() const { return m_blockBytesAllocated; }
+    size_t blockBytesAllocated() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
 #endif
 
     void didAllocateBlock(size_t capacity);
     void didFreeBlock(size_t capacity);
     
-    bool mutatorShouldBeFenced() const { return m_mutatorShouldBeFenced; }
-    const bool* addressOfMutatorShouldBeFenced() const { return &m_mutatorShouldBeFenced; }
+    bool mutatorShouldBeFenced() const { return false; }
+    const bool* addressOfMutatorShouldBeFenced() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
     
-    unsigned barrierThreshold() const { return m_barrierThreshold; }
-    const unsigned* addressOfBarrierThreshold() const { return &m_barrierThreshold; }
+    unsigned barrierThreshold() const
+    {
+        return 0;
+    }
+    const unsigned* addressOfBarrierThreshold() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
 
     // If true, the GC believes that the mutator is currently messing with the heap. We call this
     // "having heap access". The GC may block if the mutator is in this state. If false, the GC may
@@ -544,12 +627,24 @@ public:
     void preventCollection();
     void allowCollection();
     
-    uint64_t mutatorExecutionVersion() const { return m_mutatorExecutionVersion; }
-    uint64_t phaseVersion() const { return m_phaseVersion; }
+    uint64_t mutatorExecutionVersion() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
+    uint64_t phaseVersion() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
     
     JS_EXPORT_PRIVATE void addMarkingConstraint(std::unique_ptr<MarkingConstraint>);
     
-    HeapVerifier* verifier() const { return m_verifier.get(); }
+    HeapVerifier* verifier() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
     
     void addHeapFinalizerCallback(const HeapFinalizerCallback&);
     void removeHeapFinalizerCallback(const HeapFinalizerCallback&);
@@ -559,24 +654,37 @@ public:
     template<typename Func>
     void runFunctionInParallel(const Func& func)
     {
-        runTaskInParallel(createSharedTask<void(SlotVisitor&)>(func));
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(func);
     }
 
     template<typename Func>
     void forEachSlotVisitor(const Func&);
     
-    Seconds totalGCTime() const { return m_totalGCTime; }
+    Seconds totalGCTime() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return Seconds();
+    }
 
-    HashMap<JSImmutableButterfly*, JSString*> immutableButterflyToStringCache;
-
-    bool isMarkingForGCVerifier() const { return m_isMarkingForGCVerifier; }
+    bool isMarkingForGCVerifier() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return false;
+    }
 
     void appendPossiblyAccessedStringFromConcurrentThreads(String&& string)
     {
-        m_possiblyAccessedStringsFromConcurrentThreads.append(WTFMove(string));
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(string);
     }
 
-    bool isInPhase(CollectorPhase phase) const { return m_currentPhase == phase; }
+    bool isInPhase(CollectorPhase phase) const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(phase);
+        return false;
+    }
 
 private:
     friend class AllocatingScope;
@@ -611,16 +719,6 @@ private:
     friend class HeapThread;
 
     friend class GCClient::Heap;
-
-    static constexpr size_t minExtraMemory = 256;
-    
-    class CFinalizerOwner final : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) final;
-    };
-
-    class LambdaFinalizerOwner final : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) final;
-    };
 
     Lock& lock() { return m_lock; }
 
@@ -766,91 +864,8 @@ private:
     void verifyGC();
 
     Lock m_lock;
-    const HeapType m_heapType;
-    MutatorState m_mutatorState { MutatorState::Running };
-    const size_t m_ramSize;
-    const size_t m_minBytesPerCycle;
-    size_t m_bytesAllocatedBeforeLastEdenCollect { 0 };
-    size_t m_sizeAfterLastCollect { 0 };
-    size_t m_sizeAfterLastFullCollect { 0 };
-    size_t m_sizeBeforeLastFullCollect { 0 };
-    size_t m_sizeAfterLastEdenCollect { 0 };
-    size_t m_sizeBeforeLastEdenCollect { 0 };
 
-    size_t m_bytesAllocatedThisCycle { 0 };
-    size_t m_bytesAbandonedSinceLastFullCollect { 0 };
-    size_t m_maxEdenSize;
-    size_t m_maxEdenSizeWhenCritical;
-    size_t m_maxHeapSize;
-    size_t m_totalBytesVisitedAfterLastFullCollect { 0 };
-    size_t m_totalBytesVisited { 0 };
-    size_t m_totalBytesVisitedThisCycle { 0 };
-    double m_incrementBalance { 0 };
-    
-    bool m_shouldDoOpportunisticFullCollection { false };
-    bool m_isInOpportunisticTask { false };
-    bool m_shouldDoFullCollection { false };
-    Markable<CollectionScope, EnumMarkableTraits<CollectionScope>> m_collectionScope;
-    Markable<CollectionScope, EnumMarkableTraits<CollectionScope>> m_lastCollectionScope;
-    Lock m_raceMarkStackLock;
-
-    MarkedSpace m_objectSpace;
-    GCIncomingRefCountedSet<ArrayBuffer> m_arrayBuffers;
-    size_t m_extraMemorySize { 0 };
-    size_t m_deprecatedExtraMemorySize { 0 };
-
-    ProtectCountSet m_protectedValues;
-    HashSet<MarkedVectorBase*> m_markListSet;
-    SentinelLinkedList<MarkedJSValueRefArray, BasicRawSentinelNode<MarkedJSValueRefArray>> m_markedJSValueRefArrays;
-
-    std::unique_ptr<MachineThreads> m_machineThreads;
-    
-    std::unique_ptr<SlotVisitor> m_collectorSlotVisitor;
-    std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
-    std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
-    std::unique_ptr<MarkStackArray> m_raceMarkStack;
-    std::unique_ptr<MarkingConstraintSet> m_constraintSet;
-    std::unique_ptr<VerifierSlotVisitor> m_verifierSlotVisitor;
-
-    // We pool the slot visitors used by parallel marking threads. It's useful to be able to
-    // enumerate over them, and it's useful to have them cache some small amount of memory from
-    // one GC to the next. GC marking threads claim these at the start of marking, and return
-    // them at the end.
-    Vector<std::unique_ptr<SlotVisitor>> m_parallelSlotVisitors;
-    Vector<SlotVisitor*> m_availableParallelSlotVisitors WTF_GUARDED_BY_LOCK(m_parallelSlotVisitorLock);
-    
-    HandleSet m_handleSet;
-    std::unique_ptr<CodeBlockSet> m_codeBlocks;
-    std::unique_ptr<JITStubRoutineSet> m_jitStubRoutines;
-    CFinalizerOwner m_cFinalizerOwner;
-    LambdaFinalizerOwner m_lambdaFinalizerOwner;
-    
-    Lock m_parallelSlotVisitorLock;
-    bool m_isSafeToCollect { false };
-    bool m_isShuttingDown { false };
-    bool m_mutatorShouldBeFenced { Options::forceFencedBarrier() };
-    bool m_isMarkingForGCVerifier { false };
-
-    unsigned m_barrierThreshold { Options::forceFencedBarrier() ? tautologicalThreshold : blackThreshold };
-
-    Seconds m_lastFullGCLength { 10_ms };
-    Seconds m_lastEdenGCLength { 10_ms };
-
-    Vector<WeakBlock*> m_logicallyEmptyWeakBlocks;
-    size_t m_indexOfNextLogicallyEmptyWeakBlockToSweep { WTF::notFound };
-
-    Vector<String> m_possiblyAccessedStringsFromConcurrentThreads;
-    
-    RefPtr<GCActivityCallback> m_fullActivityCallback;
-    RefPtr<GCActivityCallback> m_edenActivityCallback;
     Ref<IncrementalSweeper> m_sweeper;
-    Ref<StopIfNecessaryTimer> m_stopIfNecessaryTimer;
-
-    Vector<HeapObserver*> m_observers;
-    
-    Vector<HeapFinalizerCallback> m_heapFinalizerCallbacks;
-    
-    std::unique_ptr<HeapVerifier> m_verifier;
 
 #if USE(FOUNDATION)
     Vector<RetainPtr<CFTypeRef>> m_delayedReleaseObjects;
@@ -861,82 +876,6 @@ private:
     unsigned m_delayedReleaseRecursionCount { 0 };
 #endif
     unsigned m_deferralDepth { 0 };
-
-    HashSet<WeakGCHashTable*> m_weakGCHashTables;
-    
-    std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
-    std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
-    unsigned m_numberOfActiveParallelMarkers { 0 };
-    unsigned m_numberOfWaitingParallelMarkers { 0 };
-
-    ConcurrentPtrHashSet m_opaqueRoots;
-    static constexpr size_t s_blockFragmentLength = 32;
-
-    ParallelHelperClient m_helperClient;
-    RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask;
-
-#if ENABLE(RESOURCE_USAGE)
-    size_t m_blockBytesAllocated { 0 };
-    size_t m_externalMemorySize { 0 };
-#endif
-    
-    std::unique_ptr<MutatorScheduler> m_scheduler;
-    
-    static constexpr unsigned mutatorHasConnBit = 1u << 0u; // Must also be protected by threadLock.
-    static constexpr unsigned stoppedBit = 1u << 1u; // Only set when !hasAccessBit
-    static constexpr unsigned hasAccessBit = 1u << 2u;
-    static constexpr unsigned needFinalizeBit = 1u << 3u;
-    static constexpr unsigned mutatorWaitingBit = 1u << 4u; // Allows the mutator to use this as a condition variable.
-    Atomic<unsigned> m_worldState;
-    bool m_worldIsStopped { false };
-    Lock m_markingMutex;
-    Condition m_markingConditionVariable;
-
-    MonotonicTime m_beforeGC;
-    MonotonicTime m_afterGC;
-    MonotonicTime m_stopTime;
-    
-    Deque<GCRequest> m_requests;
-    GCRequest m_currentRequest;
-    Ticket m_lastServedTicket { 0 };
-    Ticket m_lastGrantedTicket { 0 };
-
-    CollectorPhase m_lastPhase { CollectorPhase::NotRunning };
-    CollectorPhase m_currentPhase { CollectorPhase::NotRunning };
-    CollectorPhase m_nextPhase { CollectorPhase::NotRunning };
-    bool m_collectorThreadIsRunning { false };
-    bool m_threadShouldStop { false };
-    bool m_mutatorDidRun { true };
-    bool m_didDeferGCWork { false };
-    bool m_shouldStopCollectingContinuously { false };
-
-    uint64_t m_mutatorExecutionVersion { 0 };
-    uint64_t m_phaseVersion { 0 };
-    Box<Lock> m_threadLock;
-    Ref<AutomaticThreadCondition> m_threadCondition; // The mutator must not wait on this. It would cause a deadlock.
-    RefPtr<AutomaticThread> m_thread;
-
-    RefPtr<Thread> m_collectContinuouslyThread { nullptr };
-    
-    MonotonicTime m_lastGCStartTime;
-    MonotonicTime m_lastGCEndTime;
-    MonotonicTime m_currentGCStartTime;
-    MonotonicTime m_lastFullGCEndTime;
-    Seconds m_totalGCTime;
-    
-    uintptr_t m_barriersExecuted { 0 };
-    
-    CurrentThreadState* m_currentThreadState { nullptr };
-    Thread* m_currentThread { nullptr }; // It's OK if this becomes a dangling pointer.
-
-#if USE(BMALLOC_MEMORY_FOOTPRINT_API)
-    unsigned m_percentAvailableMemoryCachedCallCount { 0 };
-    bool m_overCriticalMemoryThreshold { false };
-#endif
-
-    bool m_parallelMarkersShouldExit { false };
-    Lock m_collectContinuouslyLock;
-    Condition m_collectContinuouslyCondition;
 
 public:
     // HeapCellTypes

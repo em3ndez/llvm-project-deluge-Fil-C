@@ -176,12 +176,6 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
         break;
     }
 
-    auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
-    if (hasClearableCode())
-        clearableCodeSet.add(this);
-    else
-        clearableCodeSet.remove(this);
-
     if (genericCodeBlock) {
         RELEASE_ASSERT(genericCodeBlock->ownerExecutable() == this);
         RELEASE_ASSERT(JITCode::isExecutableScript(genericCodeBlock->jitType()));

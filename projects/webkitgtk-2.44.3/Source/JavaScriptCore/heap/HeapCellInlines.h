@@ -34,50 +34,53 @@ namespace JSC {
 
 ALWAYS_INLINE bool HeapCell::isPreciseAllocation() const
 {
-    return PreciseAllocation::isPreciseAllocation(const_cast<HeapCell*>(this));
+    UNREACHABLE_FOR_PLATFORM();
+    return false;
 }
 
 ALWAYS_INLINE CellContainer HeapCell::cellContainer() const
 {
-    if (isPreciseAllocation())
-        return preciseAllocation();
-    return markedBlock();
+    UNREACHABLE_FOR_PLATFORM();
+    return CellContainer();
 }
 
 ALWAYS_INLINE MarkedBlock& HeapCell::markedBlock() const
 {
-    return *MarkedBlock::blockFor(this);
+    UNREACHABLE_FOR_PLATFORM();
+    MarkedBlock* result = nullptr;
+    return *result;
 }
 
 ALWAYS_INLINE PreciseAllocation& HeapCell::preciseAllocation() const
 {
-    return *PreciseAllocation::fromCell(const_cast<HeapCell*>(this));
+    UNREACHABLE_FOR_PLATFORM();
+    PreciseAllocation* result = nullptr;
+    return *result;
 }
 
 ALWAYS_INLINE JSC::Heap* HeapCell::heap() const
 {
-    return &vm().heap;
+    UNREACHABLE_FOR_PLATFORM();
+    return nullptr;
 }
 
 ALWAYS_INLINE VM& HeapCell::vm() const
 {
-    if (isPreciseAllocation())
-        return preciseAllocation().vm();
-    return markedBlock().vm();
+    UNREACHABLE_FOR_PLATFORM();
+    VM* vm = nullptr;
+    return *vm;
 }
     
 ALWAYS_INLINE size_t HeapCell::cellSize() const
 {
-    if (isPreciseAllocation())
-        return preciseAllocation().cellSize();
-    return markedBlock().cellSize();
+    UNREACHABLE_FOR_PLATFORM();
+    return 0;
 }
 
 ALWAYS_INLINE CellAttributes HeapCell::cellAttributes() const
 {
-    if (isPreciseAllocation())
-        return preciseAllocation().attributes();
-    return markedBlock().attributes();
+    UNREACHABLE_FOR_PLATFORM();
+    return CellAttributes();
 }
 
 ALWAYS_INLINE DestructionMode HeapCell::destructionMode() const

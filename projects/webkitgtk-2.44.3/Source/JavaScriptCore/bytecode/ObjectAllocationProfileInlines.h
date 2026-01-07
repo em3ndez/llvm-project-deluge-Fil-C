@@ -99,7 +99,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
     ASSERT(inlineCapacity <= JSFinalObject::maxInlineCapacity);
 
     size_t allocationSize = JSFinalObject::allocationSize(inlineCapacity);
-    Allocator allocator = subspaceFor<JSFinalObject>(vm)->allocatorFor(allocationSize, AllocatorForMode::EnsureAllocator);
+    Allocator allocator = Allocator();
 
     // Take advantage of extra inline capacity available in the size class.
     if (allocator) {

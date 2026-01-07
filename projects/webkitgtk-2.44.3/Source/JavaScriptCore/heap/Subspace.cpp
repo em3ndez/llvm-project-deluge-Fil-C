@@ -38,20 +38,15 @@ namespace JSC {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Subspace);
 
 Subspace::Subspace(CString name, JSC::Heap& heap)
-    : m_space(heap.objectSpace())
-    , m_name(name)
 {
+    UNUSED_PARAM(name);
+    UNUSED_PARAM(heap);
 }
 
 void Subspace::initialize(const HeapCellType& heapCellType, AlignedMemoryAllocator* alignedMemoryAllocator)
 {
     m_heapCellType = &heapCellType;
-    m_alignedMemoryAllocator = alignedMemoryAllocator;
-    m_directoryForEmptyAllocation = m_alignedMemoryAllocator->firstDirectory();
-
-    JSC::Heap& heap = m_space.heap();
-    heap.objectSpace().m_subspaces.append(this);
-    m_alignedMemoryAllocator->registerSubspace(this);
+    UNUSED_PARAM(alignedMemoryAllocator);
 }
 
 Subspace::~Subspace()
@@ -60,88 +55,59 @@ Subspace::~Subspace()
 
 void Subspace::finishSweep(MarkedBlock::Handle& block, FreeList* freeList)
 {
-    m_heapCellType->finishSweep(block, freeList);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(block);
+    UNUSED_PARAM(freeList);
 }
 
 void Subspace::destroy(VM& vm, JSCell* cell)
 {
-    m_heapCellType->destroy(vm, cell);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(cell);
 }
 
 void Subspace::prepareForAllocation()
 {
-    forEachDirectory(
-        [&] (BlockDirectory& directory) {
-            directory.prepareForAllocation();
-        });
-
-    m_directoryForEmptyAllocation = m_alignedMemoryAllocator->firstDirectory();
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 MarkedBlock::Handle* Subspace::findEmptyBlockToSteal()
 {
-    for (; m_directoryForEmptyAllocation; m_directoryForEmptyAllocation = m_directoryForEmptyAllocation->nextDirectoryInAlignedMemoryAllocator()) {
-        if (MarkedBlock::Handle* block = m_directoryForEmptyAllocation->findEmptyBlockToSteal())
-            return block;
-    }
+    UNREACHABLE_FOR_PLATFORM();
     return nullptr;
 }
 
 Ref<SharedTask<BlockDirectory*()>> Subspace::parallelDirectorySource()
 {
-    class Task final : public SharedTask<BlockDirectory*()> {
-    public:
-        Task(BlockDirectory* directory)
-            : m_directory(directory)
-        {
-        }
-        
-        BlockDirectory* run() final
-        {
-            Locker locker { m_lock };
-            BlockDirectory* result = m_directory;
-            if (result)
-                m_directory = result->nextDirectoryInSubspace();
-            return result;
-        }
-        
-    private:
-        BlockDirectory* m_directory;
-        Lock m_lock;
-    };
-    
-    return adoptRef(*new Task(m_firstDirectory));
+    UNREACHABLE_FOR_PLATFORM();
+    return createSharedTask<BlockDirectory*()>([] () -> BlockDirectory* { return nullptr; });
 }
 
 Ref<SharedTask<MarkedBlock::Handle*()>> Subspace::parallelNotEmptyMarkedBlockSource()
 {
-    return createParallelSourceAdapter<BlockDirectory*, MarkedBlock::Handle*>(
-        parallelDirectorySource(),
-        [] (BlockDirectory* directory) -> RefPtr<SharedTask<MarkedBlock::Handle*()>> {
-            if (!directory)
-                return nullptr;
-            return directory->parallelNotEmptyBlockSource();
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    return createSharedTask<MarkedBlock::Handle*()>([] () -> MarkedBlock::Handle* { return nullptr; });
 }
 
 void Subspace::sweepBlocks()
 {
-    forEachDirectory(
-        [&] (BlockDirectory& directory) {
-            directory.sweep();
-        });
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void Subspace::didResizeBits(unsigned)
 {
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void Subspace::didRemoveBlock(unsigned)
 {
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void Subspace::didBeginSweepingToFreeList(MarkedBlock::Handle*)
 {
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 } // namespace JSC

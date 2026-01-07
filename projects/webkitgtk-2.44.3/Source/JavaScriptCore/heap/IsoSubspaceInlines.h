@@ -31,34 +31,32 @@ namespace GCClient {
 
 ALWAYS_INLINE void* IsoSubspace::allocate(VM& vm, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
-    return m_localAllocator.allocate(vm.heap, cellSize, deferralContext, failureMode);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(cellSize);
+    UNUSED_PARAM(deferralContext);
+    UNUSED_PARAM(failureMode);
+    return nullptr;
 }
 
 } // namespace GCClient
 
 inline void IsoSubspace::clearIsoCellSetBit(PreciseAllocation* preciseAllocation)
 {
-    unsigned lowerTierIndex = preciseAllocation->lowerTierIndex();
-    m_cellSets.forEach(
-        [&](IsoCellSet* set) {
-            set->clearLowerTierCell(lowerTierIndex);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(preciseAllocation);
 }
 
 inline void IsoSubspace::sweep()
 {
-    Subspace::sweepBlocks();
-    // We sweep precise-allocations eagerly, but we do not free it immediately.
-    // This part should be done by MarkedSpace::sweepPreciseAllocations.
-    m_preciseAllocations.forEach([&](PreciseAllocation* allocation) {
-        allocation->sweep();
-    });
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 template<typename Func>
 void IsoSubspace::forEachLowerTierFreeListedPreciseAllocation(const Func& func)
 {
-    m_lowerTierFreeList.forEach(func);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 } // namespace JSC

@@ -867,6 +867,12 @@ private:
     } DictionaryKind;
 
 public:
+    VM& vm() const
+    {
+        RELEASE_ASSERT(m_vm);
+        return *m_vm;
+    }
+    
 #define DEFINE_BITFIELD(type, lowerName, upperName, width, offset) \
     static constexpr uint32_t s_##lowerName##Shift = offset;\
     static constexpr uint32_t s_##lowerName##Mask = ((1 << (width - 1)) | ((1 << (width - 1)) - 1));\
@@ -1071,6 +1077,7 @@ private:
 
 
     WriteBarrier<JSGlobalObject> m_globalObject;
+    VM* m_vm;
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
 

@@ -32,20 +32,13 @@ namespace JSC {
 class AllocatingScope {
 public:
     AllocatingScope(JSC::Heap& heap)
-        : m_heap(heap)
     {
-        RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Running);
-        m_heap.m_mutatorState = MutatorState::Allocating;
+        UNUSED_PARAM(heap);
     }
     
     ~AllocatingScope()
     {
-        RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Allocating);
-        m_heap.m_mutatorState = MutatorState::Running;
     }
-
-private:
-    JSC::Heap& m_heap;
 };
 
 } // namespace JSC

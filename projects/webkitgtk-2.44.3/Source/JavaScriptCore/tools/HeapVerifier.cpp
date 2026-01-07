@@ -86,14 +86,8 @@ void HeapVerifier::endGC()
 
 void HeapVerifier::gatherLiveCells(HeapVerifier::Phase phase)
 {
-    Heap* heap = m_heap;
-    CellList& list = *cellListForGathering(phase);
-
-    list.reset();
-    heap->m_objectSpace.forEachLiveCell([&list] (HeapCell* cell, HeapCell::Kind kind) {
-        list.add({ cell, kind, CellProfile::Live });
-        return IterationStatus::Continue;
-    });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(phase);
 }
 
 CellList* HeapVerifier::cellListForGathering(HeapVerifier::Phase phase)
@@ -436,26 +430,8 @@ void HeapVerifier::checkIfRecorded(HeapCell* cell)
 
 void HeapVerifier::checkIfRecorded(uintptr_t candidateCell)
 {
-    HeapCell* candidateHeapCell = reinterpret_cast<HeapCell*>(candidateCell);
-    
-    auto& inspector = VMInspector::instance();
-    if (!inspector.getLock().tryLockWithTimeout(2_s)) {
-        dataLog("ERROR: Timed out while waiting to iterate VMs.");
-        return;
-    }
-    Locker locker { AdoptLock, inspector.getLock() };
-    inspector.iterate([&] (VM& vm) {
-        if (!vm.isInService())
-            return IterationStatus::Continue;
-
-        if (!vm.heap.m_verifier)
-            return IterationStatus::Continue;
-        
-        auto* verifier = vm.heap.m_verifier.get();
-        dataLog("Search for cell ", RawPointer(candidateHeapCell), " in VM ", RawPointer(&vm), ":\n");
-        verifier->checkIfRecorded(candidateHeapCell);
-        return IterationStatus::Continue;
-    });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(candidateCell);
 }
 
 } // namespace JSC

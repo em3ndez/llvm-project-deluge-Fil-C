@@ -259,12 +259,7 @@ void MarkedSpace::forEachSubspace(const Functor& functor)
 
 ALWAYS_INLINE size_t MarkedSpace::optimalSizeFor(size_t bytes)
 {
-    ASSERT(bytes);
-    if (bytes <= preciseCutoff)
-        return WTF::roundUpToMultipleOf<sizeStep>(bytes);
-    if (bytes <= largeCutoff)
-        return s_sizeClassForSizeStep[sizeClassToIndex(bytes)];
-    return bytes;
+    return WTF::roundUpToMultipleOf<16>(bytes);
 }
 
 } // namespace JSC

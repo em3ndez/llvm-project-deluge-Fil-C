@@ -30,20 +30,6 @@
 #include "MarkedBlockInlines.h"
 #include <wtf/PrintStream.h>
 
-namespace JSC {
-
-bool HeapCell::isLive()
-{
-    if (isPreciseAllocation())
-        return preciseAllocation().isLive();
-    auto& markedBlockHandle = markedBlock().handle();
-    if (markedBlockHandle.isFreeListed())
-        return !markedBlockHandle.isFreeListedCell(this);
-    return markedBlockHandle.isLive(this);
-}
-
-} // namespace JSC
-
 namespace WTF {
 
 using namespace JSC;

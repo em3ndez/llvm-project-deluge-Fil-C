@@ -257,8 +257,6 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         m_unlinkedCodeBlockForConstruct.set(vm, this, result);
         break;
     }
-    // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
-    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
 }
 
@@ -310,10 +308,6 @@ void UnlinkedFunctionExecutable::finalizeUnconditionally(VM& vm, CollectionScope
         };
         clearIfDead(m_unlinkedCodeBlockForCall);
         clearIfDead(m_unlinkedCodeBlockForConstruct);
-        if (isCleared && !isStillValid) {
-            // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
-            vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
-        }
     }
 }
 

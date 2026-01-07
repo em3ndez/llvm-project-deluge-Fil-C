@@ -455,7 +455,7 @@ op(llint_get_host_call_return_value, macro ()
     functionPrologue()
     pushCalleeSaves()
     loadp Callee[cfr], t0
-    convertJSCalleeToVM(t0)
+    convertJSCalleeToVM(t0, t1)
     loadq VM::encodedHostCallReturnValue[t0], t0
     popCalleeSaves()
     functionEpilogue()

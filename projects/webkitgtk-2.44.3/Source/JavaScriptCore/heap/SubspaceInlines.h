@@ -37,114 +37,51 @@ namespace JSC {
 template<typename Func>
 void Subspace::forEachDirectory(const Func& func)
 {
-    for (BlockDirectory* directory = m_firstDirectory; directory; directory = directory->nextDirectoryInSubspace())
-        func(*directory);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 template<typename Func>
 void Subspace::forEachMarkedBlock(const Func& func)
 {
-    forEachDirectory(
-        [&] (BlockDirectory& directory) {
-            directory.forEachBlock(func);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 template<typename Func>
 void Subspace::forEachNotEmptyMarkedBlock(const Func& func)
 {
-    forEachDirectory(
-        [&] (BlockDirectory& directory) {
-            directory.forEachNotEmptyBlock(func);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 template<typename Func>
 void Subspace::forEachPreciseAllocation(const Func& func)
 {
-    for (PreciseAllocation& allocation : m_preciseAllocations)
-        func(&allocation);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 template<typename Func>
 void Subspace::forEachMarkedCell(const Func& func)
 {
-    forEachNotEmptyMarkedBlock(
-        [&] (MarkedBlock::Handle* handle) {
-            handle->forEachMarkedCell(
-                [&] (size_t, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-                    func(cell, kind);
-                    return IterationStatus::Continue;
-                });
-        });
-    CellAttributes attributes = this->attributes();
-    forEachPreciseAllocation(
-        [&] (PreciseAllocation* allocation) {
-            if (allocation->isMarked())
-                func(allocation->cell(), attributes.cellKind);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 template<typename Visitor, typename Func>
 Ref<SharedTask<void(Visitor&)>> Subspace::forEachMarkedCellInParallel(const Func& func)
 {
-    class Task final : public SharedTask<void(Visitor&)> {
-    public:
-        Task(Subspace& subspace, const Func& func)
-            : m_subspace(subspace)
-            , m_blockSource(subspace.parallelNotEmptyMarkedBlockSource())
-            , m_func(func)
-        {
-        }
-        
-        void run(Visitor& visitor) final
-        {
-            while (MarkedBlock::Handle* handle = m_blockSource->run()) {
-                handle->forEachMarkedCell(
-                    [&] (size_t, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-                        m_func(visitor, cell, kind);
-                        return IterationStatus::Continue;
-                    });
-            }
-
-            if (m_doneVisitingPreciseAllocations.test_and_set(std::memory_order_relaxed))
-                return;
-
-            CellAttributes attributes = m_subspace.attributes();
-            m_subspace.forEachPreciseAllocation(
-                [&] (PreciseAllocation* allocation) {
-                    if (allocation->isMarked())
-                        m_func(visitor, allocation->cell(), attributes.cellKind);
-                });
-        }
-        
-    private:
-        Subspace& m_subspace;
-        Ref<SharedTask<MarkedBlock::Handle*()>> m_blockSource;
-        Func m_func;
-        std::atomic_flag m_doneVisitingPreciseAllocations { };
-    };
-    
-    return adoptRef(*new Task(*this, func));
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+    return createSharedTask([] (Visitor&) { });
 }
 
 template<typename Func>
 void Subspace::forEachLiveCell(const Func& func)
 {
-    forEachMarkedBlock(
-        [&] (MarkedBlock::Handle* handle) {
-            handle->forEachLiveCell(
-                [&] (size_t, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-                    func(cell, kind);
-                    return IterationStatus::Continue;
-                });
-        });
-    CellAttributes attributes = this->attributes();
-    forEachPreciseAllocation(
-        [&] (PreciseAllocation* allocation) {
-            if (allocation->isLive())
-                func(allocation->cell(), attributes.cellKind);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 inline CellAttributes Subspace::attributes() const

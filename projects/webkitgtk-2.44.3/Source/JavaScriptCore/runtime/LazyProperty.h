@@ -38,7 +38,7 @@ class LazyProperty {
 public:
     struct Initializer {
         Initializer(OwnerType* owner, LazyProperty& property)
-            : vm(Heap::heap(owner)->vm())
+            : vm(owner->structure()->vm())
             , owner(owner)
             , property(property)
         {

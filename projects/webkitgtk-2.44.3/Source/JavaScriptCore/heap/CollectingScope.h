@@ -29,24 +29,6 @@
 
 namespace JSC {
 
-class CollectingScope {
-public:
-    CollectingScope(JSC::Heap& heap)
-        : m_heap(heap)
-        , m_oldState(m_heap.m_mutatorState)
-    {
-        m_heap.m_mutatorState = MutatorState::Collecting;
-    }
-    
-    ~CollectingScope()
-    {
-        m_heap.m_mutatorState = m_oldState;
-    }
-
-private:
-    JSC::Heap& m_heap;
-    MutatorState m_oldState;
-};
 
 } // namespace JSC
 

@@ -46,7 +46,11 @@ public:
     JS_EXPORT_PRIVATE IsoSubspace(CString name, Heap&, const HeapCellType&, size_t size, uint8_t numberOfLowerTierCells, std::unique_ptr<IsoMemoryAllocatorBase>&& = nullptr);
     JS_EXPORT_PRIVATE ~IsoSubspace() override;
 
-    size_t cellSize() { return m_directory.cellSize(); }
+    size_t cellSize()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
 
     void sweepLowerTierCell(PreciseAllocation*);
     void clearIsoCellSetBit(PreciseAllocation*);
@@ -65,11 +69,6 @@ private:
     void didResizeBits(unsigned newSize) override;
     void didRemoveBlock(unsigned blockIndex) override;
     void didBeginSweepingToFreeList(MarkedBlock::Handle*) override;
-
-    BlockDirectory m_directory;
-    std::unique_ptr<IsoMemoryAllocatorBase> m_isoAlignedMemoryAllocator;
-    SentinelLinkedList<PreciseAllocation, BasicRawSentinelNode<PreciseAllocation>> m_lowerTierFreeList;
-    SentinelLinkedList<IsoCellSet, BasicRawSentinelNode<IsoCellSet>> m_cellSets;
 };
 
 
@@ -82,20 +81,27 @@ public:
     JS_EXPORT_PRIVATE IsoSubspace(JSC::IsoSubspace&);
     JS_EXPORT_PRIVATE ~IsoSubspace() = default;
 
-    size_t cellSize() { return m_localAllocator.cellSize(); }
+    size_t cellSize()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
+
+    CellAttributes attributes() const { return m_attributes; }
 
     Allocator allocatorFor(size_t, AllocatorForMode);
 
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
 
 private:
-    LocalAllocator m_localAllocator;
+    CellAttributes m_attributes;
 };
 
 ALWAYS_INLINE Allocator IsoSubspace::allocatorFor(size_t size, AllocatorForMode)
 {
-    RELEASE_ASSERT(size <= cellSize());
-    return Allocator(&m_localAllocator);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(size);
+    return Allocator(nullptr);
 }
 
 } // namespace GCClient

@@ -72,17 +72,7 @@ MutatorScheduler::State StochasticSpaceTimeMutatorScheduler::state() const
 
 void StochasticSpaceTimeMutatorScheduler::beginCollection()
 {
-    RELEASE_ASSERT(m_state == Normal);
-    m_state = Stopped;
-
-    m_bytesAllocatedThisCycleAtTheBeginning = m_heap.m_bytesAllocatedThisCycle;
-    m_bytesAllocatedThisCycleAtTheEnd = 
-        Options::concurrentGCMaxHeadroom() *
-        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.m_maxEdenSize);
-    
-    dataLogIf(Options::logGC(), "ca=", m_bytesAllocatedThisCycleAtTheBeginning / 1024, "kb h=", (m_bytesAllocatedThisCycleAtTheEnd - m_bytesAllocatedThisCycleAtTheBeginning) / 1024, "kb ");
-    
-    m_beforeConstraints = MonotonicTime::now();
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void StochasticSpaceTimeMutatorScheduler::didStop()
@@ -187,7 +177,7 @@ void StochasticSpaceTimeMutatorScheduler::endCollection()
 
 double StochasticSpaceTimeMutatorScheduler::bytesAllocatedThisCycleImpl()
 {
-    return m_heap.m_bytesAllocatedThisCycle;
+    return 0;
 }
 
 double StochasticSpaceTimeMutatorScheduler::bytesSinceBeginningOfCycle(const Snapshot& snapshot)

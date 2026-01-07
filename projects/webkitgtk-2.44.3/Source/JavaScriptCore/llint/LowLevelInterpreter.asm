@@ -1477,14 +1477,9 @@ macro assertNotConstant(size, index)
     end)
 end
 
-macro convertJSCalleeToVM(callee)
-    btpnz callee, (constexpr PreciseAllocation::halfAlignment), .preciseAllocation
-    andp MarkedBlockMask, callee
-    loadp MarkedBlockHeaderOffset + MarkedBlock::Header::m_vm[callee], callee
-    jmp .done
-.preciseAllocation:
-    loadp PreciseAllocationVMOffset[callee], callee
-.done:
+macro convertJSCalleeToVM(callee, scratch)
+    loadStructureWithScratch(callee, callee, scratch)
+    loadp Structure::m_vm[callee], callee
 end
 
 macro getVMFromCallFrame(vm, scratch)
@@ -1499,7 +1494,7 @@ if WEBASSEMBLY
             bieq scratch, (constexpr JSValue::NativeCalleeTag), .isWasmCallee
             loadp Callee + PayloadOffset[cfr], vm
         end
-        convertJSCalleeToVM(vm)
+        convertJSCalleeToVM(vm, scratch)
         jmp .loaded
     .isWasmCallee:
         loadp CodeBlock + PayloadOffset[cfr], vm
@@ -1507,7 +1502,7 @@ if WEBASSEMBLY
     .loaded:
 else
     loadp Callee + PayloadOffset[cfr], vm
-    convertJSCalleeToVM(vm)
+    convertJSCalleeToVM(vm, scratch)
 end
 end
 

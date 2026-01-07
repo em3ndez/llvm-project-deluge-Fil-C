@@ -717,12 +717,14 @@ public:
 
     static ptrdiff_t offsetOfHeapBarrierThreshold()
     {
-        return OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, m_barrierThreshold);
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
     }
 
     static ptrdiff_t offsetOfHeapMutatorShouldBeFenced()
     {
-        return OBJECT_OFFSETOF(VM, heap) + OBJECT_OFFSETOF(Heap, m_mutatorShouldBeFenced);
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
     }
 
     static ptrdiff_t offsetOfSoftStackLimit()

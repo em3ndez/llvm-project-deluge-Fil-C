@@ -41,6 +41,11 @@ namespace JSC {
 // Creating a JSValue Handle is invalid
 template <> class Handle<JSValue>;
 
+inline HandleSlot allocateHandleSlot()
+{
+    return static_cast<HandleSlot>(malloc(sizeof(JSValue)));
+}
+
 class HandleBase {
     template <typename T> friend class Weak;
     template <typename T, ShouldStrongDestructorGrabLock shouldStrongDestructorGrabLock> friend class Strong;

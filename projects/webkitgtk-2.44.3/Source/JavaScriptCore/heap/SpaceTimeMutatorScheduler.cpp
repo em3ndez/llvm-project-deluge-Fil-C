@@ -72,14 +72,7 @@ MutatorScheduler::State SpaceTimeMutatorScheduler::state() const
 
 void SpaceTimeMutatorScheduler::beginCollection()
 {
-    RELEASE_ASSERT(m_state == Normal);
-    m_state = Stopped;
-    m_startTime = MonotonicTime::now();
-
-    m_bytesAllocatedThisCycleAtTheBeginning = m_heap.m_bytesAllocatedThisCycle;
-    m_bytesAllocatedThisCycleAtTheEnd = 
-        Options::concurrentGCMaxHeadroom() *
-        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.m_maxEdenSize);
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void SpaceTimeMutatorScheduler::didStop()
@@ -158,7 +151,8 @@ void SpaceTimeMutatorScheduler::endCollection()
 
 double SpaceTimeMutatorScheduler::bytesAllocatedThisCycleImpl()
 {
-    return m_heap.m_bytesAllocatedThisCycle;
+    UNREACHABLE_FOR_PLATFORM();
+    return 0;
 }
 
 double SpaceTimeMutatorScheduler::bytesSinceBeginningOfCycle(const Snapshot& snapshot)

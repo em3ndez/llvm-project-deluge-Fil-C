@@ -32,20 +32,13 @@ namespace JSC {
 class SweepingScope {
 public:
     SweepingScope(JSC::Heap& heap)
-        : m_heap(heap)
-        , m_oldState(m_heap.m_mutatorState)
     {
-        m_heap.m_mutatorState = MutatorState::Sweeping;
+        UNUSED_PARAM(heap);
     }
     
     ~SweepingScope()
     {
-        m_heap.m_mutatorState = m_oldState;
     }
-
-private:
-    JSC::Heap& m_heap;
-    MutatorState m_oldState;
 };
 
 } // namespace JSC

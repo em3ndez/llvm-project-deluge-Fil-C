@@ -404,31 +404,6 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToString, (JSGlobalObject* globalObject, 
     if (JSValue earlyReturnValue = checker.earlyReturnValue())
         return JSValue::encode(earlyReturnValue);
 
-    if (LIKELY(canUseFastJoin(thisArray))) {
-        const LChar comma = ',';
-
-        bool isCoW = isCopyOnWrite(thisArray->indexingMode());
-        JSImmutableButterfly* immutableButterfly = nullptr;
-        if (isCoW) {
-            immutableButterfly = JSImmutableButterfly::fromButterfly(thisArray->butterfly());
-            auto iter = vm.heap.immutableButterflyToStringCache.find(immutableButterfly);
-            if (iter != vm.heap.immutableButterflyToStringCache.end())
-                return JSValue::encode(iter->value);
-        }
-
-        bool sawHoles = false;
-        bool genericCase = false;
-        JSValue result = fastJoin(globalObject, thisArray, { &comma, 1 }, length, sawHoles, genericCase);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        if (!sawHoles && !genericCase && result && isJSString(result) && isCoW) {
-            ASSERT(JSImmutableButterfly::fromButterfly(thisArray->butterfly()) == immutableButterfly);
-            vm.heap.immutableButterflyToStringCache.add(immutableButterfly, jsCast<JSString*>(result));
-        }
-
-        return JSValue::encode(result);
-    }
-
     JSStringJoiner joiner(","_s);
     for (unsigned i = 0; i < length; ++i) {
         JSValue element = thisArray->tryGetIndexQuickly(i);

@@ -33,146 +33,51 @@ namespace JSC {
 
 inline bool IsoCellSet::add(HeapCell* cell)
 {
-    // We want to return true if the cell is newly added. concurrentTestAndSet() returns the
-    // previous bit value. Since we're trying to set the bit for this add, the cell would be
-    // newly added only if the previous bit was not set. Hence, our result will be the
-    // inverse of the concurrentTestAndSet() result.
-    if (cell->isPreciseAllocation())
-        return !m_lowerTierBits.concurrentTestAndSet(cell->preciseAllocation().lowerTierIndex());
-    AtomIndices atomIndices(cell);
-    auto& bitsPtrRef = m_bits[atomIndices.blockIndex];
-    auto* bits = bitsPtrRef.get();
-    if (UNLIKELY(!bits))
-        bits = addSlow(atomIndices.blockIndex);
-    return !bits->concurrentTestAndSet(atomIndices.atomNumber);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(cell);
+    return false;
 }
 
 inline bool IsoCellSet::remove(HeapCell* cell)
 {
-    // We want to return true if the cell was previously present and will be removed now.
-    // concurrentTestAndClear() returns the previous bit value. Since we're trying to clear
-    // the bit for this remove, the cell would be newly removed only if the previous bit
-    // was set. Hence, our result matches the concurrentTestAndClear() result.
-    if (cell->isPreciseAllocation())
-        return m_lowerTierBits.concurrentTestAndClear(cell->preciseAllocation().lowerTierIndex());
-    AtomIndices atomIndices(cell);
-    auto& bitsPtrRef = m_bits[atomIndices.blockIndex];
-    auto* bits = bitsPtrRef.get();
-    if (!bits)
-        return false;
-    return bits->concurrentTestAndClear(atomIndices.atomNumber);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(cell);
+    return true;
 }
 
 inline bool IsoCellSet::contains(HeapCell* cell) const
 {
-    if (cell->isPreciseAllocation())
-        return !m_lowerTierBits.get(cell->preciseAllocation().lowerTierIndex());
-    AtomIndices atomIndices(cell);
-    auto* bits = m_bits[atomIndices.blockIndex].get();
-    if (bits)
-        return bits->get(atomIndices.atomNumber);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(cell);
     return false;
 }
 
 template<typename Func>
 void IsoCellSet::forEachMarkedCell(const Func& func)
 {
-    BlockDirectory& directory = m_subspace.m_directory;
-    (directory.m_bits.markingNotEmpty() & m_blocksWithBits).forEachSetBit(
-        [&] (unsigned blockIndex) {
-            MarkedBlock::Handle* block = directory.m_blocks[blockIndex];
-
-            auto* bits = m_bits[blockIndex].get();
-            block->forEachMarkedCell(
-                [&] (unsigned atomNumber, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-                    if (bits->get(atomNumber))
-                        func(cell, kind);
-                    return IterationStatus::Continue;
-                });
-        });
-
-    CellAttributes attributes = m_subspace.attributes();
-    m_subspace.forEachPreciseAllocation(
-        [&] (PreciseAllocation* allocation) {
-            if (m_lowerTierBits.get(allocation->lowerTierIndex()) && allocation->isMarked())
-                func(allocation->cell(), attributes.cellKind);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 template<typename Visitor, typename Func>
 Ref<SharedTask<void(Visitor&)>> IsoCellSet::forEachMarkedCellInParallel(const Func& func)
 {
-    class Task final : public SharedTask<void(Visitor&)> {
-    public:
-        Task(IsoCellSet& set, const Func& func)
-            : m_set(set)
-            , m_blockSource(set.parallelNotEmptyMarkedBlockSource())
-            , m_func(func)
-        {
-        }
-        
-        void run(Visitor& visitor) final
-        {
-            while (MarkedBlock::Handle* handle = m_blockSource->run()) {
-                unsigned blockIndex = handle->index();
-                auto* bits = m_set.m_bits[blockIndex].get();
-                handle->forEachMarkedCell(
-                    [&] (unsigned atomNumber, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-                        if (bits->get(atomNumber))
-                            m_func(visitor, cell, kind);
-                        return IterationStatus::Continue;
-                    });
-            }
-
-            if (m_doneVisitingPreciseAllocations.test_and_set(std::memory_order_relaxed))
-                return;
-
-            CellAttributes attributes = m_set.m_subspace.attributes();
-            m_set.m_subspace.forEachPreciseAllocation(
-                [&] (PreciseAllocation* allocation) {
-                    if (m_set.m_lowerTierBits.get(allocation->lowerTierIndex()) && allocation->isMarked())
-                        m_func(visitor, allocation->cell(), attributes.cellKind);
-                });
-        }
-        
-    private:
-        IsoCellSet& m_set;
-        Ref<SharedTask<MarkedBlock::Handle*()>> m_blockSource;
-        Func m_func;
-        std::atomic_flag m_doneVisitingPreciseAllocations { };
-    };
-    
-    return adoptRef(*new Task(*this, func));
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+    return createSharedTask([] () { });
 }
 
 template<typename Func>
 void IsoCellSet::forEachLiveCell(const Func& func)
 {
-    BlockDirectory& directory = m_subspace.m_directory;
-    m_blocksWithBits.forEachSetBit(
-        [&] (unsigned blockIndex) {
-            MarkedBlock::Handle* block = directory.m_blocks[blockIndex];
-
-            auto* bits = m_bits[blockIndex].get();
-            block->forEachCell(
-                [&] (unsigned atomNumber, HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-                    if (bits->get(atomNumber) && block->isLive(cell))
-                        func(cell, kind);
-                    return IterationStatus::Continue;
-                });
-        });
-
-    CellAttributes attributes = m_subspace.attributes();
-    m_subspace.forEachPreciseAllocation(
-        [&] (PreciseAllocation* allocation) {
-            if (m_lowerTierBits.get(allocation->lowerTierIndex()) && allocation->isLive())
-                func(allocation->cell(), attributes.cellKind);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
 }
 
 inline void IsoCellSet::clearLowerTierCell(unsigned index)
 {
-    m_lowerTierBits.concurrentTestAndClear(index);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(index);
 }
 
 } // namespace JSC

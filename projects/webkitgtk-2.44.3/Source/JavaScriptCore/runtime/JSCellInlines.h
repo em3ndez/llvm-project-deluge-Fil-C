@@ -45,6 +45,7 @@
 #include "MarkedBlock.h"
 #include "SlotVisitorInlines.h"
 #include "Structure.h"
+#include "SubspaceInlines.h"
 #include "Symbol.h"
 #include <wtf/CompilationThread.h>
 
@@ -186,9 +187,13 @@ inline Allocator allocatorForConcurrently(VM& vm, size_t allocationSize, Allocat
 template<typename T, AllocationFailureMode failureMode>
 ALWAYS_INLINE void* tryAllocateCellHelper(VM& vm, size_t size, GCDeferralContext* deferralContext)
 {
+    UNUSED_PARAM(deferralContext);
     ASSERT(deferralContext || vm.heap.isDeferred() || !DisallowGC::isInEffectOnCurrentThread());
     ASSERT(size >= sizeof(T));
-    JSCell* result = static_cast<JSCell*>(subspaceFor<T>(vm)->allocate(vm, WTF::roundUpToMultipleOf<T::atomSize>(size), deferralContext, failureMode));
+    if (subspaceFor<T>(vm)->attributes().destruction == NeedsDestruction) {
+        // FIXME: Do some destruction.
+    }
+    JSCell* result = static_cast<JSCell*>(malloc(WTF::roundUpToMultipleOf<T::atomSize>(size)));
     if constexpr (failureMode == AllocationFailureMode::ReturnNull) {
         if (!result)
             return nullptr;
@@ -481,5 +486,7 @@ inline bool isWebAssemblyInstance(const JSCell* cell)
 {
     return cell->type() == WebAssemblyInstanceType;
 }
+
+inline VM& JSCell::vm() const { return structure()->vm(); }
 
 } // namespace JSC

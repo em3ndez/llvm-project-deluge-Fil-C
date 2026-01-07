@@ -79,7 +79,7 @@ static void validate(JSCell* cell)
 #endif
 
 SlotVisitor::SlotVisitor(JSC::Heap& heap, CString codeName)
-    : Base(heap, codeName, heap.m_opaqueRoots)
+    : Base(heap, codeName, *static_cast<ConcurrentPtrHashSet*>(nullptr))
     , m_markingVersion(MarkedSpace::initialVersion)
 #if ASSERT_ENABLED
     , m_isCheckingForDefaultMarkViolation(false)
@@ -415,28 +415,9 @@ inline void SlotVisitor::propagateExternalMemoryVisitedIfNecessary()
 
 void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
 {
-    // NOTE: Because we re-try often, we can afford to be conservative, and
-    // assume that donating is not profitable.
-
-    // Avoid locking when a thread reaches a dead end in the object graph.
-    if (from.size() < 2)
-        return;
-
-    // If there's already some shared work queued up, be conservative and assume
-    // that donating more is not profitable.
-    if (to.size())
-        return;
-
-    // If we're contending on the lock, be conservative and assume that another
-    // thread is already donating.
-    if (!m_heap.m_markingMutex.tryLock())
-        return;
-    Locker locker { AdoptLock, m_heap.m_markingMutex };
-
-    // Otherwise, assume that a thread will go idle soon, and donate.
-    from.donateSomeCellsTo(to);
-
-    m_heap.m_markingConditionVariable.notifyAll();
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(from);
+    UNUSED_PARAM(to);
 }
 
 void SlotVisitor::donateKnownParallel()
@@ -510,260 +491,72 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
 
 size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
 {
-    RELEASE_ASSERT(m_isInParallelMode);
-
-    size_t cellsRequested = bytesRequested / MarkedBlock::atomSize;
-    {
-        Locker locker { m_heap.m_markingMutex };
-        forEachMarkStack(
-            [&] (MarkStackArray& stack) -> IterationStatus {
-                cellsRequested -= correspondingGlobalStack(stack).transferTo(stack, cellsRequested);
-                return cellsRequested ? IterationStatus::Continue : IterationStatus::Done;
-            });
-    }
-
-    size_t cellBytesVisited = 0;
-    m_nonCellVisitCount = 0;
-
-    auto bytesVisited = [&] () -> size_t {
-        return cellBytesVisited + m_nonCellVisitCount;
-    };
-
-    auto isDone = [&] () -> bool {
-        return bytesVisited() >= bytesRequested;
-    };
-    
-    {
-        Locker locker { m_rightToRun };
-        
-        while (!isDone()) {
-            updateMutatorIsStopped(locker);
-            IterationStatus status = forEachMarkStack(
-                [&] (MarkStackArray& stack) -> IterationStatus {
-                    if (stack.isEmpty() || isDone())
-                        return IterationStatus::Continue;
-
-                    stack.refill();
-                    
-                    m_isFirstVisit = (&stack == &m_collectorStack);
-
-                    unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
-                    while (countdown && stack.canRemoveLast() && !isDone()) {
-                        const JSCell* cell = stack.removeLast();
-                        cellBytesVisited += cell->cellSize();
-                        visitChildren(cell);
-                        countdown--;
-                    }
-                    return IterationStatus::Done;
-                });
-            propagateExternalMemoryVisitedIfNecessary();
-            if (status == IterationStatus::Continue)
-                break;
-            m_rightToRun.safepoint();
-            donateKnownParallel();
-        }
-    }
-
-    donateAll();
-
-    return bytesVisited();
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(bytesRequested);
+    return 0;
 }
 
 bool SlotVisitor::didReachTermination()
 {
-    Locker locker { m_heap.m_markingMutex };
-    return didReachTermination(locker);
+    UNREACHABLE_FOR_PLATFORM();
+    return false;
 }
 
 bool SlotVisitor::didReachTermination(const AbstractLocker& locker)
 {
-    return !m_heap.m_numberOfActiveParallelMarkers
-        && !hasWork(locker);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(locker);
+    return false;
 }
 
 bool SlotVisitor::hasWork(const AbstractLocker&)
 {
-    return !isEmpty()
-        || !m_heap.m_sharedCollectorMarkStack->isEmpty()
-        || !m_heap.m_sharedMutatorMarkStack->isEmpty();
+    UNREACHABLE_FOR_PLATFORM();
+    return false;
 }
 
 NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedDrainMode sharedDrainMode, MonotonicTime timeout)
 {
-    ASSERT(m_isInParallelMode);
-    
-    ASSERT(Options::numberOfGCMarkers());
-
-    bool isActive = false;
-    while (true) {
-        RefPtr<SharedTask<void(SlotVisitor&)>> bonusTask;
-        
-        {
-            Locker locker { m_heap.m_markingMutex };
-            if (isActive)
-                m_heap.m_numberOfActiveParallelMarkers--;
-            m_heap.m_numberOfWaitingParallelMarkers++;
-            
-            if (sharedDrainMode == MainDrain) {
-                while (true) {
-                    if (hasElapsed(timeout))
-                        return SharedDrainResult::TimedOut;
-
-                    if (didReachTermination(locker)) {
-                        m_heap.m_markingConditionVariable.notifyAll();
-                        return SharedDrainResult::Done;
-                    }
-                    
-                    if (hasWork(locker))
-                        break;
-
-                    m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout);
-                }
-            } else {
-                ASSERT(sharedDrainMode == HelperDrain);
-
-                if (hasElapsed(timeout))
-                    return SharedDrainResult::TimedOut;
-                
-                if (didReachTermination(locker)) {
-                    m_heap.m_markingConditionVariable.notifyAll();
-                    
-                    // If we're in concurrent mode, then we know that the mutator will eventually do
-                    // the right thing because:
-                    // - It's possible that the collector has the conn. In that case, the collector will
-                    //   wake up from the notification above. This will happen if the app released heap
-                    //   access. Native apps can spend a lot of time with heap access released.
-                    // - It's possible that the mutator will allocate soon. Then it will check if we
-                    //   reached termination. This is the most likely outcome in programs that allocate
-                    //   a lot.
-                    // - WebCore never releases access. But WebCore has a runloop. The runloop will check
-                    //   if we reached termination.
-                    // So, this tells the runloop that it's got things to do.
-                    m_heap.m_stopIfNecessaryTimer->scheduleSoon();
-                }
-
-                auto isReady = [&] () -> bool {
-                    return hasWork(locker)
-                        || m_heap.m_bonusVisitorTask
-                        || m_heap.m_parallelMarkersShouldExit;
-                };
-
-                m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout, isReady);
-                
-                if (!hasWork(locker)
-                    && m_heap.m_bonusVisitorTask)
-                    bonusTask = m_heap.m_bonusVisitorTask;
-                
-                if (m_heap.m_parallelMarkersShouldExit)
-                    return SharedDrainResult::Done;
-            }
-            
-            if (!bonusTask && isEmpty()) {
-                forEachMarkStack(
-                    [&] (MarkStackArray& stack) -> IterationStatus {
-                        stack.stealSomeCellsFrom(
-                            correspondingGlobalStack(stack),
-                            m_heap.m_numberOfWaitingParallelMarkers);
-                        return IterationStatus::Continue;
-                    });
-            }
-
-            m_heap.m_numberOfActiveParallelMarkers++;
-            m_heap.m_numberOfWaitingParallelMarkers--;
-        }
-        
-        if (bonusTask) {
-            bonusTask->run(*this);
-            
-            // The main thread could still be running, and may run for a while. Unless we clear the task
-            // ourselves, we will keep looping around trying to run the task.
-            {
-                Locker locker { m_heap.m_markingMutex };
-                if (m_heap.m_bonusVisitorTask == bonusTask)
-                    m_heap.m_bonusVisitorTask = nullptr;
-                bonusTask = nullptr;
-                m_heap.m_markingConditionVariable.notifyAll();
-            }
-        } else {
-            RELEASE_ASSERT(!isEmpty());
-            drain(timeout);
-        }
-        
-        isActive = true;
-    }
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(sharedDrainMode);
+    UNUSED_PARAM(timeout);
+    return SharedDrainResult::Done;
 }
 
 SlotVisitor::SharedDrainResult SlotVisitor::drainInParallel(MonotonicTime timeout)
 {
-    donateAndDrain(timeout);
-    return drainFromShared(MainDrain, timeout);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(timeout);
+    return SharedDrainResult::Done;
 }
 
 SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTime timeout)
 {
-    ASSERT(m_isInParallelMode);
-    
-    ASSERT(Options::numberOfGCMarkers());
-    
-    if (Options::numberOfGCMarkers() == 1
-        || (m_heap.m_worldState.load() & Heap::mutatorWaitingBit)
-        || !m_heap.hasHeapAccess()
-        || m_heap.worldIsStopped()) {
-        // This is an optimization over drainInParallel() when we have a concurrent mutator but
-        // otherwise it is not profitable.
-        return drainInParallel(timeout);
-    }
-
-    donateAll(Locker { m_heap.m_markingMutex });
-    return waitForTermination(timeout);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(timeout);
+    return SharedDrainResult::Done;
 }
 
 SlotVisitor::SharedDrainResult SlotVisitor::waitForTermination(MonotonicTime timeout)
 {
-    Locker locker { m_heap.m_markingMutex };
-    for (;;) {
-        if (hasElapsed(timeout))
-            return SharedDrainResult::TimedOut;
-        
-        if (didReachTermination(locker)) {
-            m_heap.m_markingConditionVariable.notifyAll();
-            return SharedDrainResult::Done;
-        }
-        
-        m_heap.m_markingConditionVariable.waitUntil(m_heap.m_markingMutex, timeout);
-    }
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(timeout);
+    return SharedDrainResult::Done;
 }
 
 void SlotVisitor::donateAll()
 {
-    if (isEmpty())
-        return;
-    
-    donateAll(Locker { m_heap.m_markingMutex });
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void SlotVisitor::donateAll(const AbstractLocker&)
 {
-    forEachMarkStack(
-        [&] (MarkStackArray& stack) -> IterationStatus {
-            stack.transferTo(correspondingGlobalStack(stack));
-            return IterationStatus::Continue;
-        });
-
-    m_heap.m_markingConditionVariable.notifyAll();
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void SlotVisitor::donate()
 {
-    if (!m_isInParallelMode) {
-        dataLog("FATAL: Attempting to donate when not in parallel mode.\n");
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    
-    if (Options::numberOfGCMarkers() == 1)
-        return;
-    
-    donateKnownParallel();
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void SlotVisitor::donateAndDrain(MonotonicTime timeout)
@@ -774,12 +567,8 @@ void SlotVisitor::donateAndDrain(MonotonicTime timeout)
 
 void SlotVisitor::didRace(const VisitRaceKey& race)
 {
-    dataLogLnIf(Options::verboseVisitRace(), toCString("GC visit race: ", race));
-    
-    Locker locker { heap()->m_raceMarkStackLock };
-    JSCell* cell = race.cell();
-    cell->setCellState(CellState::PossiblyGrey);
-    heap()->m_raceMarkStack->append(cell);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(race);
 }
 
 void SlotVisitor::dump(PrintStream& out) const
@@ -789,10 +578,10 @@ void SlotVisitor::dump(PrintStream& out) const
 
 MarkStackArray& SlotVisitor::correspondingGlobalStack(MarkStackArray& stack)
 {
-    if (&stack == &m_collectorStack)
-        return *m_heap.m_sharedCollectorMarkStack;
-    RELEASE_ASSERT(&stack == &m_mutatorStack);
-    return *m_heap.m_sharedMutatorMarkStack;
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(stack);
+    MarkStackArray* result = nullptr;
+    return *result;
 }
 
 NO_RETURN_DUE_TO_CRASH void SlotVisitor::addParallelConstraintTask(RefPtr<SharedTask<void(AbstractSlotVisitor&)>>)

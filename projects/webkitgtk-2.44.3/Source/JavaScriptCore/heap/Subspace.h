@@ -47,19 +47,33 @@ class Subspace {
 public:
     JS_EXPORT_PRIVATE virtual ~Subspace();
 
-    const char* name() const { return m_name.data(); }
-    MarkedSpace& space() const { return m_space; }
+    const char* name() const { return "whatever"; }
+    MarkedSpace& space() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        MarkedSpace* ptr = nullptr;
+        return *ptr;
+    }
 
     CellAttributes attributes() const;
     const HeapCellType* heapCellType() const { return m_heapCellType; }
-    AlignedMemoryAllocator* alignedMemoryAllocator() const { return m_alignedMemoryAllocator; }
+    
+    AlignedMemoryAllocator* alignedMemoryAllocator() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
     
     void finishSweep(MarkedBlock::Handle&, FreeList*);
     void destroy(VM&, JSCell*);
 
     void prepareForAllocation();
     
-    void didCreateFirstDirectory(BlockDirectory* directory) { m_directoryForEmptyAllocation = directory; }
+    void didCreateFirstDirectory(BlockDirectory* directory)
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(directory);
+    }
     
     // Finds an empty block from any Subspace that agrees to trade blocks with us.
     MarkedBlock::Handle* findEmptyBlockToSteal();
@@ -91,35 +105,34 @@ public:
     
     void sweepBlocks();
     
-    Subspace* nextSubspaceInAlignedMemoryAllocator() const { return m_nextSubspaceInAlignedMemoryAllocator; }
-    void setNextSubspaceInAlignedMemoryAllocator(Subspace* subspace) { m_nextSubspaceInAlignedMemoryAllocator = subspace; }
+    Subspace* nextSubspaceInAlignedMemoryAllocator() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
+    
+    void setNextSubspaceInAlignedMemoryAllocator(Subspace* subspace)
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        UNUSED_PARAM(subspace);
+    }
     
     virtual void didResizeBits(unsigned newSize);
     virtual void didRemoveBlock(unsigned blockIndex);
     virtual void didBeginSweepingToFreeList(MarkedBlock::Handle*);
 
-    bool isIsoSubspace() const { return m_isIsoSubspace; }
+    bool isIsoSubspace() const
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return false;
+    }
 
 protected:
     Subspace(CString name, Heap&);
 
     void initialize(const HeapCellType&, AlignedMemoryAllocator*);
-    
-    MarkedSpace& m_space;
-    
+
     const HeapCellType* m_heapCellType { nullptr };
-    AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
-    
-    BlockDirectory* m_firstDirectory { nullptr };
-    BlockDirectory* m_directoryForEmptyAllocation { nullptr }; // Uses the MarkedSpace linked list of blocks.
-    SentinelLinkedList<PreciseAllocation, BasicRawSentinelNode<PreciseAllocation>> m_preciseAllocations;
-
-    bool m_isIsoSubspace { false };
-    uint8_t m_remainingLowerTierCellCount { 0 };
-
-    Subspace* m_nextSubspaceInAlignedMemoryAllocator { nullptr };
-
-    CString m_name;
 };
 
 } // namespace JSC

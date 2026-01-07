@@ -33,116 +33,42 @@ namespace JSC {
 IsoCellSet::IsoCellSet(IsoSubspace& subspace)
     : m_subspace(subspace)
 {
-    size_t size = subspace.m_directory.m_blocks.size();
-    m_blocksWithBits.resize(size);
-    m_bits.grow(size);
-    subspace.m_cellSets.append(this);
 }
 
 IsoCellSet::~IsoCellSet()
 {
-    if (isOnList())
-        BasicRawSentinelNode<IsoCellSet>::remove();
 }
 
 Ref<SharedTask<MarkedBlock::Handle*()>> IsoCellSet::parallelNotEmptyMarkedBlockSource()
 {
-    class Task final : public SharedTask<MarkedBlock::Handle*()> {
-    public:
-        Task(IsoCellSet& set)
-            : m_set(set)
-            , m_directory(set.m_subspace.m_directory)
-        {
-        }
-        
-        MarkedBlock::Handle* run() final
-        {
-            if (m_done)
-                return nullptr;
-            Locker locker { m_lock };
-            auto bits = m_directory.m_bits.markingNotEmpty() & m_set.m_blocksWithBits;
-            m_index = bits.findBit(m_index, true);
-            if (m_index >= m_directory.m_blocks.size()) {
-                m_done = true;
-                return nullptr;
-            }
-            return m_directory.m_blocks[m_index++];
-        }
-        
-    private:
-        IsoCellSet& m_set;
-        BlockDirectory& m_directory;
-        size_t m_index { 0 };
-        Lock m_lock;
-        bool m_done { false };
-    };
-    
-    return adoptRef(*new Task(*this));
+    UNREACHABLE_FOR_PLATFORM();
+    return createSharedTask<MarkedBlock::Handle*()>(
+        [] () -> MarkedBlock::Handle* { return nullptr; });
 }
 
 NEVER_INLINE WTF::BitSet<MarkedBlock::atomsPerBlock>* IsoCellSet::addSlow(unsigned blockIndex)
 {
-    Locker locker { m_subspace.m_directory.m_bitvectorLock };
-    auto& bitsPtrRef = m_bits[blockIndex];
-    auto* bits = bitsPtrRef.get();
-    if (!bits) {
-        bitsPtrRef = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
-        bits = bitsPtrRef.get();
-        WTF::storeStoreFence();
-        m_blocksWithBits[blockIndex] = true;
-    }
-    return bits;
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(blockIndex);
+    return nullptr;
 }
 
 void IsoCellSet::didResizeBits(unsigned newSize)
 {
-    m_blocksWithBits.resize(newSize);
-    m_bits.grow(newSize);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(newSize);
 }
 
 void IsoCellSet::didRemoveBlock(unsigned blockIndex)
 {
-    {
-        Locker locker { m_subspace.m_directory.m_bitvectorLock };
-        m_blocksWithBits[blockIndex] = false;
-    }
-    m_bits[blockIndex] = nullptr;
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(blockIndex);
 }
 
 void IsoCellSet::sweepToFreeList(MarkedBlock::Handle* block)
 {
-    RELEASE_ASSERT(!block->isAllocated());
-    
-    if (!m_blocksWithBits[block->index()])
-        return;
-    
-    WTF::loadLoadFence();
-    
-    if (!m_bits[block->index()]) {
-        dataLog("FATAL: for block index ", block->index(), ":\n");
-        dataLog("Blocks with bits says: ", !!m_blocksWithBits[block->index()], "\n");
-        dataLog("Bits says: ", RawPointer(m_bits[block->index()].get()), "\n");
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    
-    if (block->block().hasAnyNewlyAllocated()) {
-        // The newlyAllocated() bits are a superset of the marks() bits.
-        m_bits[block->index()]->concurrentFilter(block->block().newlyAllocated());
-        return;
-    }
-
-    if (block->isEmpty() || block->areMarksStaleForSweep()) {
-        {
-            // Holding the bitvector lock happens to be enough because that's what we also hold in
-            // other places where we manipulate this bitvector.
-            Locker locker { m_subspace.m_directory.m_bitvectorLock };
-            m_blocksWithBits[block->index()] = false;
-        }
-        m_bits[block->index()] = nullptr;
-        return;
-    }
-    
-    m_bits[block->index()]->concurrentFilter(block->block().marks());
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(block);
 }
 
 } // namespace JSC

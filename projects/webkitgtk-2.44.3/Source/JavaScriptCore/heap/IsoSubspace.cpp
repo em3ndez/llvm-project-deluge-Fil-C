@@ -38,20 +38,11 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(IsoSubspace);
 
 IsoSubspace::IsoSubspace(CString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierCells, std::unique_ptr<IsoMemoryAllocatorBase>&& allocator)
     : Subspace(name, heap)
-    , m_directory(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
-    , m_isoAlignedMemoryAllocator(allocator ? WTFMove(allocator) : makeUnique<IsoAlignedMemoryAllocator>(name))
 {
-    m_remainingLowerTierCellCount = numberOfLowerTierCells;
-    ASSERT(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size) == cellSize());
-    ASSERT(numberOfLowerTierCells <= MarkedBlock::maxNumberOfLowerTierCells);
-    m_isIsoSubspace = true;
-    initialize(heapCellType, m_isoAlignedMemoryAllocator.get());
-
-    Locker locker { m_space.directoryLock() };
-    m_directory.setSubspace(this);
-    m_space.addBlockDirectory(locker, &m_directory);
-    m_alignedMemoryAllocator->registerDirectory(heap, &m_directory);
-    m_firstDirectory = &m_directory;
+    initialize(heapCellType, nullptr);
+    UNUSED_PARAM(size);
+    UNUSED_PARAM(numberOfLowerTierCells);
+    UNUSED_PARAM(allocator);
 }
 
 IsoSubspace::~IsoSubspace()
@@ -60,71 +51,43 @@ IsoSubspace::~IsoSubspace()
 
 void IsoSubspace::didResizeBits(unsigned blockIndex)
 {
-    m_cellSets.forEach(
-        [&] (IsoCellSet* set) {
-            set->didResizeBits(blockIndex);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(blockIndex);
 }
 
 void IsoSubspace::didRemoveBlock(unsigned blockIndex)
 {
-    m_cellSets.forEach(
-        [&] (IsoCellSet* set) {
-            set->didRemoveBlock(blockIndex);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(blockIndex);
 }
 
 void IsoSubspace::didBeginSweepingToFreeList(MarkedBlock::Handle* block)
 {
-    m_cellSets.forEach(
-        [&] (IsoCellSet* set) {
-            set->sweepToFreeList(block);
-        });
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(block);
 }
 
 void* IsoSubspace::tryAllocateFromLowerTier()
 {
-    auto revive = [&] (PreciseAllocation* allocation) {
-        allocation->setIndexInSpace(m_space.m_preciseAllocations.size());
-        allocation->m_hasValidCell = true;
-        m_space.m_preciseAllocations.append(allocation);
-        if (auto* set = m_space.preciseAllocationSet())
-            set->add(allocation->cell());
-        ASSERT(allocation->indexInSpace() == m_space.m_preciseAllocations.size() - 1);
-        m_preciseAllocations.append(allocation);
-        return allocation->cell();
-    };
-
-    if (!m_lowerTierFreeList.isEmpty()) {
-        PreciseAllocation* allocation = &*m_lowerTierFreeList.begin();
-        allocation->remove();
-        return revive(allocation);
-    }
-    if (m_remainingLowerTierCellCount) {
-        PreciseAllocation* allocation = PreciseAllocation::tryCreateForLowerTier(m_space.heap(), cellSize(), this, --m_remainingLowerTierCellCount);
-        if (allocation)
-            return revive(allocation);
-    }
+    UNREACHABLE_FOR_PLATFORM();
     return nullptr;
 }
 
 void IsoSubspace::sweepLowerTierCell(PreciseAllocation* preciseAllocation)
 {
-    preciseAllocation = preciseAllocation->reuseForLowerTier();
-    m_lowerTierFreeList.append(preciseAllocation);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(preciseAllocation);
 }
 
 void IsoSubspace::destroyLowerTierFreeList()
 {
-    m_lowerTierFreeList.forEach([&](PreciseAllocation* allocation) {
-        allocation->destroy();
-    });
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 namespace GCClient {
 
 IsoSubspace::IsoSubspace(JSC::IsoSubspace& server)
-    : m_localAllocator(&server.m_directory)
+    : m_attributes(server.attributes())
 {
 }
 

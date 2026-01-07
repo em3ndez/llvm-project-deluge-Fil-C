@@ -136,6 +136,8 @@ public:
     template<typename Target> bool inherits() const;
     JS_EXPORT_PRIVATE bool isValidCallee() const;
     bool isAPIValueWrapper() const;
+
+    VM& vm() const;
     
     // Each cell has a built-in lock. Currently it's simply available for use if you need it. It's
     // a full-blown WTF::Lock. Note that this lock is currently used in JSArray and that lock's

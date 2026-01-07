@@ -46,33 +46,21 @@ MarkStackMergingConstraint::~MarkStackMergingConstraint()
 
 double MarkStackMergingConstraint::quickWorkEstimate(SlotVisitor&)
 {
-    return m_heap.m_mutatorMarkStack->size() + m_heap.m_raceMarkStack->size();
+    UNREACHABLE_FOR_PLATFORM();
+    return 0;
 }
 
 void MarkStackMergingConstraint::prepareToExecuteImpl(const AbstractLocker&, AbstractSlotVisitor& visitor)
 {
-    // Logging the work here ensures that the constraint solver knows that it doesn't need to produce
-    // anymore work.
-    size_t size = m_heap.m_mutatorMarkStack->size() + m_heap.m_raceMarkStack->size();
-    visitor.addToVisitCount(size);
-    
-    dataLogIf(Options::logGC(), "(", size, ")");
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(visitor);
 }
 
 template<typename Visitor>
 void MarkStackMergingConstraint::executeImplImpl(Visitor& visitor)
 {
-    // We want to skip this constraint for the GC verifier because:
-    // 1. There should be no mutator marking action between the End phase and verifyGC().
-    //    Hence, we can ignore these stacks.
-    // 2. The End phase explictly calls iterateExecutingAndCompilingCodeBlocks()
-    //    to add executing CodeBlocks to m_heap.m_mutatorMarkStack. We want to
-    //    leave those unperturbed.
-    if (m_heap.m_isMarkingForGCVerifier)
-        return;
-
-    m_heap.m_mutatorMarkStack->transferTo(visitor.mutatorMarkStack());
-    m_heap.m_raceMarkStack->transferTo(visitor.mutatorMarkStack());
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(visitor);
 }
 
 void MarkStackMergingConstraint::executeImpl(AbstractSlotVisitor& visitor) { executeImplImpl(visitor); }

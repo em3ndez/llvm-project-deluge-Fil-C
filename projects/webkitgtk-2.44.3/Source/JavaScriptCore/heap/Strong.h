@@ -58,7 +58,7 @@ public:
     {
         if (!other.slot())
             return;
-        setSlot(HandleSet::heapFor(other.slot())->allocate());
+        setSlot(allocateHandleSlot());
         set(other.get());
     }
 
@@ -67,7 +67,7 @@ public:
     {
         if (!other.slot())
             return;
-        setSlot(HandleSet::heapFor(other.slot())->allocate());
+        setSlot(allocateHandleSlot());
         set(other.get());
     }
     
@@ -94,7 +94,8 @@ public:
 
     ExternalType get() const { return HandleTypes<T>::getFromSlot(this->slot()); }
 
-    inline void set(VM&, ExternalType);
+    inline void setNoVM(ExternalType);
+    inline void set(VM&, ExternalType value) { setNoVM(value); }
 
     template <typename U> Strong& operator=(const Strong<U>& other)
     {
@@ -103,7 +104,7 @@ public:
             return *this;
         }
 
-        set(*HandleSet::heapFor(other.slot())->vm(), other.get());
+        setNoVM(other.get());
         return *this;
     }
     
@@ -114,7 +115,7 @@ public:
             return *this;
         }
 
-        set(HandleSet::heapFor(other.slot())->vm(), other.get());
+        setNoVM(other.get());
         return *this;
     }
 
@@ -123,15 +124,7 @@ public:
         if (!slot())
             return;
 
-        auto* heap = HandleSet::heapFor(slot());
-        if (shouldStrongDestructorGrabLock == ShouldStrongDestructorGrabLock::Yes) {
-            JSLockHolder holder(heap->vm());
-            heap->deallocate(slot());
-            setSlot(nullptr);
-        } else {
-            heap->deallocate(slot());
-            setSlot(nullptr);
-        }
+        setSlot(nullptr);
     }
 
 private:
@@ -141,7 +134,6 @@ private:
     {
         ASSERT(slot());
         JSValue value = HandleTypes<T>::toJSValue(externalType);
-        HandleSet::heapFor(slot())->template writeBarrier<std::is_base_of_v<JSCell, T>>(slot(), value);
         *slot() = value;
     }
 };

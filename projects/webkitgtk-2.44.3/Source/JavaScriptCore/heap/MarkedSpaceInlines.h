@@ -32,7 +32,8 @@ namespace JSC {
 
 ALWAYS_INLINE JSC::Heap& MarkedSpace::heap() const
 {
-    return *bitwise_cast<Heap*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(Heap, m_objectSpace));
+    JSC::Heap* heap = nullptr;
+    return *heap;
 }
 
 template<typename Functor> inline void MarkedSpace::forEachLiveCell(HeapIterationScope&, const Functor& functor)

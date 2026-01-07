@@ -45,9 +45,17 @@ public:
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
     void* reallocatePreciseAllocationNonVirtual(VM&, HeapCell*, size_t, GCDeferralContext*, AllocationFailureMode);
     
-    static ptrdiff_t offsetOfAllocatorForSizeStep() { return OBJECT_OFFSETOF(CompleteSubspace, m_allocatorForSizeStep); }
+    static ptrdiff_t offsetOfAllocatorForSizeStep()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return 0;
+    }
     
-    Allocator* allocatorForSizeStep() { return &m_allocatorForSizeStep[0]; }
+    Allocator* allocatorForSizeStep()
+    {
+        UNREACHABLE_FOR_PLATFORM();
+        return nullptr;
+    }
 
 private:
     JS_EXPORT_PRIVATE Allocator allocatorForSlow(size_t);
@@ -55,30 +63,13 @@ private:
     // These slow paths are concerned with large allocations and allocator creation.
     JS_EXPORT_PRIVATE void* allocateSlow(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
     void* tryAllocateSlow(VM&, size_t, GCDeferralContext*);
-    
-    std::array<Allocator, MarkedSpace::numSizeClasses> m_allocatorForSizeStep;
-    Vector<std::unique_ptr<BlockDirectory>> m_directories;
-    Vector<std::unique_ptr<LocalAllocator>> m_localAllocators;
 };
 
 ALWAYS_INLINE Allocator CompleteSubspace::allocatorFor(size_t size, AllocatorForMode mode)
 {
-    if (size <= MarkedSpace::largeCutoff) {
-        Allocator result = m_allocatorForSizeStep[MarkedSpace::sizeClassToIndex(size)];
-        switch (mode) {
-        case AllocatorForMode::MustAlreadyHaveAllocator:
-            RELEASE_ASSERT(result);
-            break;
-        case AllocatorForMode::EnsureAllocator:
-            if (!result)
-                return allocatorForSlow(size);
-            break;
-        case AllocatorForMode::AllocatorIfExists:
-            break;
-        }
-        return result;
-    }
-    RELEASE_ASSERT(mode != AllocatorForMode::MustAlreadyHaveAllocator);
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(size);
+    UNUSED_PARAM(mode);
     return Allocator();
 }
 

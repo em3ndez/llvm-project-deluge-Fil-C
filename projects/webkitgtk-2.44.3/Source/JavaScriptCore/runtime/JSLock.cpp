@@ -151,13 +151,8 @@ void JSLock::didAcquireLock()
     void* p = currentStackPointer();
     m_vm->setStackPointerAtVMEntry(p);
 
-    if (thread.uid() != m_lastOwnerThread) {
+    if (thread.uid() != m_lastOwnerThread)
         m_lastOwnerThread = thread.uid();
-        if (m_vm->heap.machineThreads().addCurrentThread()) {
-            if (isKernTCSMAvailable())
-                enableKernTCSM();
-        }
-    }
 
     // Note: everything below must come after addCurrentThread().
     m_vm->traps().notifyGrabAllLocks();

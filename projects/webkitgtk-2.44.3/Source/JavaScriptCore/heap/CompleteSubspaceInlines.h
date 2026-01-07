@@ -32,12 +32,15 @@ namespace JSC {
 
 ALWAYS_INLINE void* CompleteSubspace::allocate(VM& vm, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
-    if constexpr (validateDFGDoesGC)
-        vm.verifyCanGC();
-
-    if (Allocator allocator = allocatorFor(cellSize, AllocatorForMode::AllocatorIfExists))
-        return allocator.allocate(vm.heap, allocator.cellSize(), deferralContext, failureMode);
-    return allocateSlow(vm, cellSize, deferralContext, failureMode);
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(deferralContext);
+    if (attributes().destruction == NeedsDestruction) {
+        // FIXME: Do some destruction.
+    }
+    void* result = malloc(cellSize);
+    if (failureMode == AllocationFailureMode::Assert)
+        RELEASE_ASSERT(result);
+    return result;
 }
 
 } // namespace JSC

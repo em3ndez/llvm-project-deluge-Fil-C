@@ -105,6 +105,8 @@ private:
     
     // Singleton flag is set: this is a JSCell*.
     // Singleton flag not set: this is a pointer to a vector of cells.
+    // FIXME: This should be a void*. And it should be tracking weak pointers. And if it's a vector
+    // of weak pointers, then it should also store the GC epoch of the last time it pruned.
     uintptr_t m_encodedPointer;
 };
 
