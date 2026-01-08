@@ -114,7 +114,6 @@ bool JSLexicalEnvironment::getOwnPropertySlot(JSObject* object, JSGlobalObject* 
 bool JSLexicalEnvironment::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     JSLexicalEnvironment* thisObject = jsCast<JSLexicalEnvironment*>(cell);
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
 
     bool shouldThrowReadOnlyError = slot.isStrictMode() || thisObject->isLexicalScope();
     bool ignoreReadOnlyErrors = false;

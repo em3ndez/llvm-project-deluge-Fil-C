@@ -59,21 +59,17 @@ Structure* SparseArrayValueMap::createStructure(VM& vm, JSGlobalObject* globalOb
     return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
 }
 
-SparseArrayValueMap::AddResult SparseArrayValueMap::add(JSObject* array, unsigned i)
+SparseArrayValueMap::AddResult SparseArrayValueMap::add(JSObject*, unsigned i)
 {
     AddResult result;
-    size_t increasedCapacity = 0;
     {
         Locker locker { cellLock() };
         result = m_map.add(i, SparseArrayEntry());
         size_t capacity = m_map.capacity();
         if (capacity > m_reportedCapacity) {
-            increasedCapacity = capacity - m_reportedCapacity;
             m_reportedCapacity = capacity;
         }
     }
-    if (increasedCapacity)
-        Heap::heap(array)->reportExtraMemoryAllocated(array, increasedCapacity * sizeof(Map::KeyValuePairType));
     return result;
 }
 

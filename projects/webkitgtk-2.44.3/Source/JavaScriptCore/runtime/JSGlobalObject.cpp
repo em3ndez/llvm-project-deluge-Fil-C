@@ -1842,7 +1842,6 @@ bool JSGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSGlobalObject* thisObject = jsCast<JSGlobalObject*>(cell);
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
 
     if (UNLIKELY(isThisValueAltered(slot, thisObject))) {
         SymbolTableEntry::Fast entry = thisObject->symbolTable()->get(propertyName.uid());

@@ -1067,7 +1067,6 @@ protected:
     {
         Base::finishCreation(vm);
         ASSERT(jsDynamicCast<JSObject*>(this));
-        ASSERT(structure()->hasPolyProto() || getPrototypeDirect().isNull() || Heap::heap(this) == Heap::heap(getPrototypeDirect()));
         ASSERT(structure()->isObject());
         ASSERT(classInfo());
     }

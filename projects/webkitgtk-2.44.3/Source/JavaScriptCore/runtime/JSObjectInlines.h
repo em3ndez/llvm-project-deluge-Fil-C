@@ -301,7 +301,6 @@ ALWAYS_INLINE bool JSObject::putInlineForJSObject(JSCell* cell, JSGlobalObject* 
 
     JSObject* thisObject = jsCast<JSObject*>(cell);
     ASSERT(value);
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
 
     // Try indexed put first. This is required for correctness, since loads on property names that appear like
     // valid indices will never look in the named property storage.
@@ -366,7 +365,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(value);
     ASSERT(value.isGetterSetter() == !!(newAttributes & PropertyAttribute::Accessor));
     ASSERT(value.isCustomGetterSetter() == !!(newAttributes & PropertyAttribute::CustomAccessorOrValue));
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     ASSERT(!parseIndex(propertyName));
 
     StructureID structureID = this->structureID();
@@ -633,7 +631,6 @@ inline void JSObject::validatePutOwnDataProperty(VM& vm, PropertyName propertyNa
 {
 #if ASSERT_ENABLED
     ASSERT(value);
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     unsigned attributes;
     PropertyOffset offset = structure()->get(vm, propertyName, attributes);
     if (isValidOffset(offset))

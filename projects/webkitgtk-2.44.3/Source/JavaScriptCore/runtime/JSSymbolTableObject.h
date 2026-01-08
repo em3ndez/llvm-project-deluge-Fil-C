@@ -190,7 +190,6 @@ inline bool symbolTablePutTouchWatchpointSet(
     SymbolTableObjectType* object, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value,
     bool shouldThrowReadOnlyError, bool ignoreReadOnlyErrors, bool& putResult)
 {
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(object));
     return symbolTablePut<SymbolTablePutMode::Touch>(object, globalObject, propertyName, value, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
 }
 
@@ -199,7 +198,6 @@ inline bool symbolTablePutInvalidateWatchpointSet(
     SymbolTableObjectType* object, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value,
     bool shouldThrowReadOnlyError, bool ignoreReadOnlyErrors, bool& putResult)
 {
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(object));
     return symbolTablePut<SymbolTablePutMode::Invalidate>(object, globalObject, propertyName, value, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
 }
 
