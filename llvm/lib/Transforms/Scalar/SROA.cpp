@@ -1105,10 +1105,8 @@ private:
                         << AllocSize << " byte alloca:\n"
                         << "    alloca: " << AS.AI << "\n"
                         << "       use: " << I << "\n");
-      if (Size && I.getModule()->getDataLayout().isFilC()) {
-        errs() << "aborting in insertUse, size nonzero\n";
+      if (Size && I.getModule()->getDataLayout().isFilC())
         return PI.setAborted(&I);
-      }
       return markAsDead(I);
     }
 
@@ -1129,10 +1127,8 @@ private:
                         << "    alloca: " << AS.AI << "\n"
                         << "       use: " << I << "\n");
       EndOffset = AllocSize;
-      if (I.getModule()->getDataLayout().isFilC()) {
-        errs() << "aborting in insertUse, size greater than alloc size - begin offset\n";
+      if (I.getModule()->getDataLayout().isFilC())
         PI.setAborted(&I);
-      }
     }
 
     AS.Slices.push_back(Slice(BeginOffset, EndOffset, U, IsSplittable));
@@ -1211,10 +1207,8 @@ private:
                         << AllocSize << " byte alloca:\n"
                         << "    alloca: " << AS.AI << "\n"
                         << "       use: " << SI << "\n");
-      if (SI.getModule()->getDataLayout().isFilC()) {
-        errs() << "Aborting in visitStoreInst, size above allocsize, or offset oob\n";
+      if (SI.getModule()->getDataLayout().isFilC())
         return PI.setAborted(&SI);
-      }
       return markAsDead(SI);
     }
 
@@ -1229,10 +1223,8 @@ private:
     if ((Length && Length->getValue() == 0) ||
         (IsOffsetKnown && Offset.uge(AllocSize))) {
       // Zero-length mem transfer intrinsics can be ignored entirely.
-      if (Length && II.getModule()->getDataLayout().isFilC()) {
-        errs() << "Aborting in visitmemsetinst, length nonzero\n";
+      if (Length && II.getModule()->getDataLayout().isFilC())
         return PI.setAborted(&II);
-      }
       return markAsDead(II);
     }
 
@@ -1269,10 +1261,8 @@ private:
           MemTransferSliceMap.find(&II);
       if (MTPI != MemTransferSliceMap.end())
         AS.Slices[MTPI->second].kill();
-      if (II.getModule()->getDataLayout().isFilC()) {
-        errs() << "aborting in visitmemtransfeterinst, offset oob\n";
+      if (II.getModule()->getDataLayout().isFilC())
         return PI.setAborted(&II);
-      }
       return markAsDead(II);
     }
 
@@ -1455,10 +1445,8 @@ private:
     // FIXME: This should instead be escaped in the event we're instrumenting
     // for address sanitization.
     if (Offset.uge(AllocSize)) {
-      if (I.getModule()->getDataLayout().isFilC()) {
-        errs() << "aborting in phi, offset oob\n";
+      if (I.getModule()->getDataLayout().isFilC())
         return PI.setAborted(&I);
-      }
       AS.DeadOperands.push_back(U);
       return;
     }
