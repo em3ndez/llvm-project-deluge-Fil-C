@@ -593,6 +593,8 @@ static void overrideDefaults()
     // So, we need a much larger ReservedZoneSize to allow stack overflow handlers to execute.
     Options::reservedZoneSize() = 3 * Options::reservedZoneSize();
 #endif
+
+    Options::useGC() = false;
 }
 
 bool Options::setAllJITCodeValidations(const char* valueStr)
@@ -1000,8 +1002,6 @@ void Options::initialize()
                 handleSignalsWithMach();
 #endif
     });
-
-    Options::useGC() = false;
 }
 
 void Options::finalize()

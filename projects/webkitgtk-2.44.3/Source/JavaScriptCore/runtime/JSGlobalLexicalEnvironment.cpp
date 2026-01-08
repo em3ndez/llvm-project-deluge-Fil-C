@@ -46,7 +46,6 @@ bool JSGlobalLexicalEnvironment::getOwnPropertySlot(JSObject* object, JSGlobalOb
 bool JSGlobalLexicalEnvironment::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     JSGlobalLexicalEnvironment* thisObject = jsCast<JSGlobalLexicalEnvironment*>(cell);
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
     bool alwaysThrowWhenAssigningToConstProperty = true;
     bool ignoreConstAssignmentError = slot.isInitialization();
     bool putResult = false;
