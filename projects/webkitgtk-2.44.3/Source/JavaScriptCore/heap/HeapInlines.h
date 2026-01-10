@@ -39,7 +39,7 @@ namespace JSC {
 
 ALWAYS_INLINE VM& Heap::vm() const
 {
-    return *bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, heap));
+    return *static_cast<VM*>(zmkptr(const_cast<Heap*>(this), bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, heap)));
 }
 
 ALWAYS_INLINE JSC::Heap* Heap::heap(const HeapCell* cell)

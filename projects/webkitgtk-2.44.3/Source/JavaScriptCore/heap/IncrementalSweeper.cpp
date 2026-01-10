@@ -55,17 +55,12 @@ void IncrementalSweeper::scheduleTimer()
 
 IncrementalSweeper::IncrementalSweeper(JSC::Heap* heap)
     : Base(heap->vm())
-    , m_currentDirectory(nullptr)
 {
 }
 
 void IncrementalSweeper::doWorkUntil(VM& vm, MonotonicTime deadline)
 {
-    if (!m_currentDirectory)
-        m_currentDirectory = vm.heap.objectSpace().firstDirectory();
-
-    if (m_currentDirectory)
-        doSweep(vm, deadline, SweepTrigger::OpportunisticTask);
+    doSweep(vm, deadline, SweepTrigger::OpportunisticTask);
 }
 
 void IncrementalSweeper::doWork(VM& vm)
@@ -111,36 +106,17 @@ void IncrementalSweeper::doSweep(VM& vm, MonotonicTime deadline, SweepTrigger tr
 
 bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 {
-    vm.heap.stopIfNecessary();
-
-    MarkedBlock::Handle* block = nullptr;
-    
-    for (; m_currentDirectory; m_currentDirectory = m_currentDirectory->nextDirectory()) {
-        block = m_currentDirectory->findBlockToSweep();
-        if (block)
-            break;
-    }
-    
-    if (block) {
-        DeferGCForAWhile deferGC(vm);
-        block->sweep(nullptr);
-        if (trigger == SweepTrigger::Timer)
-            vm.heap.objectSpace().freeOrShrinkBlock(block);
-        return true;
-    }
-
-    return vm.heap.sweepNextLogicallyEmptyWeakBlock();
+    // FIXME: We should use this for zgc_finq_poll'ing.
+    return false;
 }
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
     scheduleTimer();
-    m_currentDirectory = heap.objectSpace().firstDirectory();
 }
 
 void IncrementalSweeper::stopSweeping()
 {
-    m_currentDirectory = nullptr;
     cancelTimer();
 }
 

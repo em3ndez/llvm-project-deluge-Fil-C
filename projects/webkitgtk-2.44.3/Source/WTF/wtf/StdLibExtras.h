@@ -37,6 +37,15 @@
 #include <wtf/GetPtr.h>
 #include <wtf/TypeCasts.h>
 
+#ifdef __FILC__
+#include <stdfil.h>
+#else
+static void* zmkptr(void*, unsigned long address)
+{
+    return (void*)address;
+}
+#endif
+
 // Use this macro to declare and define a debug-only global variable that may have a
 // non-trivial constructor and destructor. When building with clang, this will suppress
 // warnings about global constructors and exit-time destructors.
