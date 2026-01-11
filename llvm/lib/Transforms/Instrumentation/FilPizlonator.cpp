@@ -7386,6 +7386,23 @@ class Pizlonator {
           return true;
         }
 
+        if (F->getName() == "zstack_pointer" &&
+            FT->getNumParams() == 0 &&
+            !FT->isVarArg() &&
+            FT->getReturnType() == RawPtrTy) {
+          CallInst* RawStackAddr = CallInst::Create(
+            InlineAsm::get(
+              FunctionType::get(RawPtrTy, { }, false),
+              "mov %rsp, $0",
+              "=r,~{dirflag},~{fpsr},~{flags}",
+              /*hasSideEffects=*/true),
+            { }, "", CI);
+          RawStackAddr->setDebugLoc(CI->getDebugLoc());
+          CI->replaceAllUsesWith(badFlightPtr(RawStackAddr, CI));
+          Erasify();
+          return true;
+        }
+        
         if (shouldPassThrough(F)) {
           for (Use& Arg : CI->args())
             lowerConstantOperand(Arg, CI);
@@ -8586,6 +8603,9 @@ class Pizlonator {
   }
 
   void inferPointerAsIntLaunderingForFunction(Function& F) {
+    if (verbose)
+      errs() << "Inferring pointer-as-int laundering in:\n" << F << "\n";
+    
     // If an inttoptr's inputs unambiguously lead to a single ptrtoint, then we can take that
     // ptrtoint's capability.
     //

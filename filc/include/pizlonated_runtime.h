@@ -76,6 +76,9 @@ filc_bool zthread_join(void* thread, void** result); /* Only fails with ESRCH fo
                                                         and sets errno. */
 filc_bool zthread_kill(void* thread, int sig);
 
+void* zthread_stack_limit(void* thread);
+void* zthread_stack_top(void* thread);
+
 /* Super fast signal deferral mechanism. Defers all catchable signals so long as the deferral depth
    is nonzero. */
 void zincrement_signal_deferral_depth(void);

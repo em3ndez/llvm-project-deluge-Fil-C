@@ -662,6 +662,16 @@ void* zthread_create(void* (*callback)(void* arg), void* arg)
     return result;
 }
 
+void* zstack_limit(void)
+{
+    return zthread_stack_limit(zthread_self());
+}
+
+void* zstack_top(void)
+{
+    return zthread_stack_top(zthread_self());
+}
+
 int zsys_gettid(void)
 {
     return zthread_self_id();

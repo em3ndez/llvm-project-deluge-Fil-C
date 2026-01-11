@@ -753,6 +753,7 @@ struct filc_signal_queue_chunk {
 
 struct filc_stack_limit {
     void* stack_limit;
+    void* stack_top;
 };
 
 struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
@@ -778,6 +779,8 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
     size_t cc_outline_size;
 
     /* End fields that the compiler has to know about. */
+
+    void* stack_top;
     
     filc_native_frame* top_native_frame;
 
@@ -1638,6 +1641,14 @@ PAS_API void filc_thread_undo_create(filc_thread* thread);
 
 /* This removes the thread from the thread list and reuses its tid. */
 PAS_API void filc_thread_dispose(filc_thread* thread);
+
+static inline filc_stack_limit filc_thread_stack_limit(filc_thread* thread)
+{
+    filc_stack_limit stack_limit;
+    stack_limit.stack_limit = thread->stack_limit;
+    stack_limit.stack_top = thread->stack_top;
+    return stack_limit;
+}
 
 static inline pas_local_allocator* filc_thread_allocator(filc_thread* thread, size_t allocator_index)
 {

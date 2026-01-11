@@ -850,6 +850,10 @@ void zstack_scan(filc_bool (*callback)(
    On Linux, this is guaranteed to be the same as gettid(), just much faster to query. */
 unsigned zthread_self_id(void);
 
+void* zstack_pointer(void);
+void* zstack_limit(void);
+void* zstack_top(void);
+
 /* X86 xgetbv intrinsic. Reads XCR0. May trap if the CPU doesn't support the xsave feature. */
 unsigned long zxgetbv(void);
 

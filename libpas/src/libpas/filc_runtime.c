@@ -381,6 +381,7 @@ filc_stack_limit filc_try_compute_stack_limit(void)
     PAS_ASSERT((char*)&stack > stack + stack_slack);
 
     result.stack_limit = stack + stack_slack;
+    result.stack_top = stack + stack_size;
     return result;
 }
 
@@ -393,7 +394,9 @@ filc_stack_limit filc_compute_stack_limit(void)
 
 static void set_stack_limit(filc_thread* thread)
 {
-    thread->stack_limit = filc_compute_stack_limit().stack_limit;
+    filc_stack_limit stack_limit = filc_compute_stack_limit();
+    thread->stack_limit = stack_limit.stack_limit;
+    thread->stack_top = stack_limit.stack_top;
 }
 
 static int file_log_fd = -1;
@@ -514,6 +517,7 @@ void filc_initialize(filc_stack_limit stack_limit)
     PAS_ASSERT(!pthread_setspecific(filc_thread_key, thread));
     PAS_ASSERT(filc_stack_limit_did_succeed(stack_limit));
     thread->stack_limit = stack_limit.stack_limit;
+    thread->stack_top = stack_limit.stack_top;
 
     /* This has to happen *after* we do our primordial allocations. */
     fugc_initialize_collector();
@@ -13004,6 +13008,22 @@ bool filc_native_zthread_kill(filc_thread* my_thread, filc_ptr thread_ptr, int s
     if (!result)
         filc_set_errno(errno_to_set);
     return result;
+}
+
+filc_ptr filc_native_zthread_stack_limit(filc_thread* my_thread, filc_ptr thread_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    check_zthread(thread_ptr);
+    filc_thread* thread = (filc_thread*)filc_ptr_ptr(thread_ptr);
+    return filc_ptr_forge_invalid(thread->stack_limit);
+}
+
+filc_ptr filc_native_zthread_stack_top(filc_thread* my_thread, filc_ptr thread_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    check_zthread(thread_ptr);
+    filc_thread* thread = (filc_thread*)filc_ptr_ptr(thread_ptr);
+    return filc_ptr_forge_invalid(thread->stack_top);
 }
 
 void filc_native_zincrement_signal_deferral_depth(filc_thread* my_thread)
