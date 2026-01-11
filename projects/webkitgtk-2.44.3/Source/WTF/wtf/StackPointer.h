@@ -25,9 +25,20 @@
 
 #pragma once
 
+#ifdef __FILC__
+#include <stdfil.h>
+#endif
+
 namespace WTF {
 
-#if defined(NDEBUG) && COMPILER(GCC_COMPATIBLE) \
+#ifdef __FILC__
+
+ALWAYS_INLINE void* currentStackPointer()
+{
+    return zstack_pointer();
+}
+
+#elif defined(NDEBUG) && COMPILER(GCC_COMPATIBLE) \
     && (CPU(X86_64) || CPU(X86) || CPU(ARM64) || CPU(ARM_THUMB2) || CPU(ARM_TRADITIONAL))
 
 // We can only use the inline asm implementation on release builds because it
