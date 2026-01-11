@@ -854,11 +854,7 @@
    disable both the use of unified Config record and config freezing for the
    Windows port.
 */
-#if OS(WINDOWS)
 #define ENABLE_UNIFIED_AND_FREEZABLE_CONFIG_RECORD 0
-#else
-#define ENABLE_UNIFIED_AND_FREEZABLE_CONFIG_RECORD 1
-#endif
 
 /* CSS Selector JIT Compiler */
 #if !defined(ENABLE_CSS_SELECTOR_JIT) && ((CPU(X86_64) || CPU(ARM64) || (CPU(ARM_THUMB2) && OS(DARWIN))) && ENABLE(JIT) && (OS(DARWIN) || OS(WINDOWS) || PLATFORM(GTK) || PLATFORM(WPE)))

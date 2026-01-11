@@ -67,14 +67,14 @@ void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
 {
     const JSString* thisObject = jsCast<const JSString*>(cell);
     out.printf("<%p, %s, [%u], ", thisObject, thisObject->className().characters(), thisObject->length());
-    uintptr_t pointer = thisObject->fiberConcurrently();
+    uintptr_t pointer = bitwise_cast<uintptr_t>(thisObject->fiberConcurrently());
     if (pointer & isRopeInPointer) {
         if (pointer & JSRopeString::isSubstringInPointer)
             out.printf("[substring]");
         else
             out.printf("[rope]");
     } else {
-        if (WTF::StringImpl* ourImpl = bitwise_cast<StringImpl*>(pointer)) {
+        if (WTF::StringImpl* ourImpl = bitwise_cast<StringImpl*>(thisObject->fiberConcurrently())) {
             if (ourImpl->is8Bit())
                 out.printf("[8 %p]", ourImpl->characters8());
             else
@@ -92,8 +92,8 @@ bool JSString::equalSlowCase(JSGlobalObject* globalObject, JSString* other) cons
 size_t JSString::estimatedSize(JSCell* cell, VM& vm)
 {
     JSString* thisObject = asString(cell);
-    uintptr_t pointer = thisObject->fiberConcurrently();
-    if (pointer & isRopeInPointer)
+    void* pointer = thisObject->fiberConcurrently();
+    if (bitwise_cast<uintptr_t>(pointer) & isRopeInPointer)
         return Base::estimatedSize(cell, vm);
     return Base::estimatedSize(cell, vm) + bitwise_cast<StringImpl*>(pointer)->costDuringGC();
 }
@@ -105,7 +105,7 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     
-    uintptr_t pointer = thisObject->fiberConcurrently();
+    uintptr_t pointer = bitwise_cast<uintptr_t>(thisObject->fiberConcurrently());
     if (pointer & isRopeInPointer) {
         if (pointer & JSRopeString::isSubstringInPointer) {
             visitor.appendUnbarriered(static_cast<JSRopeString*>(thisObject)->fiber1());

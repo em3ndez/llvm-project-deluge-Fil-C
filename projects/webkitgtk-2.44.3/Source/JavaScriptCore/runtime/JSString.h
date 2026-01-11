@@ -156,7 +156,7 @@ private:
 
     JSString(VM& vm)
         : JSCell(CreatingWellDefinedBuiltinCell, vm.stringStructure.get()->id(), defaultTypeInfoBlob())
-        , m_fiber(isRopeInPointer)
+        , m_fiber(bitwise_cast<void*>(isRopeInPointer))
     {
     }
 
@@ -254,7 +254,7 @@ public:
 
     ALWAYS_INLINE bool isRope() const
     {
-        return m_fiber & isRopeInPointer;
+        return bitwise_cast<uintptr_t>(m_fiber) & isRopeInPointer;
     }
 
     bool is8Bit() const;
@@ -266,9 +266,9 @@ protected:
     JS_EXPORT_PRIVATE bool equalSlowCase(JSGlobalObject*, JSString* other) const;
     bool isSubstring() const;
 
-    uintptr_t fiberConcurrently() const { return m_fiber; }
+    void* fiberConcurrently() const { return m_fiber; }
 
-    mutable uintptr_t m_fiber;
+    mutable void* m_fiber;
 
 private:
     friend class LLIntOffsetsExtractor;
@@ -320,7 +320,7 @@ public:
     static_assert(isSubstringInPointer == 0b010);
     static_assert(isRopeInPointer == 0b001);
     static constexpr uintptr_t stringMask = ~(isRopeInPointer | is8BitInPointer | isSubstringInPointer);
-#if CPU(ADDRESS64)
+#if CPU(ADDRESS64) && false
     static_assert(sizeof(uintptr_t) == sizeof(uint64_t));
     class CompactFibers {
     public:
@@ -505,17 +505,17 @@ private:
     void initializeIs8Bit(bool flag) const
     {
         if (flag)
-            m_fiber |= is8BitInPointer;
+            m_fiber = zmkptr(m_fiber, bitwise_cast<uintptr_t>(m_fiber) | is8BitInPointer);
         else
-            m_fiber &= ~is8BitInPointer;
+            m_fiber = zmkptr(m_fiber, bitwise_cast<uintptr_t>(m_fiber) & ~is8BitInPointer);
     }
 
     void initializeIsSubstring(bool flag) const
     {
         if (flag)
-            m_fiber |= isSubstringInPointer;
+            m_fiber = zmkptr(m_fiber, bitwise_cast<uintptr_t>(m_fiber) | isSubstringInPointer);
         else
-            m_fiber &= ~isSubstringInPointer;
+            m_fiber = zmkptr(m_fiber, bitwise_cast<uintptr_t>(m_fiber) & ~isSubstringInPointer);
     }
 
     ALWAYS_INLINE void initializeLength(unsigned length)
@@ -639,7 +639,7 @@ private:
 
     JSString* fiber0() const
     {
-        return bitwise_cast<JSString*>(m_fiber & stringMask);
+        return bitwise_cast<JSString*>(zmkptr(m_fiber, bitwise_cast<uintptr_t>(m_fiber) & stringMask));
     }
 
     JSString* fiber1() const
@@ -672,7 +672,7 @@ private:
     {
         uintptr_t pointer = bitwise_cast<uintptr_t>(fiber);
         ASSERT(!(pointer & ~stringMask));
-        m_fiber = (pointer | (m_fiber & ~stringMask));
+        m_fiber = zmkptr(fiber, (pointer | (bitwise_cast<uintptr_t>(m_fiber) & ~stringMask)));
     }
 
     void initializeFiber1(JSString* fiber)
@@ -724,11 +724,11 @@ JS_EXPORT_PRIVATE JSString* jsStringWithCacheSlowCase(VM&, StringImpl&);
 // is in the middle of converting JSRopeString to JSString.
 ALWAYS_INLINE bool JSString::is8Bit() const
 {
-    uintptr_t pointer = fiberConcurrently();
-    if (pointer & isRopeInPointer) {
+    void* pointer = fiberConcurrently();
+    if (bitwise_cast<uintptr_t>(pointer) & isRopeInPointer) {
         // Do not load m_fiber twice. We should use the information in pointer.
         // Otherwise, JSRopeString may be converted to JSString between the first and second accesses.
-        return pointer & JSRopeString::is8BitInPointer;
+        return bitwise_cast<uintptr_t>(pointer) & JSRopeString::is8BitInPointer;
     }
     return bitwise_cast<StringImpl*>(pointer)->is8Bit();
 }
@@ -738,8 +738,8 @@ ALWAYS_INLINE bool JSString::is8Bit() const
 // when we resolve a JSRopeString.
 ALWAYS_INLINE unsigned JSString::length() const
 {
-    uintptr_t pointer = fiberConcurrently();
-    if (pointer & isRopeInPointer)
+    void* pointer = fiberConcurrently();
+    if (bitwise_cast<uintptr_t>(pointer) & isRopeInPointer)
         return jsCast<const JSRopeString*>(this)->length();
     return bitwise_cast<StringImpl*>(pointer)->length();
 }
@@ -752,8 +752,8 @@ inline const StringImpl* JSString::getValueImpl() const
 
 inline const StringImpl* JSString::tryGetValueImpl() const
 {
-    uintptr_t pointer = fiberConcurrently();
-    if (pointer & isRopeInPointer)
+    void* pointer = fiberConcurrently();
+    if (bitwise_cast<uintptr_t>(pointer) & isRopeInPointer)
         return nullptr;
     return bitwise_cast<StringImpl*>(pointer);
 }
@@ -1138,7 +1138,7 @@ ALWAYS_INLINE StringViewWithUnderlyingString JSString::viewWithUnderlyingString(
 
 inline bool JSString::isSubstring() const
 {
-    return fiberConcurrently() & JSRopeString::isSubstringInPointer;
+    return bitwise_cast<uintptr_t>(fiberConcurrently()) & JSRopeString::isSubstringInPointer;
 }
 
 } // namespace JSC

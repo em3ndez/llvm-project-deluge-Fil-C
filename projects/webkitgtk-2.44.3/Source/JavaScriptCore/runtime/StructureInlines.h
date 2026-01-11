@@ -170,7 +170,7 @@ ALWAYS_INLINE PropertyOffset Structure::get(VM& vm, PropertyName propertyName, u
     ASSERT(!isCompilationThread());
     ASSERT(structure()->classInfoForCells() == info());
 
-    if (m_seenProperties.ruleOut(CompactPtr<UniquedStringImpl>::encode(propertyName.uid())))
+    if (m_seenProperties.ruleOut(bitwise_cast<uintptr_t>(propertyName.uid())))
         return invalidOffset;
 
     PropertyTable* propertyTable = ensurePropertyTableIfNotEmpty(vm);
@@ -493,7 +493,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
-    m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
+    m_seenProperties.add(bitwise_cast<uintptr_t>(rep));
 
     auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
     ASSERT_UNUSED(result, result);
@@ -647,7 +647,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
-    m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
+    m_seenProperties.add(bitwise_cast<uintptr_t>(rep));
 
     auto [offset, attributes, result] = table->addAfterFind(vm, PropertyTableEntry(rep, newOffset, newAttributes), WTFMove(findResult));
     ASSERT_UNUSED(result, result);

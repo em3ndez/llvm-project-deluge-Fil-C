@@ -2504,13 +2504,8 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
         storep 0, address
     end)
     addp t5, %opcodeStruct%::Metadata::m_callLinkInfo, t2 # CallLinkInfo* in t2
-    if X86_64_WIN or C_LOOP_WIN
-        leap JSCConfig + constexpr JSC::offsetOfJSCConfigDefaultCallThunk, t5
-        loadp [t5], t5
-    else
-        leap _g_config, t5
-        loadp JSCConfigOffset + constexpr JSC::offsetOfJSCConfigDefaultCallThunk[t5], t5
-    end
+    leap JSCConfig + constexpr JSC::offsetOfJSCConfigDefaultCallThunk, t5
+    loadp [t5], t5
     jmp .dispatch
 end
 
@@ -2593,13 +2588,8 @@ macro doCallVarargs(opcodeName, size, get, opcodeStruct, valueProfileName, dstVi
                 storep 0, address
             end)
             addp t5, %opcodeStruct%::Metadata::m_callLinkInfo, t2 # CallLinkInfo* in t2
-            if X86_64_WIN or C_LOOP_WIN
-                leap JSCConfig + constexpr JSC::offsetOfJSCConfigDefaultCallThunk, t5
-                loadp [t5], t5
-            else
-                leap _g_config, t5
-                loadp JSCConfigOffset + constexpr JSC::offsetOfJSCConfigDefaultCallThunk[t5], t5
-            end
+            leap JSCConfig + constexpr JSC::offsetOfJSCConfigDefaultCallThunk, t5
+            loadp [t5], t5
             jmp .dispatch
         .dontUpdateSP:
             jmp _llint_throw_from_slow_path_trampoline

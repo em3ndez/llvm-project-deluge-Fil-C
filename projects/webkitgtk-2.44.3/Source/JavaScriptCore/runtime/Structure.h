@@ -214,7 +214,7 @@ public:
     static constexpr int s_maxTransitionLength = 64;
     static constexpr int s_maxTransitionLengthForNonEvalPutById = 512;
 
-    using SeenProperties = TinyBloomFilter<CompactPtr<UniquedStringImpl>::StorageType>;
+    using SeenProperties = TinyBloomFilter<uintptr_t>;
 
     enum PolyProtoTag { PolyProto };
     inline static Structure* create(VM&, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*, IndexingType = NonArray, unsigned inlineCapacity = 0);
