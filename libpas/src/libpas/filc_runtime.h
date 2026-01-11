@@ -726,6 +726,8 @@ struct filc_signal_handler {
     int flags; /* Original flags requested by user (useful for when sigaction is used to request the
                   old flags). */
     int user_signum; /* This is only needed for assertion discipline. */
+    bool dump_heap;
+    bool dump_stacks;
 };
 
 /* FIXME: Using such large alignment here makes this difficult to express in LLVM IR. And, it's not
@@ -1456,6 +1458,8 @@ PAS_API extern bool filc_dump_errnos;
 PAS_API extern bool filc_run_global_ctors;
 PAS_API extern bool filc_run_global_dtors;
 PAS_API extern bool filc_verbose_stop_the_world;
+PAS_API extern unsigned filc_dump_heap_on_signal;
+PAS_API extern unsigned filc_dump_stacks_on_signal;
 
 typedef filc_ptr* filc_global_initialization_key;
 

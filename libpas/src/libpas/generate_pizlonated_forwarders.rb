@@ -538,6 +538,8 @@ addSig "filc_ptr", "zthread_stack_top", "filc_ptr"
 addSig "void", "zincrement_signal_deferral_depth"
 addSig "void", "zdecrement_signal_deferral_depth"
 addSig "unsigned long long", "zget_signal_deferral_depth"
+addSig "void", "zdump_heap", "int"
+addSig "void", "zdump_stacks"
 
 addSig "exception/int", "_Unwind_RaiseException", "filc_ptr"
 addSig "exception/int", "_Unwind_ForcedUnwind", "filc_ptr", "filc_ptr", "filc_ptr"

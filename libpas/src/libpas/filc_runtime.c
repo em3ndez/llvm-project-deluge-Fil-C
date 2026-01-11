@@ -33,6 +33,8 @@
 
 #include "bmalloc_heap.h"
 #include "bmalloc_heap_config.h"
+#include "filc_dump_heap.h"
+#include "filc_dump_stacks.h"
 #include "filc_native.h"
 #include "filc_runtime_inlines.h"
 #include "filc_sampling_profiler.h"
@@ -348,6 +350,8 @@ bool filc_dump_errnos = false;
 bool filc_run_global_ctors = true;
 bool filc_run_global_dtors = true;
 bool filc_verbose_stop_the_world = false;
+unsigned filc_dump_heap_on_signal = 0;
+unsigned filc_dump_stacks_on_signal = 0;
 
 filc_stack_limit filc_try_compute_stack_limit(void)
 {
@@ -420,6 +424,58 @@ static void open_new_log_file_if_necessary(void)
 
 static void add_cpu_indicator_globals(void);
 
+static bool is_unsafe_signal_for_kill(int signum)
+{
+    unsigned index;
+    for (index = num_libc_internal_signals; index--;) {
+        if (signum == libc_internal_signals[index])
+            return true;
+    }
+    return false;
+}
+
+static bool is_unsafe_signal_for_handlers(int signum)
+{
+    switch (signum) {
+    case SIGILL:
+    case SIGTRAP:
+    case SIGBUS:
+    case SIGSEGV:
+    case SIGFPE:
+        return true;
+    default:
+        return is_unsafe_signal_for_kill(signum);
+    }
+}
+
+static void signal_pizlonator(int signum, siginfo_t* info, void* context);
+
+static filc_signal_handler* install_dummy_signal_handler(int signum)
+{
+    if (filc_signal_table[signum])
+        return filc_signal_table[signum];
+    /* This code assumes that it's running before the GC can run. */
+    PAS_ASSERT(!is_unsafe_signal_for_handlers(signum));
+    filc_signal_handler* handler = filc_object_special_payload_with_manual_tracking(
+        filc_allocate_special_early(
+            sizeof(filc_signal_handler), 1, FILC_SPECIAL_TYPE_SIGNAL_HANDLER));
+    handler->function_ptr = filc_ptr_forge_null();
+    PAS_ASSERT(!sigemptyset(&handler->mask));
+    handler->user_signum = signum;
+    handler->flags = 0;
+    handler->dump_heap = false;
+    handler->dump_stacks = false;
+    filc_signal_table[signum] = handler;
+    struct sigaction act;
+    pas_zero_memory(&act, sizeof(act));
+    PAS_ASSERT(!sigemptyset(&act.sa_mask));
+    act.sa_flags = SA_SIGINFO;
+    act.sa_sigaction = signal_pizlonator;
+    if (sigaction(signum, &act, NULL) < 0)
+        pas_panic("cannot install signal handler for heap dump: %s\n", strerror(errno));
+    return handler;
+}
+
 void filc_initialize(filc_stack_limit stack_limit)
 {
     bool should_log_to_file = false;
@@ -477,6 +533,8 @@ void filc_initialize(filc_stack_limit stack_limit)
         filc_get_bool_env("FILC_RUN_GLOBAL_DTORS", &filc_run_global_dtors);
     }
     filc_get_bool_env("FILC_VERBOSE_STW", &filc_verbose_stop_the_world);
+    filc_get_unsigned_env("FILC_DUMP_HEAP_ON_SIGNAL", &filc_dump_heap_on_signal);
+    filc_get_unsigned_env("FILC_DUMP_STACKS_ON_SIGNAL", &filc_dump_stacks_on_signal);
 
     filc_override_settings_if_appropriate();
     
@@ -493,6 +551,16 @@ void filc_initialize(filc_stack_limit stack_limit)
         pas_log("    run global ctors: %s\n", filc_run_global_ctors ? "yes" : "no");
         pas_log("    run global dtors: %s\n", filc_run_global_dtors ? "yes" : "no");
         pas_log("    verbose stop the world: %s\n", filc_verbose_stop_the_world ? "yes" : "no");
+        pas_log("    dump heap on signal: ");
+        if (filc_dump_heap_on_signal)
+            pas_log("yes, signal %u\n", filc_dump_heap_on_signal);
+        else
+            pas_log("no\n");
+        pas_log("    dump stacks on signal: ");
+        if (filc_dump_heap_on_signal)
+            pas_log("yes, signal %u\n", filc_dump_stacks_on_signal);
+        else
+            pas_log("no\n");
         fugc_dump_setup();
         filc_sampling_profiler_dump_settings();
     }
@@ -518,6 +586,12 @@ void filc_initialize(filc_stack_limit stack_limit)
     PAS_ASSERT(filc_stack_limit_did_succeed(stack_limit));
     thread->stack_limit = stack_limit.stack_limit;
     thread->stack_top = stack_limit.stack_top;
+
+    /* This code assumes that it's running before the GC can run. */
+    if (filc_dump_heap_on_signal)
+        install_dummy_signal_handler(filc_dump_heap_on_signal)->dump_heap = true;
+    if (filc_dump_stacks_on_signal)
+        install_dummy_signal_handler(filc_dump_stacks_on_signal)->dump_stacks = true;
 
     /* This has to happen *after* we do our primordial allocations. */
     fugc_initialize_collector();
@@ -923,6 +997,8 @@ void filc_enter(filc_thread* my_thread)
     PAS_ASSERT((my_thread->state & FILC_THREAD_STATE_ENTERED));
 }
 
+static uintptr_t heap_dump_count = 0;
+
 static void call_signal_handler(filc_thread* my_thread, filc_signal_handler* handler, siginfo_t* info)
 {
     static const bool verbose = false;
@@ -946,19 +1022,49 @@ static void call_signal_handler(filc_thread* my_thread, filc_signal_handler* han
     filc_native_frame native_frame;
     filc_push_native_frame(my_thread, &native_frame);
 
+    if (handler->dump_heap || handler->dump_stacks) {
+        filc_increase_special_signal_deferral_depth(my_thread);
+        if (handler->dump_heap) {
+            filc_exit(my_thread);
+            uintptr_t heap_dump_number = pas_atomic_exchange_add_uintptr(&heap_dump_count, 1);
+            char filename[100];
+            snprintf(filename, sizeof(filename), "heap-dump-%d-%zu.txt",
+                     getpid(), (size_t)heap_dump_number);
+            pas_log("[%d] dump heap to %s...\n", getpid(), filename);
+            int fd = open(filename, O_CREAT | O_WRONLY | O_EXCL, 0600);
+            if (fd < 0)
+                pas_log("[%d] heap dump failed: %s\n", getpid(), strerror(errno));
+            else {
+                filc_dump_heap(fd);
+                pas_log("[%d] heap dump complete.\n", getpid());
+                close(fd);
+            }
+            filc_enter(my_thread);
+        }
+        if (handler->dump_stacks) {
+            filc_exit(my_thread);
+            filc_dump_stacks();
+            filc_enter(my_thread);
+        }
+        filc_decrease_special_signal_deferral_depth(my_thread);
+    }
+
     /* Load the function from the handler first since as soon as we exit, the handler might get GC'd.
-       Also, we're choosing not to rely on the fact that functions are global and we track them anyway. */
+       Also, we're choosing not to rely on the fact that functions are global and we track them
+       anyway. */
     filc_ptr function_ptr = filc_flight_ptr_load(my_thread, &handler->function_ptr);
-
-    /* At this point, a GC can happen and we're not rooting the handler. So, we cannot touch the
-       handler anymore after this point. */
-
-    filc_ptr info_ptr = filc_ptr_create_with_object(
-        my_thread, filc_allocate_with_alignment(my_thread, sizeof(siginfo_t), alignof(siginfo_t)));
-    memcpy(filc_ptr_ptr(info_ptr), info, sizeof(siginfo_t));
-
-    filc_call_user_void_int_ptr_ptr(
-        my_thread, function_ptr, info->si_signo, info_ptr, filc_ptr_forge_null());
+    if (filc_ptr_ptr(function_ptr)) {
+        /* At this point, a GC can happen and we're not rooting the handler. So, we cannot touch the
+           handler anymore after this point. */
+        
+        filc_ptr info_ptr = filc_ptr_create_with_object(
+            my_thread,
+            filc_allocate_with_alignment(my_thread, sizeof(siginfo_t), alignof(siginfo_t)));
+        memcpy(filc_ptr_ptr(info_ptr), info, sizeof(siginfo_t));
+        
+        filc_call_user_void_int_ptr_ptr(
+            my_thread, function_ptr, info->si_signo, info_ptr, filc_ptr_forge_null());
+    }
 
     filc_pop_native_frame(my_thread, &native_frame);
     filc_pop_frame(my_thread, frame);
@@ -7993,34 +8099,10 @@ static int to_user_sa_flags(int sa_flags)
     return sa_flags;
 }
 
-static bool is_unsafe_signal_for_kill(int signum)
-{
-    unsigned index;
-    for (index = num_libc_internal_signals; index--;) {
-        if (signum == libc_internal_signals[index])
-            return true;
-    }
-    return false;
-}
-
 bool filc_native_zis_unsafe_signal_for_kill(filc_thread* my_thread, int signo)
 {
     PAS_UNUSED_PARAM(my_thread);
     return is_unsafe_signal_for_kill(signo);
-}
-
-static bool is_unsafe_signal_for_handlers(int signum)
-{
-    switch (signum) {
-    case SIGILL:
-    case SIGTRAP:
-    case SIGBUS:
-    case SIGSEGV:
-    case SIGFPE:
-        return true;
-    default:
-        return is_unsafe_signal_for_kill(signum);
-    }
 }
 
 bool filc_native_zis_unsafe_signal_for_handlers(filc_thread* my_thread, int signo)
@@ -8048,7 +8130,7 @@ int filc_native_zsys_sigaction(
     if (verbose)
         pas_log("[%d] sigaction on signum = %d\n", getpid(), signum);
     
-    if (signum > FILC_MAX_USER_SIGNUM) {
+    if (signum < 0 || signum > FILC_MAX_USER_SIGNUM) {
         if (verbose)
             pas_log("bogus signum.\n");
         filc_set_errno(EINVAL);
@@ -8094,6 +8176,10 @@ int filc_native_zsys_sigaction(
             new_handler->mask = act.sa_mask;
             new_handler->user_signum = signum;
             new_handler->flags = act.sa_flags;
+            new_handler->dump_heap =
+                filc_dump_heap_on_signal && filc_dump_heap_on_signal == (unsigned)signum;
+            new_handler->dump_stacks =
+                filc_dump_stacks_on_signal && filc_dump_stacks_on_signal == (unsigned)signum;
             pas_store_store_fence();
             PAS_ASSERT((unsigned)signum <= FILC_MAX_USER_SIGNUM);
             act.sa_sigaction = signal_pizlonator;
@@ -13040,6 +13126,20 @@ void filc_native_zdecrement_signal_deferral_depth(filc_thread* my_thread)
 unsigned long long filc_native_zget_signal_deferral_depth(filc_thread* my_thread)
 {
     return my_thread->special_signal_deferral_depth;
+}
+
+void filc_native_zdump_heap(filc_thread* my_thread, int fd)
+{
+    filc_exit(my_thread);
+    filc_dump_heap(fd);
+    filc_enter(my_thread);
+}
+
+void filc_native_zdump_stacks(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    filc_dump_stacks();
+    filc_enter(my_thread);
 }
 
 void filc_thread_destroy_space_with_guard_page(filc_thread* my_thread)

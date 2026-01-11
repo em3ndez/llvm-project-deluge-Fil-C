@@ -795,6 +795,9 @@ void zlock_runtime_threads(void);
 
 void zdump_stack(void);
 
+void zdump_heap(int fd);
+void zdump_stacks(void);
+
 struct zstack_frame_description;
 typedef struct zstack_frame_description zstack_frame_description;
 

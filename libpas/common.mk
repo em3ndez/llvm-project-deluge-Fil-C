@@ -27,6 +27,8 @@ PASSRCS = \
 	src/libpas/bmalloc_heap.c \
 	src/libpas/bmalloc_heap_config.c \
 	src/libpas/bmalloc_type.c \
+	src/libpas/filc_dump_heap.c \
+	src/libpas/filc_dump_stacks.c \
 	src/libpas/filc_native_forwarders.c \
 	src/libpas/filc_runtime.c \
 	src/libpas/filc_sampling_profiler.c \
