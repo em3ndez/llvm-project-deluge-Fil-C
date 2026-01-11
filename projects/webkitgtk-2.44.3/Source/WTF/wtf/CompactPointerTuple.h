@@ -83,7 +83,7 @@ public:
     {
     }
 
-    PointerType pointer() const { return bitwise_cast<PointerType>(m_data & pointerMask); }
+    PointerType pointer() const { return static_cast<PointerType>(zmkptr(m_data, bitwise_cast<uintptr_t>(m_data) & pointerMask)); }
     void setPointer(PointerType pointer)
     {
         m_data = encode(pointer, type());
@@ -97,24 +97,24 @@ public:
         ASSERT(this->type() == type);
     }
 
-    uint64_t data() const { return m_data; }
+    void* data() const { return m_data; }
 
 private:
-    static constexpr uint64_t encodeType(Type type)
+    static constexpr uintptr_t encodeType(Type type)
     {
-        return static_cast<uint64_t>(static_cast<UnsignedType>(type)) << maxNumberOfBitsInPointer;
+        return static_cast<uintptr_t>(static_cast<UnsignedType>(type)) << maxNumberOfBitsInPointer;
     }
-    static constexpr Type decodeType(uint64_t value)
+    static constexpr Type decodeType(void* value)
     {
-        return static_cast<Type>(static_cast<UnsignedType>(value >> maxNumberOfBitsInPointer));
-    }
-
-    static uint64_t encode(PointerType pointer, Type type)
-    {
-        return bitwise_cast<uint64_t>(pointer) | encodeType(type);
+        return static_cast<Type>(static_cast<UnsignedType>(bitwise_cast<uintptr_t>(value) >> maxNumberOfBitsInPointer));
     }
 
-    uint64_t m_data { 0 };
+    static void* encode(PointerType pointer, Type type)
+    {
+        return zmkptr(pointer, bitwise_cast<uintptr_t>(pointer) | encodeType(type));
+    }
+
+    void* m_data { 0 };
 #else
 public:
     CompactPointerTuple(PointerType pointer, Type type)
