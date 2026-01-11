@@ -61,7 +61,7 @@ public:
     using StorageType = uint32_t;
     static constexpr bool is32Bit = true;
 #else
-    using StorageType = uintptr_t;
+    using StorageType = void*;
     static constexpr bool is32Bit = false;
 #endif
     static constexpr bool isCompactedType = true;
@@ -85,10 +85,10 @@ public:
         : m_ptr(o.m_ptr)
     { 
         static_assert(std::is_convertible_v<X*, T*>);
-        std::exchange(o.m_ptr, 0);
+        std::exchange(o.m_ptr, nullptr);
     }
 
-    ALWAYS_INLINE constexpr CompactPtr(HashTableDeletedValueType) : m_ptr(hashDeletedStorageValue) { }
+    ALWAYS_INLINE constexpr CompactPtr(HashTableDeletedValueType) : m_ptr(bitwise_cast<StorageType>(hashDeletedStorageValue)) { }
 
     ALWAYS_INLINE ~CompactPtr() = default;
 
@@ -179,15 +179,15 @@ public:
 
     static ALWAYS_INLINE StorageType encode(T* ptr)
     {
-        uintptr_t intPtr = bitwise_cast<uintptr_t>(ptr);
 #if HAVE(36BIT_ADDRESS)
+        uintptr_t intPtr = bitwise_cast<uintptr_t>(ptr);
         static_assert(alignof(T) >= (1ULL << bitsShift));
         ASSERT(!(intPtr & alignmentMask));
         StorageType encoded = static_cast<StorageType>(intPtr >> bitsShift);
         ASSERT(decode(encoded) == ptr);
         return encoded;
 #else
-        return intPtr;
+        return bitwise_cast<StorageType>(ptr);
 #endif
     }
 
@@ -201,7 +201,7 @@ public:
 #endif
     }
 
-    bool isHashTableDeletedValue() const { return m_ptr == hashDeletedStorageValue; }
+    bool isHashTableDeletedValue() const { return m_ptr == bitwise_cast<StorageType>(hashDeletedStorageValue); }
 
     template<typename U>
     friend bool operator==(const CompactPtr& a, const CompactPtr<U>& b)
@@ -217,7 +217,7 @@ private:
 
     static constexpr uint32_t bitsShift = 4;
     static constexpr uintptr_t alignmentMask = (1ull << bitsShift) - 1;
-    static constexpr StorageType hashDeletedStorageValue = 1; // 0x16 (encoded as 1) is within the first unmapped page for nullptr. Thus, it never appears.
+    static constexpr uintptr_t hashDeletedStorageValue = 1; // 0x16 (encoded as 1) is within the first unmapped page for nullptr. Thus, it never appears.
 
     StorageType m_ptr { 0 };
 };
