@@ -79,7 +79,7 @@ PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
 {
     ASSERT(isPowerOf2(m_indexSize));
     ASSERT(isCompact() == other.isCompact());
-    memcpy(bitwise_cast<void*>(m_indexVector & indexVectorMask), bitwise_cast<void*>(other.m_indexVector & indexVectorMask), dataSize(isCompact()));
+    memcpy(zmkptr(m_indexVector, bitwise_cast<uintptr_t>(m_indexVector) & indexVectorMask), zmkptr(other.m_indexVector, bitwise_cast<uintptr_t>(other.m_indexVector) & indexVectorMask), dataSize(isCompact()));
 
     forEachProperty([&](auto& entry) {
         entry.key()->ref();

@@ -238,7 +238,7 @@ private:
     template<typename Index, typename Entry>
     ALWAYS_INLINE FindResult findImpl(const Index*, const Entry*, const KeyType&);
 
-    bool isCompact() const { return m_indexVector & isCompactFlag; }
+    bool isCompact() const { return bitwise_cast<uintptr_t>(m_indexVector) & isCompactFlag; }
 
     template<typename Functor>
     void forEachPropertyMutable(const Functor&);
@@ -283,16 +283,17 @@ private:
         return tableFromIndexVector(index) + usedCount();
     }
 
-    static uintptr_t allocateIndexVector(bool isCompact, unsigned indexSize);
-    static uintptr_t allocateZeroedIndexVector(bool isCompact, unsigned indexSize);
-    static void destroyIndexVector(uintptr_t indexVector);
+    static void* allocateIndexVector(bool isCompact, unsigned indexSize);
+    static void* allocateZeroedIndexVector(bool isCompact, unsigned indexSize);
+    static void destroyIndexVector(void* indexVector);
 
     template<typename Func>
-    static ALWAYS_INLINE auto withIndexVector(uintptr_t indexVector, Func&& function) -> decltype(auto)
+    static ALWAYS_INLINE auto withIndexVector(void* indexVector, Func&& function) -> decltype(auto)
     {
-        if (indexVector & isCompactFlag)
-            return function(bitwise_cast<uint8_t*>(indexVector & indexVectorMask));
-        return function(bitwise_cast<uint32_t*>(indexVector & indexVectorMask));
+        void* unmaskedIndexVector = zmkptr(indexVector, bitwise_cast<uintptr_t>(indexVector) & indexVectorMask);
+        if (bitwise_cast<uintptr_t>(indexVector) & isCompactFlag)
+            return function(static_cast<uint8_t*>(unmaskedIndexVector));
+        return function(static_cast<uint32_t*>(unmaskedIndexVector));
     }
 
     template<typename Func>
@@ -306,7 +307,7 @@ private:
 
     unsigned m_indexSize;
     unsigned m_indexMask;
-    uintptr_t m_indexVector;
+    void* m_indexVector;
     unsigned m_keyCount;
     unsigned m_deletedCount;
     std::unique_ptr<Vector<PropertyOffset>> m_deletedOffsets;
@@ -566,8 +567,8 @@ inline void PropertyTable::rehash(VM& vm, unsigned newCapacity, bool canStayComp
     ++propertyTableStats->numRehashes;
 #endif
 
-    uintptr_t oldIndexVector = m_indexVector;
-    bool oldIsCompact = oldIndexVector & isCompactFlag;
+    void* oldIndexVector = m_indexVector;
+    bool oldIsCompact = bitwise_cast<uintptr_t>(oldIndexVector) & isCompactFlag;
     unsigned oldIndexSize = m_indexSize;
     unsigned oldUsedCount = usedCount();
     size_t oldDataSize = dataSize(oldIsCompact, oldIndexSize);
@@ -633,19 +634,21 @@ inline size_t PropertyTable::dataSize(bool isCompact)
     return dataSize(isCompact, m_indexSize);
 }
 
-ALWAYS_INLINE uintptr_t PropertyTable::allocateIndexVector(bool isCompact, unsigned indexSize)
+ALWAYS_INLINE void* PropertyTable::allocateIndexVector(bool isCompact, unsigned indexSize)
 {
-    return bitwise_cast<uintptr_t>(PropertyTableMalloc::malloc(PropertyTable::dataSize(isCompact, indexSize))) | (isCompact ? isCompactFlag : 0);
+    void* result = PropertyTableMalloc::malloc(PropertyTable::dataSize(isCompact, indexSize));
+    return zmkptr(result, bitwise_cast<uintptr_t>(result) | (isCompact ? isCompactFlag : 0));
 }
 
-ALWAYS_INLINE uintptr_t PropertyTable::allocateZeroedIndexVector(bool isCompact, unsigned indexSize)
+ALWAYS_INLINE void* PropertyTable::allocateZeroedIndexVector(bool isCompact, unsigned indexSize)
 {
-    return bitwise_cast<uintptr_t>(PropertyTableMalloc::zeroedMalloc(PropertyTable::dataSize(isCompact, indexSize))) | (isCompact ? isCompactFlag : 0);
+    void* result = PropertyTableMalloc::zeroedMalloc(PropertyTable::dataSize(isCompact, indexSize));
+    return zmkptr(result, bitwise_cast<uintptr_t>(result) | (isCompact ? isCompactFlag : 0));
 }
 
-ALWAYS_INLINE void PropertyTable::destroyIndexVector(uintptr_t indexVector)
+ALWAYS_INLINE void PropertyTable::destroyIndexVector(void* indexVector)
 {
-    PropertyTableMalloc::free(bitwise_cast<void*>(indexVector & indexVectorMask));
+    PropertyTableMalloc::free(zmkptr(indexVector, bitwise_cast<uintptr_t>(indexVector) & indexVectorMask));
 }
 
 inline unsigned PropertyTable::sizeForCapacity(unsigned capacity)
