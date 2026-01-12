@@ -314,7 +314,7 @@ public:
     // See comment about state() in Watchpoint above.
     WatchpointState state() const
     {
-        uintptr_t data = m_data;
+        void* data = m_data;
         if (isFat(data))
             return fat(data)->state();
         return decodeState(data);
@@ -375,7 +375,7 @@ public:
             fat()->touch(vm, detail);
             return;
         }
-        uintptr_t data = m_data;
+        void* data = m_data;
         if (decodeState(data) == IsInvalidated)
             return;
         WTF::storeStoreFence();
@@ -446,26 +446,26 @@ private:
     static constexpr uintptr_t StateMask         = 6;
     static constexpr uintptr_t StateShift        = 1;
     
-    static bool isThin(uintptr_t data) { return data & IsThinFlag; }
-    static bool isFat(uintptr_t data) { return !isThin(data); }
+    static bool isThin(void* data) { return bitwise_cast<uintptr_t>(data) & IsThinFlag; }
+    static bool isFat(void* data) { return !isThin(data); }
     
-    static WatchpointState decodeState(uintptr_t data)
+    static WatchpointState decodeState(void* data)
     {
         ASSERT(isThin(data));
-        return static_cast<WatchpointState>((data & StateMask) >> StateShift);
+        return static_cast<WatchpointState>((bitwise_cast<uintptr_t>(data) & StateMask) >> StateShift);
     }
     
-    static uintptr_t encodeState(WatchpointState state)
+    static void* encodeState(WatchpointState state)
     {
-        return (static_cast<uintptr_t>(state) << StateShift) | IsThinFlag;
+        return bitwise_cast<void*>((static_cast<uintptr_t>(state) << StateShift) | IsThinFlag);
     }
     
     bool isThin() const { return isThin(m_data); }
     bool isFat() const { return isFat(m_data); };
     
-    static WatchpointSet* fat(uintptr_t data)
+    static WatchpointSet* fat(void* data)
     {
-        return bitwise_cast<WatchpointSet*>(data);
+        return static_cast<WatchpointSet*>(data);
     }
     
     WatchpointSet* fat()
@@ -483,7 +483,7 @@ private:
     JS_EXPORT_PRIVATE WatchpointSet* inflateSlow();
     JS_EXPORT_PRIVATE void freeFat();
     
-    uintptr_t m_data;
+    void* m_data;
 };
 
 class DeferredWatchpointFire {
