@@ -574,7 +574,7 @@ end
 def cloopEmitCallSlowPath(operands)
     $asm.putc "{"
     $asm.putc "    cloopStack.setCurrentStackPointer(sp.vp());"
-    $asm.putc "    UGPRPair result = #{operands[0].cLabel}(#{operands[1].clDump}, #{operands[2].clDump});"
+    $asm.putc "    LLIntPair result = #{operands[0].cLabel}(#{operands[1].clDump}, #{operands[2].clDump});"
     $asm.putc "    decodeResult(result, t0, t1);"
     $asm.putc "}"
 end
@@ -587,7 +587,7 @@ end
 def cloopEmitCallSlowPath3(operands)
     $asm.putc "{"
     $asm.putc "    cloopStack.setCurrentStackPointer(sp.vp());"
-    $asm.putc "    UGPRPair result = #{operands[0].cLabel}(#{operands[1].clDump}, #{operands[2].clDump}, #{operands[3].clDump});"
+    $asm.putc "    LLIntPair result = #{operands[0].cLabel}(#{operands[1].clDump}, #{operands[2].clDump}, #{operands[3].clDump});"
     $asm.putc "    decodeResult(result, t0, t1);"
     $asm.putc "}"
 end
@@ -595,7 +595,7 @@ end
 def cloopEmitCallSlowPath4(operands)
     $asm.putc "{"
     $asm.putc "    cloopStack.setCurrentStackPointer(sp.vp());"
-    $asm.putc "    UGPRPair result = #{operands[0].cLabel}(#{operands[1].clDump}, #{operands[2].clDump}, #{operands[3].clDump}, #{operands[4].clDump});"
+    $asm.putc "    LLIntPair result = #{operands[0].cLabel}(#{operands[1].clDump}, #{operands[2].clDump}, #{operands[3].clDump}, #{operands[4].clDump});"
     $asm.putc "    decodeResult(result, t0, t1);"
     $asm.putc "}"
 end
@@ -764,7 +764,7 @@ class Instruction
             $asm.putc "}"
 
         when "move"
-            $asm.putc "#{operands[1].clLValue(:intptr)} = #{operands[0].clValue(:intptr)};"
+            $asm.putc "#{operands[1].clLValue(:ptrMemRef)} = #{operands[0].clValue(:voidPtr)};"
         when "sxi2q"
             $asm.putc "#{operands[1].clLValue(:int64)} = #{operands[0].clValue(:int32)};"
         when "zxi2q"

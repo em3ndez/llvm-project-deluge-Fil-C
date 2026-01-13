@@ -72,6 +72,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 
+
 namespace JSC { namespace LLInt {
 
 #define LLINT_BEGIN_NO_SET_PC() \
@@ -101,7 +102,7 @@ static inline JSValue getNonConstantOperand(CallFrame* callFrame, VirtualRegiste
 static inline JSValue getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
 
 #define LLINT_RETURN_TWO(first, second) do {       \
-        return encodeResult(first, second);        \
+        return encodeLLIntPair(first, second);        \
     } while (false)
 
 #define LLINT_END_IMPL() LLINT_RETURN_TWO(pc, nullptr)
@@ -223,7 +224,7 @@ template<typename... Types> void slowPathLogF(const char*, const Types&...) { }
 
 #endif // LLINT_TRACING
 
-extern "C" UGPRPair llint_trace_operand(CallFrame* callFrame, const JSInstruction* pc, int fromWhere, int operand)
+extern "C" LLIntPair llint_trace_operand(CallFrame* callFrame, const JSInstruction* pc, int fromWhere, int operand)
 {
     if (!Options::traceLLIntExecution())
         LLINT_END_IMPL();
@@ -241,7 +242,7 @@ extern "C" UGPRPair llint_trace_operand(CallFrame* callFrame, const JSInstructio
     LLINT_END();
 }
 
-extern "C" UGPRPair llint_trace_value(CallFrame* callFrame, const JSInstruction* pc, int fromWhere, VirtualRegister operand)
+extern "C" LLIntPair llint_trace_value(CallFrame* callFrame, const JSInstruction* pc, int fromWhere, VirtualRegister operand)
 {
     if (!Options::traceLLIntExecution())
         LLINT_END_IMPL();
@@ -411,7 +412,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock, Byte
     return false;
 }
 
-static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
+static LLIntPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
 {
     dataLogLnIf(Options::verboseOSR(),
         *codeBlock, ": Entered ", name, " with executeCounter = ",
@@ -433,7 +434,7 @@ static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
     LLINT_RETURN_TWO(codeBlock->jitCode()->addressForCall(MustCheckArity).taggedPtr(), nullptr);
 }
 #else // ENABLE(JIT)
-static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
+static LLIntPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
 {
     codeBlock->dontJITAnytimeSoon();
     LLINT_RETURN_TWO(nullptr, nullptr);
@@ -588,7 +589,7 @@ LLINT_SLOW_PATH_DECL(stack_check)
     LLINT_RETURN_TWO(pc, callFrame);
 }
 
-extern "C" UGPRPair llint_default_call(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
+extern "C" LLIntPair llint_default_call(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
 {
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
@@ -599,11 +600,11 @@ extern "C" UGPRPair llint_default_call(CallFrame* calleeFrame, CallLinkInfo* cal
     void* callTarget = linkFor(vm, owner, calleeFrame, callLinkInfo);
     ensureStillAliveHere(owner);
     if (UNLIKELY(scope.exception()))
-        return encodeResult(callTarget, bitwise_cast<void*>(&vm));
-    return encodeResult(callTarget, nullptr);
+        return encodeLLIntPair(callTarget, bitwise_cast<void*>(&vm));
+    return encodeLLIntPair(callTarget, nullptr);
 }
 
-extern "C" UGPRPair llint_virtual_call(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
+extern "C" LLIntPair llint_virtual_call(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
 {
     JSCell* owner = callLinkInfo->ownerForSlowPath(calleeFrame);
     VM& vm = owner->vm();
@@ -615,8 +616,8 @@ extern "C" UGPRPair llint_virtual_call(CallFrame* calleeFrame, CallLinkInfo* cal
     void* callTarget = virtualForWithFunction(vm, owner, calleeFrame, callLinkInfo, calleeAsFunctionCellIgnored);
     ensureStillAliveHere(owner);
     if (UNLIKELY(scope.exception()))
-        return encodeResult(callTarget, bitwise_cast<void*>(&vm));
-    return encodeResult(callTarget, nullptr);
+        return encodeLLIntPair(callTarget, bitwise_cast<void*>(&vm));
+    return encodeLLIntPair(callTarget, nullptr);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_new_object)
@@ -1896,7 +1897,7 @@ LLINT_SLOW_PATH_DECL(slow_path_set_function_name)
     LLINT_END();
 }
 
-static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)
+static LLIntPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)
 {
     slowPathLog("Performing host call.\n");
     
@@ -1948,7 +1949,7 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
     LLINT_CALL_THROW(globalObject, createNotAConstructorError(globalObject, callee));
 }
 
-static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)
+static inline LLIntPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)
 {
     CallFrame* callFrame = calleeFrame->callerFrame();
     CodeBlock* callerCodeBlock = callFrame->codeBlock();
@@ -2076,7 +2077,7 @@ enum class SetArgumentsWith {
 };
 
 template<typename Op, SetArgumentsWith set>
-static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)
+static inline LLIntPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)
 {
     LLINT_BEGIN_NO_SET_PC();
 
@@ -2126,7 +2127,7 @@ LLINT_SLOW_PATH_DECL(slow_path_construct_varargs)
     return varargsSetup<OpConstructVarargs, SetArgumentsWith::Object>(callFrame, pc, CodeForConstruct);
 }
 
-static inline UGPRPair commonCallDirectEval(CallFrame* callFrame, const JSInstruction* pc, MacroAssemblerCodeRef<JSEntryPtrTag> returnPoint)
+static inline LLIntPair commonCallDirectEval(CallFrame* callFrame, const JSInstruction* pc, MacroAssemblerCodeRef<JSEntryPtrTag> returnPoint)
 {
     LLINT_BEGIN_NO_SET_PC();
     auto bytecode = pc->as<OpCallDirectEval>();
@@ -2483,17 +2484,17 @@ static void handleIteratorNextCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalO
         valueRegister = iteratorResultObject.get(globalObject, vm.propertyNames->value);
 }
 
-static inline UGPRPair dispatchToNextInstructionDuringExit(ThrowScope& scope, CodeBlock* codeBlock, JSInstructionStream::Ref pc)
+static inline LLIntPair dispatchToNextInstructionDuringExit(ThrowScope& scope, CodeBlock* codeBlock, JSInstructionStream::Ref pc)
 {
     if (scope.exception())
-        return encodeResult(returnToThrow(scope.vm()), nullptr);
+        return encodeLLIntPair(returnToThrow(scope.vm()), nullptr);
 
     if (Options::forceOSRExitToLLInt() || codeBlock->jitType() == JITType::InterpreterThunk) {
         const JSInstruction* nextPC = pc.next().ptr();
 #if ENABLE(JIT)
-        return encodeResult(nextPC, LLInt::normalOSRExitTrampolineThunk().code().taggedPtr());
+        return encodeLLIntPair(nextPC, LLInt::normalOSRExitTrampolineThunk().code().taggedPtr());
 #else
-        return encodeResult(nextPC, LLInt::getCodeRef<JSEntryPtrTag>(normal_osr_exit_trampoline).code().taggedPtr());
+        return encodeLLIntPair(nextPC, LLInt::getCodeRef<JSEntryPtrTag>(normal_osr_exit_trampoline).code().taggedPtr());
 #endif
     }
 
@@ -2501,12 +2502,12 @@ static inline UGPRPair dispatchToNextInstructionDuringExit(ThrowScope& scope, Co
     ASSERT(codeBlock->jitType() == JITType::BaselineJIT);
     BytecodeIndex nextBytecodeIndex = pc.next().index();
     auto nextBytecode = codeBlock->jitCodeMap().find(nextBytecodeIndex);
-    return encodeResult(bitwise_cast<void*>(static_cast<uintptr_t>(1)), nextBytecode.taggedPtr());
+    return encodeLLIntPair(bitwise_cast<void*>(static_cast<uintptr_t>(1)), nextBytecode.taggedPtr());
 #endif
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-extern "C" UGPRPair llint_slow_path_checkpoint_osr_exit_from_inlined_call(CallFrame* callFrame, EncodedJSValue result)
+extern "C" LLIntPair llint_slow_path_checkpoint_osr_exit_from_inlined_call(CallFrame* callFrame, EncodedJSValue result)
 {
     // Since all our calling checkpoints do right now is move result into our dest we can just do that here and return.
     CodeBlock* codeBlock = callFrame->codeBlock();
@@ -2570,7 +2571,7 @@ extern "C" UGPRPair llint_slow_path_checkpoint_osr_exit_from_inlined_call(CallFr
     return dispatchToNextInstructionDuringExit(scope, codeBlock, pc);
 }
 
-extern "C" UGPRPair llint_slow_path_checkpoint_osr_exit(CallFrame* callFrame, EncodedJSValue /* needed for cCall2 in CLoop */)
+extern "C" LLIntPair llint_slow_path_checkpoint_osr_exit(CallFrame* callFrame, EncodedJSValue /* needed for cCall2 in CLoop */)
 {
     CodeBlock* codeBlock = callFrame->codeBlock();
     VM& vm = codeBlock->vm();
@@ -2615,7 +2616,7 @@ extern "C" UGPRPair llint_slow_path_checkpoint_osr_exit(CallFrame* callFrame, En
     return dispatchToNextInstructionDuringExit(scope, codeBlock, pc);
 }
 
-extern "C" UGPRPair llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
+extern "C" LLIntPair llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
 {
     CallFrame* callFrame = vm->topCallFrame;
     auto scope = DECLARE_THROW_SCOPE(*vm);
@@ -2625,14 +2626,14 @@ extern "C" UGPRPair llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* pro
     else
         globalObject = protoFrame->callee()->globalObject();
     throwStackOverflowError(globalObject, scope);
-    return encodeResult(nullptr, nullptr);
+    return encodeLLIntPair(nullptr, nullptr);
 }
 
 #if ENABLE(C_LOOP)
-extern "C" UGPRPair llint_stack_check_at_vm_entry(VM* vm, Register* newTopOfStack)
+extern "C" LLIntPair llint_stack_check_at_vm_entry(VM* vm, Register* newTopOfStack)
 {
     bool success = vm->ensureStackCapacityFor(newTopOfStack);
-    return encodeResult(reinterpret_cast<void*>(success), 0);
+    return encodeLLIntPair(reinterpret_cast<void*>(success), 0);
 }
 #endif
 
@@ -2642,10 +2643,10 @@ extern "C" void llint_write_barrier_slow(CallFrame* callFrame, JSCell* cell)
     vm.writeBarrier(cell);
 }
 
-extern "C" UGPRPair llint_check_vm_entry_permission(VM*, ProtoCallFrame*)
+extern "C" LLIntPair llint_check_vm_entry_permission(VM*, ProtoCallFrame*)
 {
     Interpreter::checkVMEntryPermission();
-    return encodeResult(nullptr, nullptr);
+    return encodeLLIntPair(nullptr, nullptr);
 }
 
 extern "C" void llint_dump_value(EncodedJSValue value);
