@@ -41,6 +41,21 @@
 
 namespace JSC {
 
+struct LLIntPair
+{
+    void* first;
+    void* second;
+};
+
+static LLIntPair encodeLLIntPair(const void* a, const void* b)
+{
+    LLIntPair result;
+    result.first = bitwise_cast<void*>(a);
+    result.second = bitwise_cast<void*>(b);
+    return result;
+}
+
+
 // The purpose of this namespace is to include slow paths that are shared
 // between the interpreter and baseline JIT. They are written to be agnostic
 // with respect to the slow-path calling convention, but they do rely on the
@@ -254,10 +269,10 @@ inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSImmutable
 class CallFrame;
 
 #define JSC_DECLARE_COMMON_SLOW_PATH(name) \
-    JSC_DECLARE_JIT_OPERATION(name, UGPRPair, (CallFrame*, const JSInstruction*))
+    JSC_DECLARE_JIT_OPERATION(name, LLIntPair, (CallFrame*, const JSInstruction*))
 
 #define JSC_DEFINE_COMMON_SLOW_PATH(name) \
-    JSC_DEFINE_JIT_OPERATION(name, UGPRPair, (CallFrame* callFrame, const JSInstruction* pc))
+    JSC_DEFINE_JIT_OPERATION(name, LLIntPair, (CallFrame* callFrame, const JSInstruction* pc))
 
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_direct_arguments);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_scoped_arguments);

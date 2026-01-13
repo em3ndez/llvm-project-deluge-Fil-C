@@ -55,6 +55,7 @@
 #include "ScopedArguments.h"
 #include "TypeProfilerLog.h"
 
+
 namespace JSC {
 
 #define BEGIN_NO_SET_PC() \
@@ -86,7 +87,7 @@ namespace JSC {
 #define GET_C(operand) (callFrame->r(operand))
 
 #define RETURN_TWO(first, second) do {       \
-        return encodeResult(first, second);        \
+        return encodeLLIntPair(first, second);        \
     } while (false)
 
 #define END_IMPL() RETURN_TWO(pc, callFrame)
@@ -144,6 +145,7 @@ namespace JSC {
 #define PROFILE_VALUE_IN(value, profileName) do { \
         codeBlock->valueProfileForOffset(bytecode.profileName).m_buckets[0] = JSValue::encode(value); \
     } while (false)
+
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_direct_arguments)
 {
@@ -805,7 +807,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_is_constructor)
 }
 
 template<OpcodeSize width>
-ALWAYS_INLINE UGPRPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, const JSInstruction* pc)
+ALWAYS_INLINE LLIntPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, const JSInstruction* pc)
 {
     auto bytecode = pc->asKnownWidth<OpIteratorOpen, width>();
     auto& metadata = bytecode.metadata(codeBlock);
@@ -821,12 +823,12 @@ ALWAYS_INLINE UGPRPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObj
         auto* iteratedObject = jsCast<JSObject*>(iterable);
         iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), iteratedObject, IterationKind::Values);
         PROFILE_VALUE_IN(iterator.jsValue(), m_iteratorValueProfile);
-        return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastArray)));
+        return encodeLLIntPair(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastArray)));
     }
 
     // Return to the bytecode to try in generic mode.
     metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::Generic;
-    return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::Generic)));
+    return encodeLLIntPair(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::Generic)));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(iterator_open_try_fast_narrow)
@@ -851,7 +853,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(iterator_open_try_fast_wide32)
 }
 
 template<OpcodeSize width>
-ALWAYS_INLINE UGPRPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, ThrowScope& throwScope, const JSInstruction* pc)
+ALWAYS_INLINE LLIntPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, ThrowScope& throwScope, const JSInstruction* pc)
 {
     auto bytecode = pc->asKnownWidth<OpIteratorNext, width>();
     auto& metadata = bytecode.metadata(codeBlock);
@@ -884,7 +886,7 @@ ALWAYS_INLINE UGPRPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObj
             }
 
             GET(bytecode.m_value) = value;
-            return encodeResult(pc, reinterpret_cast<void*>(IterationMode::FastArray));
+            return encodeLLIntPair(pc, reinterpret_cast<void*>(IterationMode::FastArray));
         }
     }
     RELEASE_ASSERT_NOT_REACHED();

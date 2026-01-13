@@ -463,7 +463,7 @@ op(llint_get_host_call_return_value, macro ()
 end)
 
 macro prepareStateForCCall()
-    addp PB, PC
+    addp PB, PC, PC
 end
 
 macro restoreStateAfterCCall()
@@ -564,7 +564,7 @@ macro cage(basePtr, mask, ptr, scratch)
         loadp basePtr, scratch
         btpz scratch, .done
         andp mask, ptr
-        addp scratch, ptr
+        addp ptr, scratch, ptr
     .done:
     end
 end
@@ -792,8 +792,8 @@ macro functionArityCheck(opcodeName, doneLabel)
     move t1, t0
     # Adds to sp are always 64-bit on arm64 so we need maintain t0's high bits.
     lshiftq 3, t0
-    addp t0, cfr
-    addp t0, sp
+    addp cfr, t0, cfr
+    addp sp, t0, sp
 .copyLoop:
     loadp [t3], t0
     storep t0, [t3, t1, 8]
@@ -2381,7 +2381,7 @@ llintOpWithJump(op_switch_imm, OpSwitchImm, macro (size, get, jump, dispatch)
     muli sizeof UnlinkedSimpleJumpTable, t3
     loadp UnlinkedCodeBlock::RareData::m_unlinkedSwitchJumpTables + UnlinkedSimpleJumpTableFixedVector::m_storage[t2], t2
     addp (constexpr (UnlinkedSimpleJumpTableFixedVector::Storage::offsetOfData())), t2
-    addp t3, t2
+    addp t2, t3, t2
     bqb t1, numberTag, .opSwitchImmNotInt
     subi UnlinkedSimpleJumpTable::m_min[t2], t1
     loadp UnlinkedSimpleJumpTable::m_branchOffsets + Int32FixedVector::m_storage[t2], t2
@@ -2412,7 +2412,7 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     muli sizeof UnlinkedSimpleJumpTable, t3
     loadp UnlinkedCodeBlock::RareData::m_unlinkedSwitchJumpTables + UnlinkedSimpleJumpTableFixedVector::m_storage[t2], t2
     addp (constexpr (UnlinkedSimpleJumpTableFixedVector::Storage::offsetOfData())), t2
-    addp t3, t2
+    addp t2, t3, t2
     btqnz t1, notCellMask, .opSwitchCharFallThrough
     bbneq JSCell::m_type[t1], StringType, .opSwitchCharFallThrough
     loadp JSString::m_fiber[t1], t0
@@ -2466,7 +2466,7 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
     getArgumentStart(t3)
     lshifti 3, t3
     negp t3
-    addp cfr, t3
+    addp cfr, t3, t3
     getArgumentCountIncludingThis(t2)
     storei t2, ArgumentCountIncludingThis + PayloadOffset[t3]
 

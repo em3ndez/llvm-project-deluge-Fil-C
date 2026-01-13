@@ -243,13 +243,10 @@ static void double2Ints(double val, CLoopRegister& lo, CLoopRegister& hi)
 }
 #endif // USE(JSVALUE32_64)
 
-static void decodeResult(UGPRPair result, CLoopRegister& t0, CLoopRegister& t1)
+static void decodeResult(LLIntPair result, CLoopRegister& t0, CLoopRegister& t1)
 {
-    const void* t0Result;
-    const void* t1Result;
-    JSC::decodeResult(result, t0Result, t1Result);
-    t0 = t0Result;
-    t1 = t1Result;
+    t0 = result.first;
+    t1 = result.second;
 }
 
 } // namespace LLint

@@ -434,7 +434,7 @@ macro metadata(size, opcode, dst, scratch)
     getu(size, opcode, m_metadataID, scratch) # scratch = bytecode.m_metadataID
     muli sizeof %opcode%::Metadata, scratch # scratch *= sizeof(Op::Metadata)
     addi scratch, dst # offset += scratch
-    addp metadataTable, dst # return &metadataTable[offset]
+    addp metadataTable, dst, dst # return &metadataTable[offset]
     # roundUpToMultipleOf(alignof(Metadata), dst)
     const adder = (constexpr (alignof(%opcode%::Metadata))) - 1
     const mask = ~adder
@@ -446,7 +446,6 @@ macro jumpImpl(dispatchIndirect, targetOffsetReg)
     btiz targetOffsetReg, .outOfLineJumpTarget
     dispatchIndirect(targetOffsetReg)
 .outOfLineJumpTarget:
-    callSlowPath(_llint_slow_path_out_of_line_jump_target)
     nextInstruction()
 end
 
@@ -1231,7 +1230,7 @@ macro prepareForTailCall(temp1, temp2, temp3, temp4, storeCodeBlock)
     andi ~StackAlignmentMask, temp2
 
     move cfr, temp1
-    addp temp2, temp1
+    addp temp1, temp2, temp1
 
     loadi PayloadOffset + ArgumentCountIncludingThis - CallerFrameAndPCSize[sp], temp2
     # We assume < 2^28 arguments
@@ -1631,7 +1630,7 @@ macro functionInitialization(profileArgSkip)
     mulp sizeof ArgumentValueProfile, t0, t2 # Aaaaahhhh! Need strength reduction!
     lshiftp 3, t0 # offset of last JSValue arguments on the stack.
     addp (constexpr (ArgumentValueProfileFixedVector::Storage::offsetOfData())), t3
-    addp t2, t3 # pointer to end of ValueProfile array in the value profile array.
+    addp t3, t2, t3 # pointer to end of ValueProfile array in the value profile array.
 .argumentProfileLoop:
     if JSVALUE64
         loadp ThisArgumentOffset - 8 + profileArgSkip * 8[cfr, t0], t2
@@ -2305,7 +2304,7 @@ macro acquireShadowChickenPacket(slow)
     loadp VM::m_shadowChicken[t1], t2
     loadp ShadowChicken::m_logCursor[t2], t0
     bpaeq t0, ShadowChicken::m_logEnd[t2], slow
-    addp sizeof ShadowChicken::Packet, t0, t1
+    addp t0, sizeof ShadowChicken::Packet, t1
     storep t1, ShadowChicken::m_logCursor[t2]
 end
 
