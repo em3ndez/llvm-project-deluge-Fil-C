@@ -119,11 +119,32 @@ using WebConfig::g_config;
 #define TRACE_LABEL(prefix, label) do { } while (false);
 #endif
 
+// Enable this if you want tracing relevant to Fil-C
+#if 0
+#undef TRACE_LABEL
+#define TRACE_LABEL(prefix, label) do { \
+        zprintf( \
+            "%s: %s: \n" \
+            "    t0 = %P\n" \
+            "    t1 = %P\n" \
+            "    t2 = %P\n" \
+            "    t3 = %P\n" \
+            "    t5 = %P\n" \
+            "    t6 = %P\n" \
+            "    t7 = %P\n" \
+            "    sp = %P\n" \
+            "    cfr = %P\n" \
+            "    lr = %P\n" \
+            "    pc = %P\n", \
+            prefix, #label, t0.ip(), t1.ip(), t2.ip(), t3.ip(), t5.ip(), t6.ip(), t7.ip(), sp.ip(), cfr.ip(), \
+            lr.ip(), pc.ip()); \
+    } while (false)
+#endif
 
 #if ENABLE(COMPUTED_GOTO_OPCODES)
 #define OFFLINE_ASM_GLUE_LABEL(label) label: TRACE_LABEL("OFFLINE_ASM_GLUE_LABEL", label); USE_LABEL(label);
 #else
-#define OFFLINE_ASM_GLUE_LABEL(label)  case label: label: USE_LABEL(label);
+#define OFFLINE_ASM_GLUE_LABEL(label)  case label: label: TRACE_LABEL("OFFLINE_ASM_GLUE_LABEL", label); USE_LABEL(label);
 #endif
 
 #define OFFLINE_ASM_LOCAL_LABEL(label) label: TRACE_LABEL("OFFLINE_ASM_LOCAL_LABEL", #label); USE_LABEL(label);
@@ -393,12 +414,12 @@ JSValue CLoop::execute(OpcodeID entryOpcodeID, void* executableAddress, VM* vm, 
 #define PUSH(cloopReg) \
     do { \
         sp = sp.ip() - 1; \
-        *sp.ip() = cloopReg.i(); \
+        *static_cast<void**>(sp.vp()) = cloopReg.vp(); \
     } while (false)
 
 #define POP(cloopReg) \
     do { \
-        cloopReg = *sp.ip(); \
+        cloopReg = *static_cast<void**>(sp.vp()); \
         sp = sp.ip() + 1; \
     } while (false)
 
