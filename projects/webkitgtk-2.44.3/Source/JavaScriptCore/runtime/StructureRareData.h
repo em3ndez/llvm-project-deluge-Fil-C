@@ -92,7 +92,7 @@ public:
     void cacheSpecialProperty(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
 
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
-    uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
+    void* cachedPropertyNameEnumeratorAndFlag() const;
     void setCachedPropertyNameEnumerator(VM&, Structure*, JSPropertyNameEnumerator*, StructureChain*);
     void clearCachedPropertyNameEnumerator();
 
@@ -165,7 +165,7 @@ private:
 
     // FIXME: We should have some story for clearing these property names caches in GC.
     // https://bugs.webkit.org/show_bug.cgi?id=192659
-    uintptr_t m_cachedPropertyNameEnumeratorAndFlag { 0 };
+    void* m_cachedPropertyNameEnumeratorAndFlag { 0 };
     FixedVector<StructureChainInvalidationWatchpoint> m_cachedPropertyNameEnumeratorWatchpoints;
     WriteBarrier<JSImmutableButterfly> m_cachedPropertyNames[numberOfCachedPropertyNames] { };
 

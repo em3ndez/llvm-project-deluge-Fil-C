@@ -122,9 +122,9 @@ inline JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject* globalOb
 
     Structure* structure = base->structure();
     if (!indexedLength) {
-        uintptr_t enumeratorAndFlag = structure->cachedPropertyNameEnumeratorAndFlag();
+        void* enumeratorAndFlag = structure->cachedPropertyNameEnumeratorAndFlag();
         if (enumeratorAndFlag) {
-            if (!(enumeratorAndFlag & StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag))
+            if (!(bitwise_cast<uintptr_t>(enumeratorAndFlag) & StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag))
                 return bitwise_cast<JSPropertyNameEnumerator*>(enumeratorAndFlag);
             structure->prototypeChain(vm, globalObject, base); // Refresh cached structure chain.
             if (auto* enumerator = structure->cachedPropertyNameEnumerator())

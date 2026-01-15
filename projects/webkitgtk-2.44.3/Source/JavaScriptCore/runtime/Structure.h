@@ -682,7 +682,7 @@ public:
     
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*, StructureChain*);
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
-    uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
+    void* cachedPropertyNameEnumeratorAndFlag() const;
     bool canCachePropertyNameEnumerator(VM&) const;
     bool canAccessPropertiesQuicklyForEnumeration() const;
 
