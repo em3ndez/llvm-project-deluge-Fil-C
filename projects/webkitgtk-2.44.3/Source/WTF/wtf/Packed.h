@@ -123,12 +123,12 @@ public:
     static_assert(storageSize <= sizeof(uintptr_t));
 
     constexpr PackedAlignedPtr()
-        : m_storage()
+        : m_ptr(nullptr)
     {
     }
 
     constexpr PackedAlignedPtr(std::nullptr_t)
-        : m_storage()
+        : m_ptr(nullptr)
     {
     }
 
@@ -139,46 +139,12 @@ public:
 
     T* get() const
     {
-        // FIXME: PackedPtr<> can load memory with one mov by checking page boundary.
-        // https://bugs.webkit.org/show_bug.cgi?id=197754
-        uintptr_t value = 0;
-
-#if CPU(LITTLE_ENDIAN)
-        memcpy(&value, m_storage.data(), storageSize);
-#else
-        memcpy(bitwise_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), m_storage.data(), storageSize);
-#endif
-
-        if (isAlignmentShiftProfitable)
-            value <<= alignmentShiftSize;
-
-#if CPU(X86_64) && !(OS(DARWIN) || OS(LINUX) || OS(WINDOWS))
-        // The AMD specification requires that the most significant 16
-        // bits of any virtual address, bits 48 through 63, must be
-        // copies of bit 47 (in a manner akin to sign extension).
-        //
-        // The above-named OSes will never allocate user space addresses
-        // with bit 47 set, thus are already in canonical form.
-        //
-        // Reference: https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
-        constexpr unsigned shiftBits = countOfBits<uintptr_t> - OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH);
-        value = (bitwise_cast<intptr_t>(value) << shiftBits) >> shiftBits;
-#endif
-
-        return bitwise_cast<T*>(value);
+        return m_ptr;
     }
 
     void set(T* passedValue)
     {
-        uintptr_t value = bitwise_cast<uintptr_t>(passedValue);
-        if (isAlignmentShiftProfitable)
-            value >>= alignmentShiftSize;
-#if CPU(LITTLE_ENDIAN)
-        memcpy(m_storage.data(), &value, storageSize);
-#else
-        memcpy(m_storage.data(), bitwise_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), storageSize);
-#endif
-        ASSERT(bitwise_cast<uintptr_t>(get()) == value);
+        m_ptr = passedValue;
     }
 
     void clear()
@@ -195,7 +161,7 @@ public:
 
     // This conversion operator allows implicit conversion to bool but not to other integer types.
     typedef T* (PackedAlignedPtr::*UnspecifiedBoolType);
-    operator UnspecifiedBoolType() const { return get() ? &PackedAlignedPtr::m_storage : nullptr; }
+    operator UnspecifiedBoolType() const { return get() ? &PackedAlignedPtr::m_ptr : nullptr; }
     explicit operator bool() const { return get(); }
 
     PackedAlignedPtr& operator=(T* value)
@@ -216,7 +182,7 @@ public:
 
     void swap(PackedAlignedPtr& other)
     {
-        m_storage.swap(other.m_storage);
+        std::swap(m_ptr, other.m_ptr);
     }
 
     template<typename Other, typename = std::enable_if_t<Other::isPackedType>>
@@ -236,7 +202,7 @@ public:
     }
 
 private:
-    std::array<uint8_t, storageSize> m_storage;
+    T* m_ptr;
 };
 
 template<typename T>
