@@ -40,7 +40,7 @@
 #ifdef __FILC__
 #include <stdfil.h>
 #else
-static void* zmkptr(void*, unsigned long address)
+static inline void* zmkptr(void*, unsigned long address)
 {
     return (void*)address;
 }
