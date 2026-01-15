@@ -1500,10 +1500,10 @@ JSPropertyNameEnumerator* Structure::cachedPropertyNameEnumerator() const
     return rareData()->cachedPropertyNameEnumerator();
 }
 
-uintptr_t Structure::cachedPropertyNameEnumeratorAndFlag() const
+void* Structure::cachedPropertyNameEnumeratorAndFlag() const
 {
     if (!hasRareData())
-        return 0;
+        return nullptr;
     return rareData()->cachedPropertyNameEnumeratorAndFlag();
 }
 

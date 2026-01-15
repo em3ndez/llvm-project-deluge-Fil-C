@@ -97,10 +97,11 @@ inline JSValue StructureRareData::cachedSpecialProperty(CachedSpecialPropertyKey
 
 inline JSPropertyNameEnumerator* StructureRareData::cachedPropertyNameEnumerator() const
 {
-    return bitwise_cast<JSPropertyNameEnumerator*>(m_cachedPropertyNameEnumeratorAndFlag & cachedPropertyNameEnumeratorMask);
+    return bitwise_cast<JSPropertyNameEnumerator*>(zmkptr(m_cachedPropertyNameEnumeratorAndFlag,
+                bitwise_cast<uintptr_t>(m_cachedPropertyNameEnumeratorAndFlag) & cachedPropertyNameEnumeratorMask));
 }
 
-inline uintptr_t StructureRareData::cachedPropertyNameEnumeratorAndFlag() const
+inline void* StructureRareData::cachedPropertyNameEnumeratorAndFlag() const
 {
     return m_cachedPropertyNameEnumeratorAndFlag;
 }
@@ -109,7 +110,8 @@ inline void StructureRareData::setCachedPropertyNameEnumerator(VM& vm, Structure
 {
     m_cachedPropertyNameEnumeratorWatchpoints = FixedVector<StructureChainInvalidationWatchpoint>();
     bool validatedViaWatchpoint = tryCachePropertyNameEnumeratorViaWatchpoint(vm, baseStructure, chain);
-    m_cachedPropertyNameEnumeratorAndFlag = ((validatedViaWatchpoint ? 0 : cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag) | bitwise_cast<uintptr_t>(enumerator));
+    m_cachedPropertyNameEnumeratorAndFlag = zmkptr(enumerator, 
+        bitwise_cast<uintptr_t>(enumerator) | (validatedViaWatchpoint ? 0 : cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag));
     vm.writeBarrier(this, enumerator);
 }
 
@@ -210,7 +212,7 @@ inline bool StructureRareData::tryCachePropertyNameEnumeratorViaWatchpoint(VM&, 
 
 inline void StructureRareData::clearCachedPropertyNameEnumerator()
 {
-    m_cachedPropertyNameEnumeratorAndFlag = 0;
+    m_cachedPropertyNameEnumeratorAndFlag = nullptr;
     m_cachedPropertyNameEnumeratorWatchpoints = FixedVector<StructureChainInvalidationWatchpoint>();
 }
 
