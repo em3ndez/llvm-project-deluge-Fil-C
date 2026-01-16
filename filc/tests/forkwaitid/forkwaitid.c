@@ -4,6 +4,8 @@
 #include <stdfil.h>
 #include <string.h>
 #include <errno.h>
+#include <signal.h>
+#include <sys/types.h>
 
 int main()
 {
@@ -11,14 +13,14 @@ int main()
     ZASSERT(fork_result >= 0);
     if (fork_result) {
         printf("Pozdrowienia od rodzicow\n");
-        int status;
-        int wait_result = wait(&status);
+        siginfo_t info;
+        int wait_result = waitid(P_ALL, 0, &info, WEXITED | WSTOPPED | WCONTINUED);
         if (wait_result < 0)
             printf("wait error: %s\n", strerror(errno));
-        ZASSERT(wait_result > 0);
-        ZASSERT(wait_result == fork_result);
-        ZASSERT(WIFEXITED(status));
-        ZASSERT(!WEXITSTATUS(status));
+        ZASSERT(info.si_pid == fork_result);
+        ZASSERT(info.si_signo == SIGCHLD);
+        ZASSERT(!info.si_status);
+        ZASSERT(info.si_code == CLD_EXITED);
     } else
         printf("Pozdrowienia od dzieci\n");
     

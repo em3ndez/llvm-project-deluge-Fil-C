@@ -481,7 +481,7 @@ int main(int argc, char** argv)
     // Test copy_file_range with NULL offsets (should use current file positions)
     ZASSERT(lseek(src_fd, 10, SEEK_SET) == 10);
     ZASSERT(lseek(dst_fd, 0, SEEK_SET) == 0);
-    ZASSERT(ftruncate(dst_fd, 0) == 0);
+    ZASSERT(truncate("filc/test-output/fileio/copy_dst2.txt", 0) == 0);
     
     copied = copy_file_range(src_fd, NULL, dst_fd, NULL, 15, 0);
     ZASSERT(copied == 15);
