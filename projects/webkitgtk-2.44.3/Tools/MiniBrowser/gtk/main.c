@@ -198,16 +198,14 @@ static gboolean parseOptionEntryCallback(const gchar *optionNameFull, const gcha
         return FALSE;
     }
 
-    switch (G_PARAM_SPEC_VALUE_TYPE(spec)) {
-    case G_TYPE_BOOLEAN: {
+    GType type = G_PARAM_SPEC_VALUE_TYPE(spec);
+
+    if (type == G_TYPE_BOOLEAN) {
         gboolean propertyValue = !(value && g_ascii_strcasecmp(value, "true") && strcmp(value, "1"));
         g_object_set(G_OBJECT(webSettings), optionName, propertyValue, NULL);
-        break;
-    }
-    case G_TYPE_STRING:
+    } else if(type == G_TYPE_STRING)
         g_object_set(G_OBJECT(webSettings), optionName, value, NULL);
-        break;
-    case G_TYPE_INT: {
+    else if (type == G_TYPE_INT) {
         glong propertyValue;
         gchar *end;
 
@@ -222,9 +220,7 @@ static gboolean parseOptionEntryCallback(const gchar *optionNameFull, const gcha
             return FALSE;
         }
         g_object_set(G_OBJECT(webSettings), optionName, propertyValue, NULL);
-        break;
-    }
-    case G_TYPE_FLOAT: {
+    } else if (type == G_TYPE_FLOAT) {
         gdouble propertyValue;
         gchar *end;
 
@@ -239,11 +235,8 @@ static gboolean parseOptionEntryCallback(const gchar *optionNameFull, const gcha
             return FALSE;
         }
         g_object_set(G_OBJECT(webSettings), optionName, propertyValue, NULL);
-        break;
-    }
-    default:
+    } else
         g_assert_not_reached();
-    }
 
     return TRUE;
 }

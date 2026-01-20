@@ -66,6 +66,8 @@
 #include "WebKitDOMNodePrivate.h"
 #endif
 
+#include <stdfil.h>
+
 using namespace WebKit;
 using namespace WebCore;
 
@@ -623,7 +625,7 @@ static void webkit_web_page_class_init(WebKitWebPageClass* klass)
         0, 0, nullptr,
         g_cclosure_marshal_VOID__BOXED,
         G_TYPE_NONE, 1,
-        WEBKIT_TYPE_CONSOLE_MESSAGE | G_SIGNAL_TYPE_STATIC_SCOPE);
+        zorptr(WEBKIT_TYPE_CONSOLE_MESSAGE, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
 #if !ENABLE(2022_GLIB_API)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN

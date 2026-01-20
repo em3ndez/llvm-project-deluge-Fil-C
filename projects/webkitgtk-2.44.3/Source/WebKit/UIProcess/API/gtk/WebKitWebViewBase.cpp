@@ -569,7 +569,7 @@ static void webkitWebViewBaseSetToplevelOnScreenWindow(WebKitWebViewBase* webVie
             flagsToUpdate.add(ActivityState::IsInWindow);
         }
 
-#if ENABLE(DEVELOPER_MODE)
+#if ENABLE(DEVELOPER_MODE) && PLATFORM(X11)
         // Xvfb doesn't support toplevel focus, so gtk_window_is_active() always returns false. We consider
         // toplevel window to be always active since it's the only one.
         if (WebCore::PlatformDisplay::sharedDisplay().type() == WebCore::PlatformDisplay::Type::X11) {
@@ -2871,7 +2871,7 @@ bool webkitWebViewBaseIsInWindowActive(WebKitWebViewBase* webViewBase)
 
 bool webkitWebViewBaseIsFocused(WebKitWebViewBase* webViewBase)
 {
-#if ENABLE(DEVELOPER_MODE)
+#if ENABLE(DEVELOPER_MODE) && PLATFORM(X11)
     // Xvfb doesn't support toplevel focus, so the view is never focused. We consider it to tbe focused when
     // its window is marked as active.
     if (WebCore::PlatformDisplay::sharedDisplay().type() == WebCore::PlatformDisplay::Type::X11) {

@@ -33,6 +33,8 @@
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
 
+#include <stdfil.h>
+
 using namespace WebKit;
 
 /**
@@ -208,7 +210,7 @@ static void webkit_web_resource_class_init(WebKitWebResourceClass* resourceClass
             0, 0, 0,
             g_cclosure_marshal_VOID__BOXED,
             G_TYPE_NONE, 1,
-            G_TYPE_ERROR | G_SIGNAL_TYPE_STATIC_SCOPE);
+            zorptr(G_TYPE_ERROR, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
     /**
      * WebKitWebResource::failed-with-tls-errors:

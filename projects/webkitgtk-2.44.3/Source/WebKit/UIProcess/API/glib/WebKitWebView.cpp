@@ -113,6 +113,8 @@
 #include "WebKitJavascriptResultPrivate.h"
 #endif
 
+#include <stdfil.h>
+
 using namespace WebKit;
 using namespace WebCore;
 
@@ -1726,7 +1728,7 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
             G_TYPE_BOOLEAN, 3,
             WEBKIT_TYPE_LOAD_EVENT,
             G_TYPE_STRING,
-            G_TYPE_ERROR | G_SIGNAL_TYPE_STATIC_SCOPE);
+            zorptr(G_TYPE_ERROR, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
     /**
      * WebKitWebView::load-failed-with-tls-errors:
@@ -1796,7 +1798,7 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
         WEBKIT_TYPE_WEB_VIEW,
 #endif
         1,
-        WEBKIT_TYPE_NAVIGATION_ACTION | G_SIGNAL_TYPE_STATIC_SCOPE);
+        zorptr(WEBKIT_TYPE_NAVIGATION_ACTION, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
     /**
      * WebKitWebView::ready-to-show:

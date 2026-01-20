@@ -33,6 +33,8 @@
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
 
+#include <stdfil.h>
+
 using namespace WebKit;
 using namespace WebCore;
 
@@ -142,7 +144,7 @@ static void webkit_authentication_request_class_init(WebKitAuthenticationRequest
             0, 0, nullptr,
             g_cclosure_marshal_generic,
             G_TYPE_NONE, 1,
-            WEBKIT_TYPE_CREDENTIAL | G_SIGNAL_TYPE_STATIC_SCOPE);
+            zorptr(WEBKIT_TYPE_CREDENTIAL, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
     /**
      * WebKitAuthenticationRequest::cancelled:

@@ -47,6 +47,8 @@
 #include <gtk/gtkunixprint.h>
 #endif
 
+#include <stdfil.h>
+
 using namespace WebKit;
 
 /**
@@ -231,7 +233,7 @@ static void webkit_print_operation_class_init(WebKitPrintOperationClass* printOp
             0, 0, 0,
             g_cclosure_marshal_VOID__BOXED,
             G_TYPE_NONE, 1,
-            G_TYPE_ERROR | G_SIGNAL_TYPE_STATIC_SCOPE);
+            zorptr(G_TYPE_ERROR, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
 #if !ENABLE(2022_GLIB_API)
     ALLOW_DEPRECATED_DECLARATIONS_BEGIN

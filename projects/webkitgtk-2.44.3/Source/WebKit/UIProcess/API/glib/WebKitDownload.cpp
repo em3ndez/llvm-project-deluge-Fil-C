@@ -36,6 +36,8 @@
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
 
+#include <stdfil.h>
+
 using namespace WebKit;
 using namespace WebCore;
 
@@ -286,7 +288,7 @@ static void webkit_download_class_init(WebKitDownloadClass* downloadClass)
             0, 0, 0,
             g_cclosure_marshal_VOID__BOXED,
             G_TYPE_NONE, 1,
-            G_TYPE_ERROR | G_SIGNAL_TYPE_STATIC_SCOPE);
+            zorptr(G_TYPE_ERROR, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 
     /**
      * WebKitDownload::decide-destination:

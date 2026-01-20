@@ -22,6 +22,8 @@
 
 #include <gtk/gtk.h>
 
+#include <stdfil.h>
+
 #if USE(GTK4)
 /**
  * WebKitWebsiteDataTypes:
@@ -133,6 +135,6 @@ guint createShowOptionMenuSignal(WebKitWebViewClass* webViewClass)
         g_cclosure_marshal_generic,
         G_TYPE_BOOLEAN, 2,
         WEBKIT_TYPE_OPTION_MENU,
-        GDK_TYPE_RECTANGLE | G_SIGNAL_TYPE_STATIC_SCOPE);
+        zorptr(GDK_TYPE_RECTANGLE, (uintptr_t)G_SIGNAL_TYPE_STATIC_SCOPE));
 }
 #endif

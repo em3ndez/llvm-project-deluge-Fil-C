@@ -254,7 +254,7 @@ void webkitWebViewMaximizeWindow(WebKitWebView* view, CompletionHandler<void()>&
     webkitWebViewMonitorWindowState(view, window, WindowStateEvent::Type::Maximize, WTFMove(completionHandler));
     gtk_window_maximize(window);
 
-#if ENABLE(DEVELOPER_MODE)
+#if ENABLE(DEVELOPER_MODE) && PLATFORM(X11)
     // Xvfb doesn't support maximize, so we resize the window to the screen size.
     if (WebCore::PlatformDisplay::sharedDisplay().type() == WebCore::PlatformDisplay::Type::X11) {
         const char* underXvfb = g_getenv("UNDER_XVFB");
@@ -302,7 +302,7 @@ void webkitWebViewRestoreWindow(WebKitWebView* view, CompletionHandler<void()>&&
     if (!gtk_widget_get_mapped(topLevel))
         gtk_window_unminimize(window);
 
-#if ENABLE(DEVELOPER_MODE)
+#if ENABLE(DEVELOPER_MODE) && PLATFORM(X11)
     // Xvfb doesn't support maximize, so we resize the window to the default size.
     if (WebCore::PlatformDisplay::sharedDisplay().type() == WebCore::PlatformDisplay::Type::X11) {
         const char* underXvfb = g_getenv("UNDER_XVFB");
