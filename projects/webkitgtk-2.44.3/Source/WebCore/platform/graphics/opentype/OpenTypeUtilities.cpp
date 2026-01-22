@@ -44,8 +44,6 @@ struct BigEndianULong {
     unsigned v;
 };
 
-#pragma pack(1)
-
 struct EOTPrefix {
     unsigned eotSize;
     unsigned fontDataSize;
@@ -160,8 +158,6 @@ struct nameTable {
     BigEndianUShort stringOffset;
     nameRecord nameRecords[1];
 };
-
-#pragma pack()
 
 EOTHeader::EOTHeader()
     : m_buffer(sizeof(EOTPrefix))

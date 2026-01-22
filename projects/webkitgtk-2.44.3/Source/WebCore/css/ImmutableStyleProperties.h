@@ -69,7 +69,7 @@ inline void ImmutableStyleProperties::deref() const
 
 inline PackedPtr<const CSSValue>* ImmutableStyleProperties::valueArray() const
 {
-    return bitwise_cast<PackedPtr<const CSSValue>*>(bitwise_cast<const uint8_t*>(metadataArray()) + (m_arraySize * sizeof(StylePropertyMetadata)));
+    return bitwise_cast<PackedPtr<const CSSValue>*>(bitwise_cast<const uint8_t*>(metadataArray()) + roundUpToMultipleOf<sizeof(void*)>(m_arraySize * sizeof(StylePropertyMetadata)));
 }
 
 inline const StylePropertyMetadata* ImmutableStyleProperties::metadataArray() const
@@ -84,7 +84,7 @@ inline ImmutableStyleProperties::PropertyReference ImmutableStyleProperties::pro
 
 constexpr size_t ImmutableStyleProperties::objectSize(unsigned count)
 {
-    return sizeof(ImmutableStyleProperties) - sizeof(void*) + sizeof(StylePropertyMetadata) * count + sizeof(PackedPtr<const CSSValue>) * count;
+    return sizeof(ImmutableStyleProperties) - sizeof(void*) + roundUpToMultipleOf<sizeof(void*)>(sizeof(StylePropertyMetadata) * count) + sizeof(PackedPtr<const CSSValue>) * count;
 }
 
 }

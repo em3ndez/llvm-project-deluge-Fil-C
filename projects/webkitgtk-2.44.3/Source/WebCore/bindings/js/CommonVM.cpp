@@ -65,10 +65,6 @@ JSC::VM& commonVMSlow()
 #endif
 
     auto& vm = JSC::VM::create(JSC::HeapType::Large, runLoop).leakRef();
-#if !PLATFORM(IOS_FAMILY)
-    vm.heap.setFullActivityCallback(OpportunisticTaskScheduler::FullGCActivityCallback::create(vm.heap));
-    vm.heap.setEdenActivityCallback(OpportunisticTaskScheduler::EdenGCActivityCallback::create(vm.heap));
-#endif
 
     g_commonVMOrNull = &vm;
 

@@ -38,7 +38,6 @@ namespace InlineDisplay {
 struct Box {
     WTF_MAKE_STRUCT_FAST_ALLOCATED;
 
-#pragma pack(push, 4)
     struct Text {
     public:
         Text() = default;
@@ -65,7 +64,6 @@ struct Box {
         bool m_hasPartiallyVisibleContentLength : 1 { false };
         bool m_hasHyphen : 1 { false };
     };
-#pragma pack(pop)
 
     enum class Type : uint8_t {
         Text,

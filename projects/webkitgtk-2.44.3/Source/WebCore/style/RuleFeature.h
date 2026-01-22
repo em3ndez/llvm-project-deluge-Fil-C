@@ -67,7 +67,6 @@ enum class CanBreakScope : bool { No, Yes }; // Are we inside a logical combinat
 enum class DoesBreakScope : bool { No, Yes }; // Did we find a logical combination pseudo-class like :is() or :not() with selector combinators that do break out of a :has() scope?
 
 // For MSVC.
-#pragma pack(push, 4)
 struct RuleAndSelector {
     RuleAndSelector(const RuleData&);
 
@@ -89,7 +88,6 @@ struct RuleFeatureWithInvalidationSelector : public RuleFeature {
 
     const CSSSelector* invalidationSelector { nullptr };
 };
-#pragma pack(pop)
 
 using PseudoClassInvalidationKey = std::tuple<unsigned, uint8_t, AtomString>;
 

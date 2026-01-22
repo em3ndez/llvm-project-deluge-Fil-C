@@ -48,8 +48,6 @@ const FourCharCode MATHTag = 'MATH';
 const uint32_t MATHTag = OT_MAKE_TAG('M', 'A', 'T', 'H');
 #endif
 
-#pragma pack(1)
-
 struct MathValueRecord {
     OpenType::Int16 value;
     OpenType::Offset deviceTableOffset;
@@ -230,8 +228,6 @@ struct MATHTable : TableBase {
         return nullptr;
     }
 };
-
-#pragma pack()
 
 } // namespace OpenType
 #endif // ENABLE(OPENTYPE_MATH)

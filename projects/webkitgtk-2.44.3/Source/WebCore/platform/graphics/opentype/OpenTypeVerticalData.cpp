@@ -50,8 +50,6 @@ const uint32_t DefaultScriptTag = OT_MAKE_TAG('D', 'F', 'L', 'T');
 
 const uint32_t VertFeatureTag = OT_MAKE_TAG('v', 'e', 'r', 't');
 
-#pragma pack(1)
-
 struct HheaTable {
     OpenType::Fixed version;
     OpenType::Int16 ascender;
@@ -375,8 +373,6 @@ struct GSUBTable : TableBase {
         return lookups && verticalFeatureTable->getGlyphSubstitutions(lookups, map, buffer);
     }
 };
-
-#pragma pack()
 
 } // namespace OpenType
 
