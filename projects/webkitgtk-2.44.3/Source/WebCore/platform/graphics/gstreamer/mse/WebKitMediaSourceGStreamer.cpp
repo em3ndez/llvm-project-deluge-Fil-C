@@ -214,8 +214,8 @@ static GRefPtr<GstElement> findPipeline(GRefPtr<GstElement> element)
 static void dumpPipeline(const char* description, const RefPtr<Stream>& stream)
 {
 #ifdef GST_DISABLE_GST_DEBUG
-    [[maybe_unused]] description;
-    [[maybe_unused]] stream;
+    UNUSED_PARAM(description);
+    UNUSED_PARAM(stream);
 #else
     auto pipeline = findPipeline(GRefPtr<GstElement>(GST_ELEMENT(stream->source)));
     auto fileName = makeString(GST_OBJECT_NAME(pipeline.get()), '-', stream->track->stringId(), '-', description);
