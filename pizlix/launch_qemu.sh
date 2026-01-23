@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025-2026 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -48,6 +48,10 @@ defer() {
 test ! -d disk.vmdk.lck
 mkdir disk.vmdk.lck
 defer "rmdir disk.vmdk.lck"
+
+test ! -d data-disk.vmdk.lck
+mkdir data-disk.vmdk.lck
+defer "rmdir data-disk.vmdk.lck"
 
 ./launch_qemu_impl.sh
 

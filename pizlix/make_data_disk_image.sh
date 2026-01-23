@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,27 +28,51 @@ set -x
 
 ulimit -c unlimited
 
-NCPU=`nproc`
-NGIG=$(awk '/MemTotal/ {printf "%.0f\n", $2/1024/1024/2}' /proc/meminfo)
+test $EUID -eq 0
+test -d ..
+test -d ../projects
+test -d ../llvm
+test -d etc
+test -e LFS-12.2-SYSV-BOOK.pdf
 
-if test -e launch_qemu_overrides.sh
-then
-    . launch_qemu_overrides.sh
-fi
+CLEANUP=""
+defer() {
+    CLEANUP="$1; $CLEANUP"
+    trap "set +e; $CLEANUP" EXIT
+}
 
-if test -e data-disk.img
-then
-    OTHERDRIVE="-drive file=data-disk.img,format=raw"
-else
-    OTHERDRIVE=
-fi
+test ! -e data-disk.img
 
-qemu-system-x86_64 -drive file=disk.img,format=raw \
-                   $OTHERDRIVE \
-                   -m ${NGIG}G \
-                   -smp $NCPU \
-                   -net nic -net user,hostfwd=tcp::2222-:22 \
-                   -device virtio-vga,xres=1024,yres=768 \
-                   -display gtk,zoom-to-fit=off \
-                   -enable-kvm
+truncate -s 100G data-disk.img
+
+parted data-disk.img <<EOF
+mklabel gpt
+mkpart data 1MiB 100%
+EOF
+
+LOOP=$(losetup -Pf --show data-disk.img)
+defer "losetup -d $LOOP"
+udevadm settle
+
+ls $LOOP*
+test -e $LOOP
+test -e ${LOOP}p1
+
+mkfs.ext4 -L root ${LOOP}p1
+
+cat > data-disk.vmdk <<EOF
+# Disk DescriptorFile
+version=1
+CID=fffffffe
+parentCID=ffffffff
+createType="monolithicFlat"
+
+RW $(($(stat -c%s data-disk.img) / 512)) FLAT "data-disk.img" 0
+EOF
+
+FILCOWNER=`stat -c %U ..`
+FILCGROUP=`stat -c %G ..`
+id -u $FILCOWNER
+getent group $FILCGROUP
+chown $FILCOWNER:$FILCGROUP data-disk.img data-disk.vmdk
 

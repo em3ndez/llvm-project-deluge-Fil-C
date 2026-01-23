@@ -51,9 +51,15 @@ test -e ${LOOP}p1
 test -e ${LOOP}p2
 test -e ${LOOP}p3
 test -e ${LOOP}p4
+
 test ! -d disk.img.loop.lck
 mkdir disk.img.loop.lck
 defer "rmdir disk.img.loop.lck"
+
+test ! -d data-disk.img.lck
+mkdir data-disk.img.lck
+defer "rmdir data-disk.img.lck"
+
 umount lfs
 defer "mount ${LOOP}p4 lfs"
 

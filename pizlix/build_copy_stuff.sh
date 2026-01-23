@@ -148,6 +148,12 @@ cp -v \
     etc/sysctl.conf \
     $LFS/sources/etc
 
+if test -e data-disk.img
+then
+    cat etc/fstab-data >> $LFS/sources/etc/fstab
+    mkdir -p $LFS/data
+fi
+
 cp -v \
     etc/sysconfig/clock \
     etc/sysconfig/console \
