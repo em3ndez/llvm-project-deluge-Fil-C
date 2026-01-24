@@ -2029,25 +2029,13 @@ static bool canConvertValue(const DataLayout &DL, Type *OldTy, Type *NewTy) {
 
     // We can convert integers to integral pointers, but not to non-integral
     // pointers.
-    if (OldTy->isIntegerTy()) {
-      if (DL.isFilC()) {
-        // HACK: Fil-C "nonintegral" AS 0 pointers are integral for the purposes of this.
-        if (NewTy->isPointerTy() && !NewTy->getPointerAddressSpace())
-          return true;
-      }
+    if (OldTy->isIntegerTy())
       return !DL.isNonIntegralPointerType(NewTy);
-    }
 
     // We can convert integral pointers to integers, but non-integral pointers
     // need to remain pointers.
-    if (NewTy->isIntegerTy()) {
-      if (DL.isFilC()) {
-        // HACK: Fil-C "nonintegral" AS 0 pointers are integral for the purposes of this.
-        if (OldTy->isPointerTy() && !OldTy->getPointerAddressSpace())
-          return true;
-      }
-      return !DL.isNonIntegralPointerType(OldTy);
-    }
+    if (!DL.isNonIntegralPointerType(OldTy))
+      return NewTy->isIntegerTy();
 
     return false;
   }
