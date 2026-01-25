@@ -37,9 +37,9 @@ class NativeCallee;
 class CalleeBits {
 public:
     CalleeBits() = default;
-    CalleeBits(int64_t value)
+    CalleeBits(void* value)
 #if USE(JSVALUE64)
-        : m_ptr { reinterpret_cast<void*>(value) }
+        : m_ptr { value }
 #elif USE(JSVALUE32_64)
         : m_ptr { reinterpret_cast<void*>(JSValue::decode(value).payload()) }
         , m_tag { JSValue::decode(value).tag() }
@@ -117,7 +117,7 @@ public:
     static void* boxNativeCallee(NativeCallee* callee)
     {
 #if USE(JSVALUE64)
-        CalleeBits result { static_cast<int64_t>((bitwise_cast<uintptr_t>(callee) - lowestAccessibleAddress()) | JSValue::NativeCalleeTag) };
+        CalleeBits result { zmkptr(callee, (bitwise_cast<uintptr_t>(callee) - lowestAccessibleAddress()) | JSValue::NativeCalleeTag) };
         ASSERT(result.isNativeCallee());
         return result.rawPtr();
 #elif USE(JSVALUE32_64)
@@ -145,7 +145,7 @@ public:
     {
         ASSERT(isNativeCallee());
 #if USE(JSVALUE64)
-        return bitwise_cast<NativeCallee*>(static_cast<uintptr_t>(bitwise_cast<uintptr_t>(m_ptr) & ~JSValue::NativeCalleeTag) + lowestAccessibleAddress());
+        return bitwise_cast<NativeCallee*>(zmkptr(m_ptr, static_cast<uintptr_t>(bitwise_cast<uintptr_t>(m_ptr) & ~JSValue::NativeCalleeTag) + lowestAccessibleAddress()));
 #elif USE(JSVALUE32_64)
         return bitwise_cast<NativeCallee*>(bitwise_cast<uintptr_t>(m_ptr) + lowestAccessibleAddress());
 #endif

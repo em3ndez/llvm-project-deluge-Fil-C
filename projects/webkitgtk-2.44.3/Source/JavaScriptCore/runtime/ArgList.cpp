@@ -30,17 +30,8 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ArgList);
 
-void MarkedVectorBase::addMarkSet(JSValue v)
+void MarkedVectorBase::addMarkSet(JSValue)
 {
-    if (m_markSet)
-        return;
-
-    Heap* heap = Heap::heap(v);
-    if (!heap)
-        return;
-
-    m_markSet = &heap->markListSet();
-    m_markSet->add(this);
 }
 
 void ArgList::getSlice(int startIndex, ArgList& result) const

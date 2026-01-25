@@ -477,6 +477,7 @@ macro callSlowPath(slowPath)
     move PC, a1
     cCall2(slowPath)
     restoreStateAfterCCall()
+    branchIfException(_llint_throw_from_slow_path_trampoline)
 end
 
 macro traceOperand(fromWhere, operand)
