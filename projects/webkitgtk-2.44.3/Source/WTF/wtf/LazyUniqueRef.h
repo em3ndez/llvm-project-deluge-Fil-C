@@ -30,6 +30,8 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/UniqueRef.h>
 
+#include <stdfil.h>
+
 namespace WTF {
 
 template<typename OwnerType, typename T>
@@ -49,15 +51,15 @@ public:
 
     ~LazyUniqueRef()
     {
-        ASSERT(!(m_pointer & initializingTag));
-        if (m_pointer & lazyTag)
+        ASSERT(!(intptr() & initializingTag));
+        if (intptr() & lazyTag)
             return;
-        uintptr_t pointer = std::exchange(m_pointer, 0);
+        void* pointer = std::exchange(m_pointer, nullptr);
         if (pointer)
             delete bitwise_cast<T*>(pointer);
     }
 
-    bool isInitialized() const { return !(m_pointer & lazyTag); }
+    bool isInitialized() const { return !(intptr() & lazyTag); }
 
     const T& get(const OwnerType& owner) const
     {
@@ -66,10 +68,10 @@ public:
 
     T& get(OwnerType& owner)
     {
-        ASSERT(m_pointer);
-        ASSERT(!(m_pointer & initializingTag));
-        if (UNLIKELY(m_pointer & lazyTag)) {
-            FuncType func = *bitwise_cast<FuncType*>(m_pointer & ~(lazyTag | initializingTag));
+        ASSERT(intptr());
+        ASSERT(!(intptr() & initializingTag));
+        if (UNLIKELY(intptr() & lazyTag)) {
+            FuncType func = *bitwise_cast<FuncType*>(zandptr(m_pointer, ~(lazyTag | initializingTag)));
             return *func(owner, *this);
         }
         return *bitwise_cast<T*>(m_pointer);
@@ -82,8 +84,8 @@ public:
 
     T* getIfExists()
     {
-        ASSERT(m_pointer);
-        if (m_pointer & lazyTag)
+        ASSERT(intptr());
+        if (intptr() & lazyTag)
             return nullptr;
         return bitwise_cast<T*>(m_pointer);
     }
@@ -102,13 +104,13 @@ public:
         // variable. The "theFunc" variable is guaranteed to be native-aligned, i.e. at least a
         // multiple of 4.
         static constexpr FuncType theFunc = &callFunc<Func>;
-        m_pointer = lazyTag | bitwise_cast<uintptr_t>(&theFunc);
+        m_pointer = zorptr(bitwise_cast<void*>(&theFunc), lazyTag);
     }
 
     void set(UniqueRef<T>&& ref)
     {
         UniqueRef<T> local = WTFMove(ref);
-        m_pointer = bitwise_cast<uintptr_t>(local.moveToUniquePtr().release());
+        m_pointer = local.moveToUniquePtr().release();
     }
 
 private:
@@ -118,14 +120,16 @@ private:
     template<typename Func>
     static T* callFunc(OwnerType& owner, LazyUniqueRef& ref)
     {
-        ref.m_pointer |= initializingTag;
+        ref.m_pointer = zorptr(ref.m_pointer, initializingTag);
         callStatelessLambda<void, Func>(owner, ref);
-        RELEASE_ASSERT(!(ref.m_pointer & lazyTag));
-        RELEASE_ASSERT(!(ref.m_pointer & initializingTag));
+        RELEASE_ASSERT(!(ref.intptr() & lazyTag));
+        RELEASE_ASSERT(!(ref.intptr() & initializingTag));
         return bitwise_cast<T*>(ref.m_pointer);
     }
 
-    uintptr_t m_pointer { 0 };
+    uintptr_t intptr() { return bitwise_cast<uintptr_t>(m_pointer); }
+
+    void* m_pointer { 0 };
 };
 
 } // namespace WTF
