@@ -22,7 +22,7 @@ endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(jsc)
 
-if (DEVELOPER_MODE)
+if (FALSE)
     set(testapi_SOURCES
         ../API/tests/CompareAndSwapTest.cpp
         ../API/tests/CustomGlobalObjectClassTest.c
@@ -97,7 +97,7 @@ if (SHOULD_INSTALL_JS_SHELL)
     install(TARGETS jsc DESTINATION "${LIBEXEC_INSTALL_DIR}")
 endif ()
 
-if (DEVELOPER_MODE)
+if (FALSE)
     WEBKIT_EXECUTABLE(testapi)
     WEBKIT_EXECUTABLE(testRegExp)
     WEBKIT_EXECUTABLE(testmasm)
