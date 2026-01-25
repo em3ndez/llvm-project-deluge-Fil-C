@@ -58,7 +58,7 @@ ALWAYS_INLINE Ref<AtomStringImpl> JSONAtomStringCache::make(Type type, const Cha
 
 ALWAYS_INLINE VM& JSONAtomStringCache::vm() const
 {
-    return *bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, jsonAtomStringCache));
+    return *static_cast<VM*>(zmkptr(const_cast<void*>(static_cast<const void*>(this)), bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, jsonAtomStringCache)));
 }
 
 } // namespace JSC
