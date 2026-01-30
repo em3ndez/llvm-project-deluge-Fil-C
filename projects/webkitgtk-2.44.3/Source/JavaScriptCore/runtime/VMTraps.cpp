@@ -375,6 +375,8 @@ void VMTraps::handleTraps(VMTraps::BitField mask)
     if (isDeferringTermination())
         mask &= ~NeedTermination;
 
+    // Oh man, this could come back and bite me.
+#if !defined(__FILC__)
     {
         Locker codeBlockSetLocker { vm.heap.codeBlockSet().getLock() };
         vm.heap.forEachCodeBlockIgnoringJITPlans(codeBlockSetLocker, [&] (CodeBlock* codeBlock) {
@@ -383,6 +385,7 @@ void VMTraps::handleTraps(VMTraps::BitField mask)
                 codeBlock->jettison(Profiler::JettisonDueToVMTraps);
         });
     }
+#endif
 
     while (needHandling(mask)) {
         auto event = takeTopPriorityTrap(mask);
