@@ -100,7 +100,7 @@ public:
             if (UNLIKELY(isOutOfLine()))
                 delete outOfLineCodeOrigin();
 
-            m_compositeValue = std::exchange(other.m_compositeValue, 0);
+            m_compositeValue = std::exchange(other.m_compositeValue, nullptr);
         }
         return *this;
     }
@@ -115,7 +115,7 @@ public:
             m_compositeValue = other.m_compositeValue;
     }
     CodeOrigin(CodeOrigin&& other)
-        : m_compositeValue(std::exchange(other.m_compositeValue, 0))
+        : m_compositeValue(std::exchange(other.m_compositeValue, nullptr))
     {
     }
 
@@ -129,7 +129,7 @@ public:
     bool isSet() const
     {
 #if CPU(ADDRESS64)
-        return !(m_compositeValue & s_maskIsBytecodeIndexInvalid);
+        return !(reinterpret_cast<uintptr_t>(m_compositeValue) & s_maskIsBytecodeIndexInvalid);
 #else
         return !!m_bytecodeIndex;
 #endif
@@ -139,7 +139,7 @@ public:
     bool isHashTableDeletedValue() const
     {
 #if CPU(ADDRESS64)
-        return !isSet() && (m_compositeValue & s_maskCompositeValueForPointer);
+        return !isSet() && (reinterpret_cast<uintptr_t>(m_compositeValue) & s_maskCompositeValueForPointer);
 #else
         return m_bytecodeIndex.isHashTableDeletedValue() && !!m_inlineCallFrame;
 #endif
@@ -182,7 +182,7 @@ public:
             return BytecodeIndex();
         if (UNLIKELY(isOutOfLine()))
             return outOfLineCodeOrigin()->bytecodeIndex;
-        return BytecodeIndex::fromBits(m_compositeValue >> (64 - s_freeBitsAtTop));
+        return BytecodeIndex::fromBits(reinterpret_cast<uintptr_t>(m_compositeValue) >> (64 - s_freeBitsAtTop));
 #else
         return m_bytecodeIndex;
 #endif
@@ -193,7 +193,7 @@ public:
 #if CPU(ADDRESS64)
         if (UNLIKELY(isOutOfLine()))
             return outOfLineCodeOrigin()->inlineCallFrame;
-        return bitwise_cast<InlineCallFrame*>(m_compositeValue & s_maskCompositeValueForPointer);
+        return static_cast<InlineCallFrame*>(zandptr(m_compositeValue, s_maskCompositeValueForPointer));
 #else
         return m_inlineCallFrame;
 #endif
@@ -219,12 +219,12 @@ private:
     
     bool isOutOfLine() const
     {
-        return m_compositeValue & s_maskIsOutOfLine;
+        return reinterpret_cast<uintptr_t>(m_compositeValue) & s_maskIsOutOfLine;
     }
     OutOfLineCodeOrigin* outOfLineCodeOrigin() const
     {
         ASSERT(isOutOfLine());
-        return bitwise_cast<OutOfLineCodeOrigin*>(m_compositeValue & s_maskCompositeValueForPointer);
+        return static_cast<OutOfLineCodeOrigin*>(zandptr(m_compositeValue, s_maskCompositeValueForPointer));
     }
 #endif
 
@@ -241,19 +241,19 @@ private:
 #if CPU(ADDRESS64)
     static constexpr unsigned s_freeBitsAtTop = 64 - OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH);
     static constexpr uintptr_t s_maskCompositeValueForPointer = ((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1) & ~(8ULL - 1);
-    static uintptr_t buildCompositeValue(InlineCallFrame* inlineCallFrame, BytecodeIndex bytecodeIndex)
+    static void* buildCompositeValue(InlineCallFrame* inlineCallFrame, BytecodeIndex bytecodeIndex)
     {
         if (!bytecodeIndex)
-            return bitwise_cast<uintptr_t>(inlineCallFrame) | s_maskIsBytecodeIndexInvalid;
+            return zorptr(inlineCallFrame, s_maskIsBytecodeIndexInvalid);
 
         if (UNLIKELY(bytecodeIndex.asBits() >= 1 << s_freeBitsAtTop)) {
             auto* outOfLine = new OutOfLineCodeOrigin(inlineCallFrame, bytecodeIndex);
-            return bitwise_cast<uintptr_t>(outOfLine) | s_maskIsOutOfLine;
+            return zorptr(outOfLine, s_maskIsOutOfLine);
         }
 
         uintptr_t encodedBytecodeIndex = static_cast<uintptr_t>(bytecodeIndex.asBits()) << (64 - s_freeBitsAtTop);
         ASSERT(!(encodedBytecodeIndex & bitwise_cast<uintptr_t>(inlineCallFrame)));
-        return encodedBytecodeIndex | bitwise_cast<uintptr_t>(inlineCallFrame);
+        return zorptr(inlineCallFrame, encodedBytecodeIndex);
     }
 
     // The bottom bit indicates whether to look at an out-of-line implementation (because of a bytecode index which is too big for us to store).
@@ -262,7 +262,7 @@ private:
     // The next bit is free
     // The next 64-s_freeBitsAtTop-3 are the InlineCallFrame* or the OutOfLineCodeOrigin*
     // Finally the last s_freeBitsAtTop are the bytecodeIndex if it is inline
-    uintptr_t m_compositeValue;
+    void* m_compositeValue;
 #else
     BytecodeIndex m_bytecodeIndex;
     InlineCallFrame* m_inlineCallFrame;
