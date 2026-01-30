@@ -1362,7 +1362,8 @@ GstElement* MediaPlayerPrivateGStreamer::createAudioSink()
 
     auto role = player->isVideoPlayer() ? "video"_s : "music"_s;
     GstElement* audioSink = createPlatformAudioSink(role);
-    RELEASE_ASSERT(audioSink);
+    // FIXME - we should be able to assert this
+    //RELEASE_ASSERT(audioSink);
     if (!audioSink)
         return nullptr;
 

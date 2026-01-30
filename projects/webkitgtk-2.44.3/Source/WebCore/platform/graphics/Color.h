@@ -255,20 +255,20 @@ private:
     static constexpr uint64_t colorSpaceShift = flagsShift + flagsSize;
     static_assert(flagsSize + colorSpaceSize + maxNumberOfBitsInPointer <= 64);
 
-    static uint64_t encodedFlags(OptionSet<FlagsIncludingPrivate>);
-    static uint64_t encodedColorSpace(ColorSpace);
-    static uint64_t encodedInlineColor(SRGBA<uint8_t>);
-    static uint64_t encodedPackedInlineColor(PackedColor::RGBA);
-    static uint64_t encodedOutOfLineComponents(Ref<OutOfLineComponents>&&);
+    static void* encodedFlags(OptionSet<FlagsIncludingPrivate>);
+    static void* encodedColorSpace(ColorSpace);
+    static void* encodedInlineColor(SRGBA<uint8_t>);
+    static void* encodedPackedInlineColor(PackedColor::RGBA);
+    static void* encodedOutOfLineComponents(Ref<OutOfLineComponents>&&);
 
-    static OptionSet<FlagsIncludingPrivate> decodedFlags(uint64_t);
-    static ColorSpace decodedColorSpace(uint64_t);
-    static SRGBA<uint8_t> decodedInlineColor(uint64_t);
-    static PackedColor::RGBA decodedPackedInlineColor(uint64_t);
-    static OutOfLineComponents& decodedOutOfLineComponents(uint64_t);
+    static OptionSet<FlagsIncludingPrivate> decodedFlags(void*);
+    static ColorSpace decodedColorSpace(void*);
+    static SRGBA<uint8_t> decodedInlineColor(void*);
+    static PackedColor::RGBA decodedPackedInlineColor(void*);
+    static OutOfLineComponents& decodedOutOfLineComponents(void*);
 
-    static constexpr uint64_t invalidColorAndFlags = 0;
-    uint64_t m_colorAndFlags { invalidColorAndFlags };
+    static constexpr void* invalidColorAndFlags = nullptr;
+    void* m_colorAndFlags { invalidColorAndFlags };
 };
 
 inline void add(Hasher& hasher, const Color& color)
@@ -488,59 +488,59 @@ inline std::optional<SRGBA<uint8_t>> Color::tryGetAsSRGBABytes() const
     return std::nullopt;
 }
 
-inline uint64_t Color::encodedFlags(OptionSet<FlagsIncludingPrivate> flags)
+inline void* Color::encodedFlags(OptionSet<FlagsIncludingPrivate> flags)
 {
-    return static_cast<uint64_t>(flags.toRaw()) << flagsShift;
+    return reinterpret_cast<void*>(static_cast<uint64_t>(flags.toRaw()) << flagsShift);
 }
 
-inline uint64_t Color::encodedColorSpace(ColorSpace colorSpace)
+inline void* Color::encodedColorSpace(ColorSpace colorSpace)
 {
-    return static_cast<uint64_t>(colorSpace) << colorSpaceShift;
+    return reinterpret_cast<void*>(static_cast<uint64_t>(colorSpace) << colorSpaceShift);
 }
 
-inline uint64_t Color::encodedInlineColor(SRGBA<uint8_t> color)
+inline void* Color::encodedInlineColor(SRGBA<uint8_t> color)
 {
-    return encodedPackedInlineColor(PackedColor::RGBA { color });
+    return reinterpret_cast<void*>(encodedPackedInlineColor(PackedColor::RGBA { color }));
 }
 
-inline uint64_t Color::encodedPackedInlineColor(PackedColor::RGBA color)
+inline void* Color::encodedPackedInlineColor(PackedColor::RGBA color)
 {
-    return color.value;
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(color.value));
 }
 
-inline uint64_t Color::encodedOutOfLineComponents(Ref<OutOfLineComponents>&& outOfLineComponents)
+inline void* Color::encodedOutOfLineComponents(Ref<OutOfLineComponents>&& outOfLineComponents)
 {
 #if CPU(ADDRESS64)
-    return bitwise_cast<uint64_t>(&outOfLineComponents.leakRef());
+    return &outOfLineComponents.leakRef();
 #else
     return bitwise_cast<uint32_t>(&outOfLineComponents.leakRef());
 #endif
 }
 
-inline OptionSet<Color::FlagsIncludingPrivate> Color::decodedFlags(uint64_t value)
+inline OptionSet<Color::FlagsIncludingPrivate> Color::decodedFlags(void* value)
 {
-    return OptionSet<Color::FlagsIncludingPrivate>::fromRaw(static_cast<uint8_t>(value >> flagsShift));
+    return OptionSet<Color::FlagsIncludingPrivate>::fromRaw(static_cast<uint8_t>(reinterpret_cast<uint64_t>(value) >> flagsShift));
 }
 
-inline ColorSpace Color::decodedColorSpace(uint64_t value)
+inline ColorSpace Color::decodedColorSpace(void* value)
 {
-    return static_cast<ColorSpace>(static_cast<uint8_t>(value >> colorSpaceShift));
+    return static_cast<ColorSpace>(static_cast<uint8_t>(reinterpret_cast<uint64_t>(value) >> colorSpaceShift));
 }
 
-inline SRGBA<uint8_t> Color::decodedInlineColor(uint64_t value)
+inline SRGBA<uint8_t> Color::decodedInlineColor(void* value)
 {
     return asSRGBA(decodedPackedInlineColor(value));
 }
 
-inline PackedColor::RGBA Color::decodedPackedInlineColor(uint64_t value)
+inline PackedColor::RGBA Color::decodedPackedInlineColor(void* value)
 {
-    return PackedColor::RGBA { static_cast<uint32_t>(value & colorValueMask) };
+    return PackedColor::RGBA { static_cast<uint32_t>(reinterpret_cast<uint64_t>(value) & colorValueMask) };
 }
 
-inline Color::OutOfLineComponents& Color::decodedOutOfLineComponents(uint64_t value)
+inline Color::OutOfLineComponents& Color::decodedOutOfLineComponents(void* value)
 {
 #if CPU(ADDRESS64)
-    return *bitwise_cast<OutOfLineComponents*>(value & colorValueMask);
+    return *static_cast<OutOfLineComponents*>(zandptr(value, colorValueMask));
 #else
     return *bitwise_cast<OutOfLineComponents*>(static_cast<uint32_t>(value & colorValueMask));
 #endif
@@ -549,14 +549,14 @@ inline Color::OutOfLineComponents& Color::decodedOutOfLineComponents(uint64_t va
 inline void Color::setColor(SRGBA<uint8_t> color, OptionSet<FlagsIncludingPrivate> flags)
 {
     flags.add({ FlagsIncludingPrivate::Valid });
-    m_colorAndFlags = encodedInlineColor(color) | encodedColorSpace(ColorSpace::SRGB) | encodedFlags(flags);
+    m_colorAndFlags = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(encodedInlineColor(color)) | reinterpret_cast<uintptr_t>(encodedColorSpace(ColorSpace::SRGB)) | reinterpret_cast<uintptr_t>(encodedFlags(flags)));
     ASSERT(isInline());
 }
 
 inline void Color::setOutOfLineComponents(Ref<OutOfLineComponents>&& color, ColorSpace colorSpace, OptionSet<FlagsIncludingPrivate> flags)
 {
     flags.add({ FlagsIncludingPrivate::Valid, FlagsIncludingPrivate::OutOfLine });
-    m_colorAndFlags = encodedOutOfLineComponents(WTFMove(color)) | encodedColorSpace(colorSpace) | encodedFlags(flags);
+    m_colorAndFlags = zorptr(encodedOutOfLineComponents(WTFMove(color)), reinterpret_cast<uintptr_t>(encodedColorSpace(colorSpace)) | reinterpret_cast<uintptr_t>(encodedFlags(flags)));
     ASSERT(isOutOfLine());
 }
 
