@@ -128,3 +128,32 @@ cd ..
 rm -rf pizlonated-libgcrypt
 hash -r
 
+tar -xf pizlonated-aspell.tar.gz
+cd pizlonated-aspell
+./configure --prefix=/usr
+make
+make install
+ln -svfn aspell-0.60 /usr/lib/aspell
+cd ..
+rm -rf pizlonated-aspell
+hash -r
+
+tar -xf aspell6-en-2020.12.07-0.tar.bz2
+cd aspell6-en-2020.12.07-0
+./configure
+make
+make install
+cd ..
+rm -rf aspell6-en-2020.12.07-0
+hash -r
+
+tar -xf pizlonated-enchant.tar.gz
+cd pizlonated-enchant
+./configure --prefix=/usr   \
+            --disable-static
+make
+make install
+cd ..
+rm -rf pizlonated-enchant
+hash -r 
+

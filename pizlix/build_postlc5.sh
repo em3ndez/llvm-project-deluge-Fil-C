@@ -38,6 +38,7 @@ cp -v libsecret-0.21.4.tar.xz $LFS/sources
 cp -v libseccomp-2.5.5.tar.gz $LFS/sources
 cp -v bubblewrap-0.9.0.tar.xz $LFS/sources
 cp -v unifdef-2.12.tar.gz $LFS/sources
+cp -v aspell6-en-2020.12.07-0.tar.bz2 $LFS/sources
 
 ./build_chroot_late.sh /sources/build_postlc5_sub2_chroot.sh
 

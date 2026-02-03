@@ -19,4 +19,6 @@ rm -vf projects/*/pizlonated-*.tar.gz
 ./package-source.sh projects/libsoup-3.4.4 pizlonated-libsoup
 ./package-source.sh projects/libgpg-error-1.50 pizlonated-libgpg-error
 ./package-source.sh projects/libgcrypt-1.11.0 pizlonated-libgcrypt
+./package-source.sh projects/aspell-0.60.8.1 pizlonated-aspell
+./package-source.sh projects/enchant-2.8.2 pizlonated-enchant
 
