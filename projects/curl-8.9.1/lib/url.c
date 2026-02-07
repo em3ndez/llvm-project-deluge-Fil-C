@@ -92,6 +92,7 @@
 #include "noproxy.h"
 #include "cfilters.h"
 #include "idn.h"
+#include "curl_ca_bundle.h"
 
 /* And now for the protocols */
 #include "ftp.h"
@@ -435,27 +436,32 @@ CURLcode Curl_init_userdefined(struct Curl_easy *data)
    */
   if(Curl_ssl_backend() != CURLSSLBACKEND_SCHANNEL &&
      Curl_ssl_backend() != CURLSSLBACKEND_SECURETRANSPORT) {
-#if defined(CURL_CA_BUNDLE)
-    result = Curl_setstropt(&set->str[STRING_SSL_CAFILE], CURL_CA_BUNDLE);
-    if(result)
-      return result;
+    {
+      const char *bundle = Curl_ca_bundle();
+      if(bundle) {
+        result = Curl_setstropt(&set->str[STRING_SSL_CAFILE], bundle);
+        if(result)
+          return result;
 #ifndef CURL_DISABLE_PROXY
-    result = Curl_setstropt(&set->str[STRING_SSL_CAFILE_PROXY],
-                            CURL_CA_BUNDLE);
-    if(result)
-      return result;
+        result = Curl_setstropt(&set->str[STRING_SSL_CAFILE_PROXY], bundle);
+        if(result)
+          return result;
 #endif
-#endif
-#if defined(CURL_CA_PATH)
-    result = Curl_setstropt(&set->str[STRING_SSL_CAPATH], CURL_CA_PATH);
-    if(result)
-      return result;
+      }
+    }
+    {
+      const char *capath = Curl_ca_path();
+      if(capath) {
+        result = Curl_setstropt(&set->str[STRING_SSL_CAPATH], capath);
+        if(result)
+          return result;
 #ifndef CURL_DISABLE_PROXY
-    result = Curl_setstropt(&set->str[STRING_SSL_CAPATH_PROXY], CURL_CA_PATH);
-    if(result)
-      return result;
+        result = Curl_setstropt(&set->str[STRING_SSL_CAPATH_PROXY], capath);
+        if(result)
+          return result;
 #endif
-#endif
+      }
+    }
   }
 
 #ifndef CURL_DISABLE_FTP
