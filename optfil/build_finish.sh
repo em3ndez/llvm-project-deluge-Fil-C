@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025-2026 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -43,7 +43,7 @@ cd $FILCSRC/optfil
 
 . ../libpas/common.sh
 
-package_name=optfil-0.677-$OS-$ARCH
+package_name=optfil-0.678-$OS-$ARCH
 
 rm -rf $package_name
 mkdir -v $package_name

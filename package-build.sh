@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -28,7 +28,7 @@
 set -e
 set -x
 
-build_name=filc-0.677-$OS-$ARCH
+build_name=filc-0.678-$OS-$ARCH
 
 rm -rf $build_name
 

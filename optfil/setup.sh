@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2025-2026 Epic Games, Inc. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -25,7 +25,78 @@
 
 set -e
 
-VERSION="0.677"
+VERSION="0.678"
+
+usage() {
+    echo "Usage: setup.sh [OPTIONS]"
+    echo
+    echo "Install the Fil-C /opt/fil distribution version $VERSION."
+    echo
+    echo "Fil-C is a memory-safe implementation of C and C++ that prevents all memory"
+    echo "safety errors (out-of-bounds access, use-after-free, type confusion, etc.)"
+    echo "while maintaining full C/C++ compatibility."
+    echo
+    echo "/opt/fil is a self-contained directory containing the Fil-C compiler"
+    echo "(filcc/fil++), its runtime, and a collection of common programs and libraries"
+    echo "that have been compiled with Fil-C for memory safety. After installation, add"
+    echo "/opt/fil/bin to your PATH to use the memory-safe tools."
+    echo
+    echo "This installer extracts fil.tar.xz to /opt/fil and optionally configures SSH"
+    echo "(host keys, sshd user/group, config files) for the memory-safe OpenSSH server"
+    echo "included in the distribution."
+    echo
+    echo "Options:"
+    echo "  -h, --help          Show this help message and exit"
+    echo "  -u, --unattended    Non-interactive install: extract to /opt/fil without any"
+    echo "                      prompts, declining all optional system configuration"
+    echo "                      (SSH setup, etc.)"
+    echo "      --full-setup    Used with -u/--unattended: also accept all optional system"
+    echo "                      configuration without prompting. Requires --unattended."
+    echo "                      WARNING: This may modify your system outside of /opt/fil,"
+    echo "                      including creating users/groups, writing to /etc/ssh, and"
+    echo "                      changing file permissions. Use with care."
+    exit 0
+}
+
+UNATTENDED=false
+FULL_SETUP=false
+
+OPTS=$(getopt -o hu -l help,unattended,full-setup -n setup.sh -- "$@") || {
+    echo "Try 'setup.sh --help' for more information."
+    exit 1
+}
+eval set -- "$OPTS"
+
+while true; do
+    case "$1" in
+        -h|--help)
+            usage
+            ;;
+        -u|--unattended)
+            UNATTENDED=true
+            shift
+            ;;
+        --full-setup)
+            FULL_SETUP=true
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "ERROR: Unexpected option: $1"
+            echo "Try 'setup.sh --help' for more information."
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$FULL_SETUP" = true ] && [ "$UNATTENDED" = false ]; then
+    echo "ERROR: --full-setup requires -u/--unattended."
+    echo "Try 'setup.sh --help' for more information."
+    exit 1
+fi
 
 echo "================================================================================"
 echo "                         Fil-C /opt/fil Distribution"
@@ -49,6 +120,7 @@ echo
 
 if [ `id -u` -ne 0 ]; then
     echo "ERROR: This installer must be run as root (use sudo or run as root user)."
+    echo "Try 'setup.sh --help' for more information."
     exit 1
 fi
 
@@ -58,6 +130,7 @@ if [ -e /opt/fil ]; then
     echo "  rm -rf /opt/fil"
     echo "    or"
     echo "  mv /opt/fil /opt/fil.backup"
+    echo "Try 'setup.sh --help' for more information."
     exit 1
 fi
 
@@ -67,19 +140,23 @@ if [ ! -d /opt ]; then
 fi
 echo "  - Extract fil.tar.xz to /opt, creating /opt/fil (requires about 1.3 GB)"
 echo
-echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
-read response
 
-if [ "$response" != "YES" ]; then
-    echo "Installation aborted."
-    exit 1
+if [ "$UNATTENDED" = false ]; then
+    echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
+    read response
+
+    if [ "$response" != "YES" ]; then
+        echo "Installation aborted."
+        exit 1
+    fi
 fi
 
 echo
 echo "Extracting fil.tar.xz to /opt..."
 
 if [ ! -f fil.tar.xz ]; then
-    echo "Error: fil.tar.xz not found in current directory"
+    echo "ERROR: fil.tar.xz not found in current directory."
+    echo "Try 'setup.sh --help' for more information."
     exit 1
 fi
 
@@ -248,8 +325,15 @@ else
         fi
 
         echo
-        echo "Type YES (in all caps) to proceed with SSH setup, or anything else to skip:"
-        read ssh_response
+
+        if [ "$UNATTENDED" = false ]; then
+            echo "Type YES (in all caps) to proceed with SSH setup, or anything else to skip:"
+            read ssh_response
+        elif [ "$FULL_SETUP" = true ]; then
+            ssh_response=YES
+        else
+            ssh_response=NO
+        fi
 
         # Phase 3: Action
         # ================
