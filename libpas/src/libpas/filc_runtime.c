@@ -11961,10 +11961,7 @@ int filc_native_zsys_pidfd_open(filc_thread* my_thread, int pid, unsigned flags)
 #if PAS_GLIBC
     return FILC_SYSCALL(my_thread, pidfd_open(pid, flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(pid);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "pidfd_open not supported.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_pidfd_open, pid, flags));
 #endif
 }
 
@@ -11973,11 +11970,7 @@ int filc_native_zsys_pidfd_getfd(filc_thread* my_thread, int pidfd, int targetfd
 #if PAS_GLIBC
     return FILC_SYSCALL(my_thread, pidfd_getfd(pidfd, targetfd, flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(pidfd);
-    PAS_UNUSED_PARAM(targetfd);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "pidfd_getfd not supported.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_pidfd_getfd, pidfd, targetfd, flags));
 #endif
 }
 
@@ -11991,17 +11984,13 @@ int filc_native_zsys_pivot_root(filc_thread* my_thread, filc_ptr new_root_ptr, f
 int filc_native_zsys_pidfd_send_signal(filc_thread* my_thread, int pidfd, int sig,
                                        filc_ptr siginfo_ptr, unsigned flags)
 {
-#if PAS_GLIBC
     filc_check_write(siginfo_ptr, sizeof(siginfo_t)); /* Maybe this could be check read? */
+#if PAS_GLIBC
     return FILC_SYSCALL(my_thread, pidfd_send_signal(pidfd, sig,
                                                      (siginfo_t*)filc_ptr_ptr(siginfo_ptr), flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(pidfd);
-    PAS_UNUSED_PARAM(sig);
-    PAS_UNUSED_PARAM(siginfo_ptr);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "pidfd_send_signal not supported.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_pidfd_send_signal, pidfd, sig,
+                                           (siginfo_t*)filc_ptr_ptr(siginfo_ptr), flags));
 #endif
 }
 
