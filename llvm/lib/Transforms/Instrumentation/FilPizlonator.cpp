@@ -8315,6 +8315,7 @@ class Pizlonator {
     FunctionCallee Callee = M.getOrInsertFunction(buf.str(), FuncTy);
     assert(Callee.getFunctionType() == FuncTy);
     Function* Result = cast<Function>(Callee.getCallee());
+    assert(Result->isDeclaration());
     Result->setLinkage(GlobalValue::LinkOnceODRLinkage);
     Result->addFnAttr(Attribute::NoInline);
     Result->addFnAttr(Attribute::NoUnwind);
@@ -8392,6 +8393,7 @@ class Pizlonator {
     FunctionCallee Callee = M.getOrInsertFunction(buf.str(), PizlonatedFuncTy);
     assert(Callee.getFunctionType() == PizlonatedFuncTy);
     Function* Result = cast<Function>(Callee.getCallee());
+    assert(Result->isDeclaration());
     Result->setLinkage(GlobalValue::LinkOnceODRLinkage);
     Result->addFnAttr(Attribute::NoInline);
     Result->addFnAttr(Attribute::NoUnwind);
