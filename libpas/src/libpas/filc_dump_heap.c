@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -131,10 +132,13 @@ void filc_dump_heap(int fd)
     filc_snapshot_threads(&threads, &num_threads);
     
     size_t index;
+    /* See https://github.com/pizlonator/fil-c/issues/240 for why we lock the handshake lock. */
+    filc_handshake_lock_lock();
     for (index = num_threads; index--;) {
         if (filc_thread_participates_in_pollchecks(threads[index]))
             filc_thread_stop_allocators(threads[index]);
     }
+    filc_handshake_lock_unlock();
     
     filc_mark_stack dump_stack;
     filc_mark_stack_construct(&dump_stack);
