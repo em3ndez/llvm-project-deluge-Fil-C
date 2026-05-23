@@ -11249,11 +11249,13 @@ public:
         else
           AuxP = RawNull;
         Return->getOperandUse(0) = Lower;
-        Value* Const = constantToFlightValue(G->getInitializer(), Return);
-        storeValueRecurseAfterCheck(
-          G->getValueType(), Const,
-          MemoryAccessData(nullptr, Lower, AuxP, AuxP, MemoryKind::ThreadLocalInit),
-          false, Align(Alignment), AtomicOrdering::NotAtomic, SyncScope::System, Return);
+        if (!isa<ConstantAggregateZero, ConstantPointerNull>(G->getInitializer())) {
+          Value* Const = constantToFlightValue(G->getInitializer(), Return);
+          storeValueRecurseAfterCheck(
+            G->getValueType(), Const,
+            MemoryAccessData(nullptr, Lower, AuxP, AuxP, MemoryKind::ThreadLocalInit),
+            false, Align(Alignment), AtomicOrdering::NotAtomic, SyncScope::System, Return);
+        }
         new StoreInst(Lower, NewG, Return);
 
         MyThread = NewF->getArg(0);

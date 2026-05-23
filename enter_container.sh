@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
 #
-# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
 # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
 # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
 # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -27,11 +28,12 @@ set -e
 
 # Parse command-line options
 FORCE_NEW=false
+DISPLAY=false
 MODE=rootless
 
 print_help() {
     cat <<EOF
-Usage: $0 [-f] [-o] [-p] [-h] command...
+Usage: $0 [-f] [-d] [-o] [-p] [-h] command...
 
 Enter the Fil-C development container for this checkout.
 
@@ -39,7 +41,9 @@ By default, if a container is already running for this checkout, this script
 will attach to it. Otherwise, it will create a new container instance.
 
 Options:
-  -f    Force creation of a new container instance (don't attach to existing)
+  -f    Force creation of a new container instance (don't attach to existing).
+  -d    If a container instance is running, show the instance ID (suitable for
+        `podman exec -it` command).
   -o    Use container suitable for /opt/fil development.
   -p    Use container suitable for building Pizlix.
   -n    Use a normal rootless container (this is the default).
@@ -65,10 +69,13 @@ EOF
     exit 0
 }
 
-while getopts "fpoh" opt; do
+while getopts "fpohdn" opt; do
     case $opt in
         f)
             FORCE_NEW=true
+            ;;
+        d)
+            DISPLAY=true
             ;;
         o)
             MODE=optfil
@@ -88,6 +95,11 @@ while getopts "fpoh" opt; do
             ;;
     esac
 done
+
+if [ "$FORCE_NEW" = true ] && [ "$DISPLAY" = true ]; then
+    echo "Cannot use -f and -d together."
+    exit 1
+fi
 
 shift $((OPTIND - 1))
 
@@ -180,15 +192,29 @@ if [ "$FORCE_NEW" = false ]; then
 
         if [ "$CONTAINER_COUNT" -eq 1 ]; then
             CONTAINER_ID="$CONTAINERS"
-            echo "Attaching to existing Fil-C container ${CONTAINER_ID}..."
+            if [ "$DISPLAY" = false ]; then
+                echo "Attaching to existing Fil-C container ${CONTAINER_ID}..."
+            fi
         else
-            echo "Found ${CONTAINER_COUNT} running Fil-C containers for this checkout:"
-            echo "$CONTAINERS"
-            echo "Attaching to the first one..."
+            if [ "$DISPLAY" = false ]; then
+                echo "Found ${CONTAINER_COUNT} running Fil-C containers for this checkout:"
+                echo "$CONTAINERS"
+                echo "Attaching to the first one..."
+            fi
             CONTAINER_ID=$(echo "$CONTAINERS" | head -n 1)
         fi
 
+        if [ "$DISPLAY" = true ]; then
+            echo "$CONTAINER_ID"
+            exit 0
+        fi
+        
         exec podman exec -it "$CONTAINER_ID" /bin/bash
+    fi
+
+    if [ "$DISPLAY" = true ]; then
+        echo "No container running."
+        exit 1
     fi
 fi
 
