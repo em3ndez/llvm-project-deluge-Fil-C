@@ -80,9 +80,7 @@ class UnscaledCycleClock {
 #if defined(__x86_64__)
 
 inline int64_t UnscaledCycleClock::Now() {
-  uint64_t low, high;
-  __asm__ volatile("rdtsc" : "=a"(low), "=d"(high));
-  return static_cast<int64_t>((high << 32) | low);
+  return (int64_t)__rdtsc();
 }
 
 #elif defined(__aarch64__)
