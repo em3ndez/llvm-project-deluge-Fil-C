@@ -640,6 +640,10 @@ long zsys_syscall(long n, ...)
         callee = zsys_memfd_create;
         break;
 
+    case 1 /* SYS_write */:
+        callee = zsys_write;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:

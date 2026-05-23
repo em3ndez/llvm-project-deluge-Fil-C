@@ -214,7 +214,7 @@ int main(int argc, char** argv)
 
     int dupfd = dup(fds[0]);
     ZASSERT(dupfd > 2);
-    ZASSERT(write(fds[1], "world", strlen("world") + 1) == strlen("world") + 1);
+    ZASSERT(syscall(SYS_write, fds[1], "world", strlen("world") + 1) == strlen("world") + 1);
     ZASSERT(read(dupfd, buf, strlen("world") + 1) == strlen("world") + 1);
     ZASSERT(!strcmp(buf, "world"));
     

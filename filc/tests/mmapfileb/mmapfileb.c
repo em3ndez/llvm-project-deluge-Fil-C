@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <fcntl.h>
-#include <sys/syscall.h>
+#include <pizlonated_syscalls.h>
 
 #define ASSERT(exp) do { \
     if ((exp)) \
@@ -23,7 +23,7 @@ int main()
 
     ASSERT(!ftruncate(fd, 16384));
     
-    void* memory = syscall(SYS_mmap, NULL, 16384, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
+    void* memory = zsys_mmap(NULL, 16384, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
     ASSERT(memory);
     ASSERT(memory != (void*)(intptr_t)-1);
 
