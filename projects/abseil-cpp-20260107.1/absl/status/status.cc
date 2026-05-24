@@ -113,7 +113,7 @@ Status::Status(absl::StatusCode code, absl::string_view msg)
 }
 
 status_internal::StatusRep* absl_nonnull Status::PrepareToModify(
-    uintptr_t rep) {
+    void* rep) {
   if (IsInlined(rep)) {
     return new status_internal::StatusRep(InlinedRepToCode(rep),
                                           absl::string_view(), nullptr);
@@ -121,7 +121,7 @@ status_internal::StatusRep* absl_nonnull Status::PrepareToModify(
   return RepToPointer(rep)->CloneAndUnref();
 }
 
-std::string Status::ToStringSlow(uintptr_t rep, StatusToStringMode mode) {
+std::string Status::ToStringSlow(void* rep, StatusToStringMode mode) {
   if (IsInlined(rep)) {
     return absl::StrCat(absl::StatusCodeToString(InlinedRepToCode(rep)), ": ");
   }

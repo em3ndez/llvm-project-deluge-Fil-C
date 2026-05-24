@@ -67,6 +67,7 @@
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
+#include <stdfil.h>
 
 namespace absl {
 ABSL_NAMESPACE_BEGIN
@@ -621,15 +622,15 @@ class ABSL_ATTRIBUTE_TRIVIAL_ABI Status final {
   explicit Status(absl::StatusCode code);
 
   // Underlying constructor for status from a rep_.
-  explicit Status(uintptr_t rep) : rep_(rep) {}
+  explicit Status(void* rep) : rep_(rep) {}
 
-  static void Ref(uintptr_t rep);
-  static void Unref(uintptr_t rep);
+  static void Ref(void* rep);
+  static void Unref(void* rep);
 
   // REQUIRES: !ok()
   // Ensures rep is not inlined or shared with any other Status.
   static status_internal::StatusRep* absl_nonnull PrepareToModify(
-      uintptr_t rep);
+      void* rep);
 
   // MSVC 14.0 limitation requires the const.
   static constexpr const char kMovedFromString[] =
@@ -640,25 +641,25 @@ class ABSL_ATTRIBUTE_TRIVIAL_ABI Status final {
 
   // Returns whether rep contains an inlined representation.
   // See rep_ for details.
-  static constexpr bool IsInlined(uintptr_t rep);
+  static constexpr bool IsInlined(void* rep);
 
   // Indicates whether this Status was the rhs of a move operation. See rep_
   // for details.
-  static constexpr bool IsMovedFrom(uintptr_t rep);
-  static constexpr uintptr_t MovedFromRep();
+  static constexpr bool IsMovedFrom(void* rep);
+  static constexpr void* MovedFromRep();
 
-  // Convert between error::Code and the inlined uintptr_t representation used
+  // Convert between error::Code and the inlined void* representation used
   // by rep_. See rep_ for details.
-  static constexpr uintptr_t CodeToInlinedRep(absl::StatusCode code);
-  static constexpr absl::StatusCode InlinedRepToCode(uintptr_t rep);
+  static constexpr void* CodeToInlinedRep(absl::StatusCode code);
+  static constexpr absl::StatusCode InlinedRepToCode(void* rep);
 
-  // Converts between StatusRep* and the external uintptr_t representation used
+  // Converts between StatusRep* and the external void* representation used
   // by rep_. See rep_ for details.
-  static uintptr_t PointerToRep(status_internal::StatusRep* absl_nonnull r);
+  static void* PointerToRep(status_internal::StatusRep* absl_nonnull r);
   static const status_internal::StatusRep* absl_nonnull RepToPointer(
-      uintptr_t r);
+      void* r);
 
-  static std::string ToStringSlow(uintptr_t rep, StatusToStringMode mode);
+  static std::string ToStringSlow(void* rep, StatusToStringMode mode);
 
   // Status supports two different representations.
   //  - When the low bit is set it is an inlined representation.
@@ -668,7 +669,7 @@ class ABSL_ATTRIBUTE_TRIVIAL_ABI Status final {
   //  - When the low bit is off it is an external representation.
   //    In this case all the data comes from a heap allocated Rep object.
   //    rep_ is a status_internal::StatusRep* pointer to that structure.
-  uintptr_t rep_;
+  void* rep_;
 
   friend class status_internal::StatusRep;
 };
@@ -781,7 +782,7 @@ inline Status::Status(absl::StatusCode code) : Status(CodeToInlinedRep(code)) {}
 inline Status::Status(const Status& x) : Status(x.rep_) { Ref(rep_); }
 
 inline Status& Status::operator=(const Status& x) {
-  uintptr_t old_rep = rep_;
+  void* old_rep = rep_;
   if (x.rep_ != old_rep) {
     Ref(x.rep_);
     rep_ = x.rep_;
@@ -795,7 +796,7 @@ inline Status::Status(Status&& x) noexcept : Status(x.rep_) {
 }
 
 inline Status& Status::operator=(Status&& x) noexcept {
-  uintptr_t old_rep = rep_;
+  void* old_rep = rep_;
   if (x.rep_ != old_rep) {
     rep_ = x.rep_;
     x.rep_ = MovedFromRep();
@@ -890,39 +891,39 @@ inline void Status::ForEachPayload(
   RepToPointer(rep_)->ForEachPayload(visitor);
 }
 
-constexpr bool Status::IsInlined(uintptr_t rep) { return (rep & 1) != 0; }
+constexpr bool Status::IsInlined(void* rep) { return (reinterpret_cast<uintptr_t>(rep) & 1) != 0; }
 
-constexpr bool Status::IsMovedFrom(uintptr_t rep) { return (rep & 2) != 0; }
+constexpr bool Status::IsMovedFrom(void* rep) { return (reinterpret_cast<uintptr_t>(rep) & 2) != 0; }
 
-constexpr uintptr_t Status::CodeToInlinedRep(absl::StatusCode code) {
-  return (static_cast<uintptr_t>(code) << 2) + 1;
+constexpr void* Status::CodeToInlinedRep(absl::StatusCode code) {
+  return reinterpret_cast<void*>((static_cast<uintptr_t>(code) << 2) + 1);
 }
 
-constexpr absl::StatusCode Status::InlinedRepToCode(uintptr_t rep) {
+constexpr absl::StatusCode Status::InlinedRepToCode(void* rep) {
   ABSL_ASSERT(IsInlined(rep));
-  return static_cast<absl::StatusCode>(rep >> 2);
+  return static_cast<absl::StatusCode>(reinterpret_cast<uintptr_t>(rep) >> 2);
 }
 
-constexpr uintptr_t Status::MovedFromRep() {
-  return CodeToInlinedRep(absl::StatusCode::kInternal) | 2;
+constexpr void* Status::MovedFromRep() {
+  return zorptr(CodeToInlinedRep(absl::StatusCode::kInternal), 2);
 }
 
 inline const status_internal::StatusRep* absl_nonnull Status::RepToPointer(
-    uintptr_t rep) {
+    void* rep) {
   assert(!IsInlined(rep));
-  return reinterpret_cast<const status_internal::StatusRep*>(rep);
+  return static_cast<const status_internal::StatusRep*>(rep);
 }
 
-inline uintptr_t Status::PointerToRep(
+inline void* Status::PointerToRep(
     status_internal::StatusRep* absl_nonnull rep) {
-  return reinterpret_cast<uintptr_t>(rep);
+  return static_cast<void*>(rep);
 }
 
-inline void Status::Ref(uintptr_t rep) {
+inline void Status::Ref(void* rep) {
   if (!IsInlined(rep)) RepToPointer(rep)->Ref();
 }
 
-inline void Status::Unref(uintptr_t rep) {
+inline void Status::Unref(void* rep) {
   if (!IsInlined(rep)) RepToPointer(rep)->Unref();
 }
 

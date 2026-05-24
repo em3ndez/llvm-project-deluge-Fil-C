@@ -35,6 +35,8 @@
 #include "absl/random/internal/platform.h"
 #include "absl/types/optional.h"  // IWYU pragma: keep
 
+#include <cpuid.h>
+
 #if !defined(__UCLIBC__) && defined(__GLIBC__) && \
     (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 16))
 #define ABSL_HAVE_GETAUXVAL
@@ -63,10 +65,11 @@ extern void __cpuid(int[4], int);
 #else
 // MSVC-equivalent __cpuid intrinsic function.
 static void __cpuid(int cpu_info[4], int info_type) {
-  __asm__ volatile("cpuid \n\t"
-                   : "=a"(cpu_info[0]), "=b"(cpu_info[1]), "=c"(cpu_info[2]),
-                     "=d"(cpu_info[3])
-                   : "a"(info_type), "c"(0));
+  __get_cpuid(info_type,
+              reinterpret_cast<unsigned int*>(cpu_info + 0),
+              reinterpret_cast<unsigned int*>(cpu_info + 1),
+              reinterpret_cast<unsigned int*>(cpu_info + 2),
+              reinterpret_cast<unsigned int*>(cpu_info + 3));
 }
 #endif
 #endif  // ABSL_INTERNAL_USE_X86_CPUID

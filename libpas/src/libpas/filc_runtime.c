@@ -12795,6 +12795,13 @@ int filc_native_zsys_clock_adjtime(filc_thread* my_thread, int clock_id, filc_pt
     return FILC_SYSCALL(my_thread, clock_adjtime(clock_id, (struct timex*)filc_ptr_ptr(buf_ptr)));
 }
 
+void filc_native_zsys_abort(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    abort();
+    PAS_ASSERT(!"Should not get here");
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;

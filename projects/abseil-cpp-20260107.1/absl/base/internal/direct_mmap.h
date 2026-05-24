@@ -38,6 +38,7 @@
 #include <cerrno>
 #include <cstdarg>
 #include <cstdint>
+#include <pizlonated_syscalls.h>
 
 #ifdef __mips__
 // Include definitions of the ABI currently in use.
@@ -120,12 +121,7 @@ inline void* DirectMmap(void* start, size_t length, int prot, int flags, int fd,
 // 32 bits, and gcc will dump ugly warnings about casting from a pointer
 // to an integer of a different size. We also need to make sure __off64_t
 // isn't truncated to 32-bits under x32.
-#define MMAP_SYSCALL_ARG(x) ((uint64_t)(uintptr_t)(x))
-  return reinterpret_cast<void*>(
-      syscall(SYS_mmap, MMAP_SYSCALL_ARG(start), MMAP_SYSCALL_ARG(length),
-              MMAP_SYSCALL_ARG(prot), MMAP_SYSCALL_ARG(flags),
-              MMAP_SYSCALL_ARG(fd), static_cast<uint64_t>(offset)));
-#undef MMAP_SYSCALL_ARG
+  return zsys_mmap(start, length, prot, flags, fd, offset);
 #else  // Remaining 64-bit aritectures.
   static_assert(sizeof(unsigned long) == 8, "Platform is not 64-bit");
   return reinterpret_cast<void*>(

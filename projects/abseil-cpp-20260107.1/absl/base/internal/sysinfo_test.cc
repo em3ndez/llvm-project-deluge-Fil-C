@@ -69,7 +69,7 @@ TEST(SysinfoTest, GetTID) {
   }
 }
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(__FILC__)
 TEST(SysinfoTest, LinuxGetTID) {
   // On Linux, for the main thread, GetTID()==getpid() is guaranteed by the API.
   EXPECT_EQ(GetTID(), getpid());
