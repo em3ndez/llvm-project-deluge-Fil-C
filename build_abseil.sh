@@ -32,3 +32,4 @@ cd projects/abseil-cpp-20260107.1
 rm -rf build
 CC=$PWD/../../build/bin/clang CXX=$PWD/../../build/bin/clang++ cmake -S . -B build -DABSL_BUILD_TESTING=ON -DABSL_LOCAL_GOOGLETEST_DIR=$PWD/../googletest -DCMAKE_BUILD_TYPE=RelWithDebInfo
 (cd build && make -j $NCPU)
+ctest -j $NCPU --test-dir build
