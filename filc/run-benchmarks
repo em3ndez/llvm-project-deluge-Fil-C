@@ -424,13 +424,6 @@ $benchmarks << Benchmark.new(
     ])
 
 $benchmarks << Benchmark.new(
-    "bin/zstd",
-    "-d < benchmarkData/libcrypto.3.dylib.zst > benchmarkOutput/libcrypto.3.dylib",
-    [
-        "diff -n benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
-    ])
-
-$benchmarks << Benchmark.new(
     "bin/dash",
     "benchmarkData/richards.sh",
     [])
@@ -450,13 +443,6 @@ $benchmarks << Benchmark.new(
     "< benchmarkData/libcrypto.3.dylib > benchmarkOutput/libcrypto.3.dylib.lz4",
     [
         "diff -n benchmarkOutput/libcrypto.3.dylib.lz4 benchmarkData/libcrypto.3.dylib.lz4"
-    ])
-
-$benchmarks << Benchmark.new(
-    "bin/lz4",
-    "-d < benchmarkData/libcrypto.3.dylib.lz4 > benchmarkOutput/libcrypto.3.dylib",
-    [
-        "diff -n benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
     ])
 
 $benchmarks << Benchmark.new(
