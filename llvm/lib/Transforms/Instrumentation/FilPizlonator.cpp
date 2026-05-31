@@ -4104,6 +4104,70 @@ class Pizlonator {
         IAD.Mask = II->getArgOperand(2);
         IAD.Alignment = 1;
         break;
+      case Intrinsic::x86_avx2_maskload_d:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int32Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_q:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int64Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_d_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int32Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_q_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int64Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_d:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_q:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int64Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_d_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_q_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int64Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
       case Intrinsic::x86_sse3_ldu_dq:
         IAD.AK = AccessKind::Read;
         IAD.T = cast<FixedVectorType>(II->getType());
