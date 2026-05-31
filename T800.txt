@@ -1,0 +1,24 @@
+You're in a container that has a Fil-C git checkout. See README.md for a summary of Fil-C.
+
+The development flow is:
+
+- `./build_base.sh` builds Fil-C. This builds the compiler (clang/ and llvm/; most importantly llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp), yolo libc (projects/yolomusl/), runtime (libpas/; most importantly libpas/src/libpas/filc_* and libpas/src/libpas/fugc*; but also filc/src/*), user libc (projects/usermusl/), and libcxx/libcxxabi. This can take a while. Half an hour is not unheard of.
+
+- `filc/run-tests` runs the tests. The tests are in `filc/tests/`. This can also take a while. Half an hour is not unheard of. There are many tests and they are super comprehensive! You can run `filc/run-tests -t <testname>` to run exactly one test. You can run `filc/run-tests -f <filter>` to run tests that match a filter.
+
+- `./build_all_fast.sh` builds Fil-C and runs tests. This can take a while; maybe up to an hour. This is what you usually run when you make a change and want to see if it works. After you complete any change, make sure you run `./build_all_fast.sh`! You're never done until you confirm that this runs to completion! Reason: this does a full build (equivalent to `./build_base.sh`) and a full test pass (equivalent to `filc/run-tests`).
+
+- There are other build scripts as well, but many of them will not run in your container environment, or are just not interesting for your workflow - so you should mostly ignore them. It might be worth your time to read how `build_base.sh` invokes other scripts and what those scripts do. Sometimes, if you know you only changed the compiler, you can just run `./build_clang.sh` to rebuild the compiler. Or, if you know you only changed the runtime, you can just run `./build_runtime.sh`.
+
+Once you have a build, you can run `build/bin/clang` or `build/bin/clang++` to build and link programs. For example, `build/bin/clang -o hello hello.c` is enough to build a program. The compiler is smart enough to find all of the libraries it needs.
+
+The compiler's build (as well as the build of some of the compiler runtime bits) lives in `build/`. The Fil-C runtime's build and the libc builds live in `pizfix/`.
+
+Fil-C is fanatically compatible with C/C++ and completely memory safe. There's no such thing as "sometimes an error didn't get caught"; every behavior that is unsafe in C/C++ is either given safe semantics or results in a panic.
+
+This requires breaking ABI compatibility. Hence, Fil-C creates a userland that includes its own libc - which is really just musl with some modifications. Fil-C also has its own build of libcxx and libcxxabi. To use any other library, you need to build it with Fil-C. (It's also possible to use Fil-C with glibc, but let's not worry about that for now.)
+
+The Fil-C runtime is mostly written in Yolo-C (what we call regular C) and also relies on libc (though mostly just for syscalls). Hence why a Fil-C build includes a libc sandwich: a user libc built with Fil-C that sits on top of the Fil-C runtime, which then sits on top of a yolo libc built with Yolo-C.
+
+Remember: if you're done making a Fil-C change, make sure to run `./build_all_fast.sh`! If this does not pass, then you're not done.
+
