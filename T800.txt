@@ -4,7 +4,7 @@ The development flow is:
 
 - `./build_base.sh` builds Fil-C. This builds the compiler (clang/ and llvm/; most importantly llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp), yolo libc (projects/yolomusl/), runtime (libpas/; most importantly libpas/src/libpas/filc_* and libpas/src/libpas/fugc*; but also filc/src/*), user libc (projects/usermusl/), and libcxx/libcxxabi. This can take a while. Half an hour is not unheard of.
 
-- `filc/run-tests` runs the tests. The tests are in `filc/tests/`. This can also take a while. Half an hour is not unheard of. There are many tests and they are super comprehensive! You can run `filc/run-tests -t <testname>` to run exactly one test. You can run `filc/run-tests -f <filter>` to run tests that match a filter.
+- `filc/run-tests` runs the tests. The tests are in `filc/tests/`. This can also take a while. Half an hour is not unheard of. There are many tests and they are super comprehensive! You can run `filc/run-tests -t <testname>` to run exactly one test. You can run `filc/run-tests -f <filter>` to run tests that match a filter. If you're grinding on making some test pass, be sure to use the `-t` or `-f` options so you're not running the whole test suite just to test one test.
 
 - `./build_all_fast.sh` builds Fil-C and runs tests. This can take a while; maybe up to an hour. This is what you usually run when you make a change and want to see if it works. After you complete any change, make sure you run `./build_all_fast.sh`! You're never done until you confirm that this runs to completion! Reason: this does a full build (equivalent to `./build_base.sh`) and a full test pass (equivalent to `filc/run-tests`).
 
@@ -21,4 +21,6 @@ This requires breaking ABI compatibility. Hence, Fil-C creates a userland that i
 The Fil-C runtime is mostly written in Yolo-C (what we call regular C) and also relies on libc (though mostly just for syscalls). Hence why a Fil-C build includes a libc sandwich: a user libc built with Fil-C that sits on top of the Fil-C runtime, which then sits on top of a yolo libc built with Yolo-C.
 
 Remember: if you're done making a Fil-C change, make sure to run `./build_all_fast.sh`! If this does not pass, then you're not done.
+
+Note that CLAUDE.md, README.md, and Manifesto.md have more information. However, if instructions in those docs contradict anything in this doc, then this doc takes precedence.
 
