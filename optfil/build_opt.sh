@@ -280,6 +280,15 @@ cd ..
 rm -rf pizlonated-zstd
 hash -r
 
+tar -xf $FILCSRC/projects/xxHash-0.8.3/pizlonated-xxHash.tar.gz
+cd pizlonated-xxHash
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ make -j `nproc` prefix=/opt/fil
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ make -j `nproc` prefix=/opt/fil install
+rm -v /opt/fil/lib/libxxhash.a
+cd ..
+rm -rf pizlonated-xxHash
+hash -r
+
 tar -xf $FILCSRC/projects/attr-2.5.2/pizlonated-attr.tar.gz
 cd pizlonated-attr
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure \
