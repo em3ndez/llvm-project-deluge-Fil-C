@@ -1,10 +1,11 @@
 # Running Fil-C OpenSSH as Your System sshd
 
 This document explains how to run the Fil-C build of OpenSSH at
-`/opt/fil/sbin/sshd` instead of what comes on your system. Most of the work
-to make this possible should have already happened if you ran `./setup.sh`.
-This document explains what that script did as well as some final steps you
-will have to take manually.
+`/opt/fil/sbin/sshd` instead of what comes on your system. On most Linux
+systems, simply running `./setup.sh` will give you the option of making the
+Fil-C OpenSSH service run by default instead of the memory-unsafe one that
+your distribution shipped with. This document explains what that script did
+as well as how to replicate its steps manually.
 
 Fil-C is open source software provided AS IS, without warranty of any kind.
 Nothing in this document is a guarantee of security or fitness for any
@@ -44,9 +45,9 @@ Rocky, Fedora, Debian, and Omarchy.
 ## What `setup.sh` already did for you
 
 When you ran `./setup.sh`, the installer did a fair amount of work to make
-`/opt/fil/sbin/sshd` ready to run as a system service. It is worth
-understanding what was actually changed on your system so you know what is
-already taken care of and what is not.
+`/opt/fil/sbin/sshd` run as a system service. It is worth understanding what
+was actually changed on your system. If the setup script reported errors,
+this document will try to help you fix those errors yourself.
 
 If `/etc/ssh` did not exist, the installer created it. If the standard
 configuration files (`ssh_config`, `sshd_config`, and `moduli`) were
@@ -65,6 +66,8 @@ convention, the installer changed it to mode `0600`, which is the
 convention that the Fil-C `/opt/fil/sbin/sshd` expects. Keys with
 stranger permission patterns were left alone and reported as warnings,
 since the installer cannot know whether those permissions are intentional.
+Note that even on Red Hat systems that use `0640` permissions by default,
+changing them to `0600` does not break the stock sshd.
 
 The `sshd` privilege separation user and group were created if they were
 missing. The user is created with `/opt/fil/var/lib/sshd` as its home
@@ -74,12 +77,14 @@ if it does not exist, since sshd's privilege separation can fail at
 runtime if that directory is missing. If the user or group already
 existed, the installer did not touch it.
 
-Unless you used the `-u --fill-setup` options, `./setup.sh` would have
+Unless you used the `-u --full-setup` options, `./setup.sh` would have
 prompted you before making any changes to your system's SSH configuration.
 If you did not see any prompt, this means that the script determined that
-your existing setup was already sufficient.
+your existing setup was already sufficient. If you used `-u` without
+`--full-setup`, then the installer would not have done anything to your
+SSH configuration.
 
-Finally, the installer attempted to apply the right SELinux label to
+The installer attempted to apply the right SELinux label to
 `/opt/fil/sbin/sshd`. The logic is conservative. If SELinux is not active
 in the kernel, the installer does nothing. If SELinux is active but the
 `chcon` tool is not installed, the installer warns you and asks you to
@@ -93,76 +98,172 @@ and prints detailed instructions for what to try by hand. This is one of
 the cases where you may need to do the SELinux labeling yourself before
 the binary should work under systemd.
 
-## Switching systemd over to `/opt/fil/sbin/sshd`
+Finally, if systemd is running on your machine and the earlier SELinux
+and SSH configuration steps completed cleanly, the installer wired
+`/opt/fil/sbin/sshd` into systemd as your system sshd. Unless you used
+`-u --full-setup`, you should have received a prompt about systemd
+configuration changes. If you used `-u` without `--full-setup`, then no
+systemd changes were made.
+
+The exact behavior depends on what was already on the machine. If there
+was a stock `sshd.service` or `ssh.service` from your distribution, the
+installer wrote a drop-in at `/etc/systemd/system/<unit>.d/fil-c.conf`
+that redirects each `ExecStartPre`, `ExecStart`, and `ExecReload` line
+mentioning `/usr/sbin/sshd` to `/opt/fil/sbin/sshd`, leaving every other
+directive (`EnvironmentFile`, `KillMode`, hardening flags, sandboxing
+directives, and so on) untouched. The installer then ran `systemctl
+daemon-reload`, restarted the service, and verified that the running
+unit was using `/opt/fil/sbin/sshd`. If neither `sshd.service` nor
+`ssh.service` existed at all, the installer wrote a minimal
+`/etc/systemd/system/sshd.service` that runs `/opt/fil/sbin/sshd -D`,
+enabled it to start on boot, and started it. In both cases the installer
+prompted you before doing any of this unless you used `--unattended
+--full-setup`, and it skipped the step entirely if SELinux labeling or
+SSH configuration had not completed cleanly. You can re-attempt the
+systemd setup at any time by running `./setup.sh --ssh-setup`, which is
+idempotent: it detects whether the systemd unit is already pointing at
+`/opt/fil/sbin/sshd` and, if so, just restarts the service if it is
+running rather than rewriting anything.
+
+## Switching systemd over to `/opt/fil/sbin/sshd` by hand
+
+The rest of this section describes the systemd setup procedure manually,
+for readers who want to understand what `./setup.sh` did, who want to do
+the setup by hand instead of letting the installer do it, or who need to
+recover from a situation where the installer's automatic attempt did not
+work. If `./setup.sh` already wired sshd into systemd successfully and
+you can log in through `/opt/fil/sbin/sshd`, you do not need to do any
+of this.
 
 Before you change anything, understand the lockout risk. If you point
-systemd at a misconfigured sshd, the service may fail to start, or it may
-start but refuse logins. On a remote machine without console or
+systemd at a misconfigured sshd, the service may fail to start, or it
+may start but refuse logins. On a remote machine without console or
 out-of-band access, that situation can leave you unable to get back in.
 Before starting this procedure, make sure you have a way to recover if
 sshd stops accepting logins. That can be a serial or KVM console, a
-hypervisor console, a separate management interface, physical access, or
-at minimum a second already-authenticated SSH session that you keep open
-throughout the switchover. If none of these is available, do not do this
-on a production machine. Try it on a disposable VM first.
+hypervisor console, a separate management interface, physical access,
+or at minimum a second already-authenticated SSH session that you keep
+open throughout the switchover. If none of these is available, do not
+do this on a production machine. Try it on a disposable VM first.
 
-To run the Fil-C build as your actual system sshd, you need to point your
-existing systemd unit at the new binary, restart the service, and confirm
-that you can still log in before you log out.
+To run the Fil-C build as your actual system sshd, you need to point
+your existing systemd unit at the new binary, restart the service, and
+confirm that you can still log in before you log out. The procedure
+varies slightly by distribution because their stock sshd unit files
+differ, and that variation is exactly what makes a one-size-fits-all
+override file dangerous. Do not paste a generic override from somewhere
+on the internet. Read your own distribution's unit first and write the
+override from that.
 
-The cleanest way to do this without losing your distribution's unit file
-is to drop a systemd override. On most distributions the unit is called
-`sshd.service` (Red Hat, Rocky, Fedora, and CentOS) or `ssh.service`
-(Debian and Ubuntu). Find out which one by running `systemctl status ssh`
-or `systemctl status sshd`. Before writing the override, run `systemctl
-cat sshd.service` (or `ssh.service`) and read through the upstream unit.
-The override below replaces the `ExecStartPre`, `ExecStart`, and
-`ExecReload` directives. If your distribution's unit relies on additional
-hardening directives, environment files, socket activation units, or
-other settings layered on top of `ExecStart`, those will continue to
-apply, but you should sanity-check that the override below is still
-appropriate for the unit your distribution ships. Distributions update
-their sshd units from time to time, so it is worth rechecking the
-override after major distribution upgrades.
+On most distributions the unit is called `sshd.service` (Red Hat, Rocky,
+Fedora, and CentOS) or `ssh.service` (Debian and Ubuntu). Find out which
+one your system uses by running `systemctl status ssh` or `systemctl
+status sshd`. Then read the current unit with `systemctl cat`:
 
-Run `systemctl edit sshd.service` (or `ssh.service`), which will open an
-empty override file in your editor. Put the following into the override
-and save it.
+```bash
+systemctl cat sshd.service   # or ssh.service
+```
+
+Look at the `[Service]` section. Some of its `ExecStartPre=`, `ExecStart=`,
+and `ExecReload=` lines will mention `/usr/sbin/sshd`. The override needs
+to redirect each of those lines at `/opt/fil/sbin/sshd`, and leave every
+other directive (`EnvironmentFile=`, `Type=`, `KillMode=`, `Restart=`,
+hardening flags, and so on) untouched so that the distribution's intent
+is preserved. The way you redirect an `ExecStart`-family line in a
+drop-in is to write the line twice: first the bare key with an empty
+value to clear the inherited setting, and then the new value with
+`/usr/sbin/sshd` replaced by `/opt/fil/sbin/sshd`. Lines whose value does
+not mention `/usr/sbin/sshd` (such as
+`ExecReload=/bin/kill -HUP $MAINPID`) are left alone.
+
+A worked example for an Ubuntu `ssh.service` whose relevant lines look
+like this:
+
+```ini
+ExecStartPre=/usr/sbin/sshd -t
+ExecStart=/usr/sbin/sshd -D $SSHD_OPTS
+ExecReload=/usr/sbin/sshd -t
+ExecReload=/bin/kill -HUP $MAINPID
+```
+
+The override should look like this:
 
 ```ini
 [Service]
 ExecStartPre=
-ExecStart=
-ExecReload=
 ExecStartPre=/opt/fil/sbin/sshd -t
+ExecStart=
 ExecStart=/opt/fil/sbin/sshd -D $SSHD_OPTS
+ExecReload=
 ExecReload=/opt/fil/sbin/sshd -t
+```
+
+The `ExecReload=/bin/kill ...` line is not in the override because the
+original does not mention `/usr/sbin/sshd`. Both the original and any
+hardening directives, environment files, and socket bindings stay in
+effect through the layered distribution unit.
+
+A worked example for a Rocky `sshd.service` whose relevant lines look
+like this:
+
+```ini
+ExecStart=/usr/sbin/sshd -D $OPTIONS
 ExecReload=/bin/kill -HUP $MAINPID
 ```
 
-The empty assignments are important. They clear the values inherited from
-the distribution unit before the new values are appended. Without them you
-would end up with both binaries listed and systemd would refuse to start
-the service.
+The override is correspondingly shorter:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/opt/fil/sbin/sshd -D $OPTIONS
+```
+
+Note that the Rocky example uses `$OPTIONS` rather than `$SSHD_OPTS`,
+because that is what the Rocky unit's `EnvironmentFile=` populates. Do
+not change the variable name in the override. The right value to use is
+whatever the original unit used.
+
+You can install an override either by running `systemctl edit
+sshd.service` (or `ssh.service`) and editing the file the editor opens,
+or by writing the drop-in directly to
+`/etc/systemd/system/sshd.service.d/fil-c.conf` (substituting
+`ssh.service.d` on Debian/Ubuntu). The `systemctl edit` approach is
+slightly safer because it asks systemd to reload itself for you on exit.
+Different versions of systemd populate the file differently. Some open
+it empty, others open it with the current unit content as commented-out
+lines for reference. Either way, the content above is what should end up
+in it.
+
+The empty `ExecStart=` line is important. It clears the value inherited
+from the distribution unit before the new value is appended. Without it
+you would end up with both binaries listed and systemd would refuse to
+start the service.
 
 Before restarting the service, validate the configuration with
 `/opt/fil/sbin/sshd -t`. This catches typos in `sshd_config` and missing
-host keys without taking the service down. It does not catch every runtime
-failure: PAM stack mismatches, SELinux denials, AppArmor profiles, systemd
-sandboxing directives inherited from the distribution unit, seccomp
-restrictions, capability mismatches, and port conflicts will only show up
-when sshd actually tries to start. A clean `-t` is a necessary check, not
-a sufficient one.
+host keys without taking the service down. It does not catch every
+runtime failure. PAM stack mismatches, SELinux denials, AppArmor
+profiles, systemd sandboxing directives inherited from the distribution
+unit, seccomp restrictions, capability mismatches, and port conflicts
+will only show up when sshd actually tries to start. A clean `-t` is a
+necessary check, not a sufficient one.
 
-Keep one root SSH session open while you do the switchover. Open a second
-SSH session from somewhere else to confirm that logins still work before
-you close the first session. If something goes wrong, you can usually
-recover from the still-open session by running `systemctl revert
-sshd.service` (or `ssh.service`) and restarting the service. Note that
-revert only removes the override you added. It does not undo the host
-keys, the SELinux labels, the `sshd` user, or any other changes that
-`setup.sh` made earlier. If you need to fully unwind those, you will have
-to do it manually.
+Keep one root SSH session open while you do the switchover. Open a
+second SSH session from somewhere else to confirm that logins still
+work before you close the first session. Under normal conditions
+restarting `sshd.service` does not interrupt existing SSH sessions,
+because the distribution units use `KillMode=process` (or its
+equivalent), which kills only the main listener and leaves
+already-connected per-session children alone. That said, this is a
+configuration choice in the unit, not a guarantee of the protocol, so
+you should still keep a second session open during the switchover. If
+something goes wrong, you can usually recover from the still-open
+session by running `systemctl revert sshd.service` (or `ssh.service`)
+and restarting the service. Note that revert only removes the override
+you added. It does not undo the host keys, the SELinux labels, the
+`sshd` user, or any other changes that `setup.sh` made earlier. If you
+need to fully unwind those, you will have to do it manually.
 
 Reload systemd and restart the service:
 

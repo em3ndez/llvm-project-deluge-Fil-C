@@ -29,7 +29,7 @@ set -e
 VERSION="0.679"
 
 usage() {
-    echo "Usage: setup.sh [OPTIONS]"
+    echo "Usage: ./setup.sh [OPTIONS]"
     echo
     echo "Install the Fil-C /opt/fil distribution version $VERSION."
     echo
@@ -54,16 +54,23 @@ usage() {
     echo "      --full-setup    Used with -u/--unattended: also accept all optional system"
     echo "                      configuration without prompting. Requires --unattended."
     echo "                      WARNING: This may modify your system outside of /opt/fil,"
-    echo "                      including creating users/groups, writing to /etc/ssh, and"
-    echo "                      changing file permissions. Use with care."
+    echo "                      including creating users/groups, writing to /etc/ssh,"
+    echo "                      changing file permissions, and editing systemd"
+    echo "                      configuration. Use with care."
+    echo "      --ssh-setup     Re-run only the SSH-related parts of setup against an"
+    echo "                      existing /opt/fil installation. Does not extract the"
+    echo "                      tarball. Useful for retrying SSH/SELinux/systemd setup"
+    echo "                      after fixing a prerequisite. Idempotent: skips steps"
+    echo "                      that are already done."
     exit 0
 }
 
 UNATTENDED=false
 FULL_SETUP=false
+SSH_SETUP_ONLY=false
 
-OPTS=$(getopt -o hu -l help,unattended,full-setup -n setup.sh -- "$@") || {
-    echo "Try 'setup.sh --help' for more information."
+OPTS=$(getopt -o hu -l help,unattended,full-setup,ssh-setup -n './setup.sh' -- "$@") || {
+    echo "Try './setup.sh --help' for more information."
     exit 1
 }
 eval set -- "$OPTS"
@@ -81,13 +88,17 @@ while true; do
             FULL_SETUP=true
             shift
             ;;
+        --ssh-setup)
+            SSH_SETUP_ONLY=true
+            shift
+            ;;
         --)
             shift
             break
             ;;
         *)
             echo "ERROR: Unexpected option: $1"
-            echo "Try 'setup.sh --help' for more information."
+            echo "Try './setup.sh --help' for more information."
             exit 1
             ;;
     esac
@@ -95,81 +106,113 @@ done
 
 if [ "$FULL_SETUP" = true ] && [ "$UNATTENDED" = false ]; then
     echo "ERROR: --full-setup requires -u/--unattended."
-    echo "Try 'setup.sh --help' for more information."
+    echo "Try './setup.sh --help' for more information."
     exit 1
 fi
 
 echo "================================================================================"
-heading="Fil-C $VERSION /opt/fil Distribution"
+if [ "$SSH_SETUP_ONLY" = true ]; then
+    heading="Fil-C $VERSION SSH Setup (Re-run)"
+else
+    heading="Fil-C $VERSION /opt/fil Distribution"
+fi
 printf "%*s%s\n" $(((80 - ${#heading}) / 2)) "" "$heading"
 echo "================================================================================"
 echo
-echo "This distribution includes the Fil-C compiler (filcc/fil++) and runtime and"
-echo "these memory safe programs and libraries compiled with Fil-C:"
-echo "    acl         attr        bash        binutils    bzip2       coreutils"
-echo "    curl        diff        find        flex        gawk        git"
-echo "    glibc       grep        gzip        icu4c       keyutils    kerberos5"
-echo "    less        libaudit    libc++      libevent    libidn2     libpsl"
-echo "    libselinux  libtasn1    libuv       lz4         m4          make"
-echo "    mg          nghttp2     openssl     openssh     p11-kit     patch"
-echo "    pam         pcre2       pkgconf     procps-ng   psmisc      rsync"
-echo "    sed         sudo        tar         tmux        unistring   wget"
-echo "    xxhash      xz          zlib        zstd"
-echo
-echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
-echo "********************************************************************************"
-echo
+if [ "$SSH_SETUP_ONLY" = true ]; then
+    echo "This is the --ssh-setup mode of the Fil-C installer. It will re-run only the"
+    echo "SSH-related parts of setup against the existing /opt/fil installation. It will"
+    echo "not extract any files. Each step is idempotent and will skip work that has"
+    echo "already been done."
+    echo
+    echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
+    echo "********************************************************************************"
+    echo
+else
+    echo "This distribution includes the Fil-C compiler (filcc/fil++) and runtime and"
+    echo "these memory safe programs and libraries compiled with Fil-C:"
+    echo "    acl         attr        bash        binutils    bzip2       coreutils"
+    echo "    curl        diff        find        flex        gawk        git"
+    echo "    glibc       grep        gzip        icu4c       keyutils    kerberos5"
+    echo "    less        libaudit    libc++      libevent    libidn2     libpsl"
+    echo "    libselinux  libtasn1    libuv       lz4         m4          make"
+    echo "    mg          nghttp2     openssl     openssh     p11-kit     patch"
+    echo "    pam         pcre2       pkgconf     procps-ng   psmisc      rsync"
+    echo "    sed         sudo        tar         tmux        unistring   wget"
+    echo "    xxhash      xz          zlib        zstd"
+    echo
+    echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
+    echo "********************************************************************************"
+    echo
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: This installer must be run as root (use sudo or run as root user)."
-    echo "Try 'setup.sh --help' for more information."
+    echo "Try './setup.sh --help' for more information."
     exit 1
 fi
 
-if [ -e /opt/fil ]; then
-    echo "ERROR: /opt/fil already exists!"
-    echo "Please remove or move it before running this installer:"
-    echo "  rm -rf /opt/fil"
-    echo "    or"
-    echo "  mv /opt/fil /opt/fil.backup"
-    echo "Try 'setup.sh --help' for more information."
-    exit 1
-fi
-
-echo "This installer will:"
-if [ ! -d /opt ]; then
-    echo "  - Create /opt directory (doesn't currently exist)"
-fi
-echo "  - Extract fil.tar.xz to /opt, creating /opt/fil (requires about 1.3 GB)"
-echo
-
-if [ "$UNATTENDED" = false ]; then
-    echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
-    read -r response
-
-    if [ "$response" != "YES" ]; then
-        echo "Installation aborted."
+if [ "$SSH_SETUP_ONLY" = true ]; then
+    if [ ! -d /opt/fil ]; then
+        echo "ERROR: /opt/fil does not exist - run ./setup.sh without --ssh-setup first."
+        echo "Try './setup.sh --help' for more information."
         exit 1
     fi
+    if [ ! -x /opt/fil/sbin/sshd ]; then
+        echo "ERROR: /opt/fil/sbin/sshd does not exist or is not executable."
+        echo "Your /opt/fil installation may be incomplete or corrupted."
+        echo "Try './setup.sh --help' for more information."
+        exit 1
+    fi
+else
+    if [ -e /opt/fil ]; then
+        echo "ERROR: /opt/fil already exists!"
+        echo "Please remove or move it before running this installer:"
+        echo "  rm -rf /opt/fil"
+        echo "    or"
+        echo "  mv /opt/fil /opt/fil.backup"
+        echo
+        echo "If you only want to re-run SSH/SELinux/systemd setup against an existing"
+        echo "/opt/fil installation, use './setup.sh --ssh-setup' instead."
+        echo "Try './setup.sh --help' for more information."
+        exit 1
+    fi
+
+    echo "This installer will:"
+    if [ ! -d /opt ]; then
+        echo "  - Create /opt directory (doesn't currently exist)"
+    fi
+    echo "  - Extract fil.tar.xz to /opt, creating /opt/fil (requires about 1.3 GB)"
+    echo
+
+    if [ "$UNATTENDED" = false ]; then
+        echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
+        read -r response
+
+        if [ "$response" != "YES" ]; then
+            echo "Installation aborted."
+            exit 1
+        fi
+    fi
+
+    echo
+    echo "Extracting fil.tar.xz to /opt..."
+
+    if [ ! -f fil.tar.xz ]; then
+        echo "ERROR: fil.tar.xz not found in current directory."
+        echo "Try './setup.sh --help' for more information."
+        exit 1
+    fi
+
+    if [ ! -d /opt ]; then
+        echo "Creating /opt directory..."
+        mkdir -p /opt
+    fi
+
+    INSTALLER_DIR=$(pwd)
+    cd /opt
+    tar -xf "$INSTALLER_DIR/fil.tar.xz"
 fi
-
-echo
-echo "Extracting fil.tar.xz to /opt..."
-
-if [ ! -f fil.tar.xz ]; then
-    echo "ERROR: fil.tar.xz not found in current directory."
-    echo "Try 'setup.sh --help' for more information."
-    exit 1
-fi
-
-if [ ! -d /opt ]; then
-    echo "Creating /opt directory..."
-    mkdir -p /opt
-fi
-
-INSTALLER_DIR=$(pwd)
-cd /opt
-tar -xf "$INSTALLER_DIR/fil.tar.xz"
 
 echo
 echo "Checking SSH configuration..."
@@ -177,9 +220,11 @@ echo "Checking SSH configuration..."
 # SELinux labeling for /opt/fil/sbin/sshd
 # ========================================
 # Tracks whether the Installation Complete section should suggest using
-# /opt/fil/sbin/sshd under systemd. Default false; explicit success paths
-# set it to true.
+# /opt/fil/sbin/sshd under systemd, and whether the systemd setup phase
+# below should even attempt to run. Default false; explicit success paths
+# set them to true.
 SSHD_SELINUX_OK=false
+SSHD_SSH_OK=true
 
 set +e
 
@@ -235,13 +280,21 @@ else
             SELINUX_REF_TYPE="${_selinux_tmp%%:*}"
             case "$SELINUX_REF_TYPE" in
                 sshd_exec_t)
-                    SELINUX_CHCON_ERR=$(chcon --reference=/usr/sbin/sshd /opt/fil/sbin/sshd 2>&1)
-                    SELINUX_CHCON_RC=$?
-                    if [ "$SELINUX_CHCON_RC" = 0 ]; then
+                    CURRENT_FIL_LABEL=$(stat -L -c '%C' /opt/fil/sbin/sshd 2>/dev/null)
+                    if [ "$CURRENT_FIL_LABEL" = "$SELINUX_REF_LABEL" ]; then
+                        echo "/opt/fil/sbin/sshd already has the correct SELinux label"
+                        echo "('$SELINUX_REF_LABEL') - no SELinux labeling needed."
+                        SSHD_SELINUX_OK=true
+                        SELINUX_CHCON_RC=0
+                    else
+                        SELINUX_CHCON_ERR=$(chcon --reference=/usr/sbin/sshd /opt/fil/sbin/sshd 2>&1)
+                        SELINUX_CHCON_RC=$?
+                    fi
+                    if [ "$SELINUX_CHCON_RC" = 0 ] && [ "$SSHD_SELINUX_OK" != true ]; then
                         echo "Applied SELinux label '$SELINUX_REF_LABEL' to /opt/fil/sbin/sshd"
                         echo "(matching /usr/sbin/sshd)."
                         SSHD_SELINUX_OK=true
-                    else
+                    elif [ "$SELINUX_CHCON_RC" != 0 ]; then
                         echo "WARNING: Failed to apply SELinux label to /opt/fil/sbin/sshd."
                         if [ -n "$SELINUX_CHCON_ERR" ]; then
                             echo "    chcon error: $SELINUX_CHCON_ERR"
@@ -348,7 +401,9 @@ if [ "$SSH_DIR_OK" = false ]; then
     echo "WARNING: Cannot create or write to /etc/ssh directory."
     echo "Skipping SSH configuration setup."
     echo "You may need to configure SSH manually."
+    echo "After fixing the issue you can retry with: ./setup.sh --ssh-setup"
     echo
+    SSHD_SSH_OK=false
 else
     # Check for required files
     MISSING_FILES=""
@@ -481,12 +536,15 @@ else
         echo
 
         if [ "$UNATTENDED" = false ]; then
-            echo "Type YES (in all caps) to proceed with SSH setup, or anything else to skip:"
+            echo "Type YES (in all caps) to proceed with SSH setup, or anything else to skip."
+            echo "(You can always re-run SSH setup later with: ./setup.sh --ssh-setup)"
             read -r ssh_response
         elif [ "$FULL_SETUP" = true ]; then
             ssh_response=YES
         else
             ssh_response=NO
+            echo "Skipping SSH setup (--unattended without --full-setup)."
+            echo "You can run SSH setup later with: ./setup.sh --ssh-setup"
         fi
 
         # Phase 3: Action
@@ -508,6 +566,7 @@ else
                         echo "  Copied /etc/ssh/$file"
                     else
                         echo "  WARNING: Failed to copy $file: $cp_err"
+                        SSHD_SSH_OK=false
                     fi
                 done
             fi
@@ -521,6 +580,7 @@ else
                     echo "Created /opt/fil/var/lib/sshd (sshd privilege separation home)"
                 else
                     echo "WARNING: Failed to create /opt/fil/var/lib/sshd: $mkdir_err"
+                    SSHD_SSH_OK=false
                 fi
             fi
 
@@ -532,6 +592,7 @@ else
                     echo "  Host keys generated successfully"
                 else
                     echo "  WARNING: Failed to generate some host keys: $keygen_err"
+                    SSHD_SSH_OK=false
                 fi
             fi
 
@@ -545,6 +606,7 @@ else
                 else
                     echo "WARNING: Failed to create sshd group: $groupadd_err"
                     SSHD_GROUP_OK=false
+                    SSHD_SSH_OK=false
                 fi
             fi
 
@@ -552,6 +614,7 @@ else
             if [ "$MISSING_SSHD_USER" = true ]; then
                 if [ "$SSHD_GROUP_OK" = false ]; then
                     echo "WARNING: Skipping sshd user creation - sshd group is missing."
+                    SSHD_SSH_OK=false
                 else
                     useradd_err=$(useradd -c 'sshd PrivSep' \
                             -d /opt/fil/var/lib/sshd \
@@ -562,6 +625,7 @@ else
                         echo "Created sshd privilege separation user"
                     else
                         echo "WARNING: Failed to create sshd user: $useradd_err"
+                        SSHD_SSH_OK=false
                     fi
                 fi
             fi
@@ -575,6 +639,7 @@ else
                         echo "  Changed $keyfile to mode 0600"
                     else
                         echo "  WARNING: Failed to change permissions on $keyfile: $chmod_err"
+                        SSHD_SSH_OK=false
                     fi
                 done
             fi
@@ -595,34 +660,313 @@ else
             echo "SSH setup complete."
         else
             echo "Skipping SSH setup."
+            echo "You can re-run SSH setup later with: ./setup.sh --ssh-setup"
+            SSHD_SSH_OK=false
         fi
     fi
 fi
 
 echo
-echo "================================================================================"
-echo "                         Installation Complete!"
-echo "================================================================================"
-echo
-echo "To use Fil-C, add /opt/fil/bin to your PATH:"
-echo "  export PATH=/opt/fil/bin:\$PATH"
-echo
-if [ "$SSHD_SELINUX_OK" = true ]; then
-    echo "You can replace your system sshd with the memory-safe /opt/fil/sbin/sshd under"
-    echo "systemd - see sshd_setup.md (in this directory) for full instructions."
+echo "Checking systemd integration..."
+
+# Tracks the systemd setup outcome for the final summary.
+#   na      = systemd is not running, or no action was applicable
+#   ok      = either already configured, or we configured it successfully
+#   skipped = configuration was needed and offered, but declined / not done
+#   failed  = we attempted but something went wrong
+SSHD_SYSTEMD_STATUS=na
+
+set +e
+
+if [ "$SSHD_SELINUX_OK" != true ] || [ "$SSHD_SSH_OK" != true ]; then
+    echo "Skipping systemd setup because an earlier step did not complete cleanly:"
+    if [ "$SSHD_SELINUX_OK" != true ]; then
+        echo "  - SELinux labeling for /opt/fil/sbin/sshd"
+    fi
+    if [ "$SSHD_SSH_OK" != true ]; then
+        echo "  - SSH configuration / key / privilege-separation setup"
+    fi
+    echo "(see the warnings above). Wiring sshd into systemd before these are sorted"
+    echo "out could leave you with a broken sshd service. After fixing the underlying"
+    echo "issue you can retry with: ./setup.sh --ssh-setup"
+    SSHD_SYSTEMD_STATUS=skipped
+elif [ ! -d /run/systemd/system ]; then
+    echo "systemd is not running on this system - /opt/fil/sbin/sshd will not be"
+    echo "wired into any init system. You can run it directly or set up your own"
+    echo "service definition by hand."
 else
-    echo "You can use the memory-safe OpenSSH server at:"
-    echo "  /opt/fil/sbin/sshd"
-    echo
-    echo "WARNING: SELinux labeling for /opt/fil/sbin/sshd was not completed (see above)."
-    echo "Running it under systemd is unlikely to work until you apply a SELinux label."
+    # systemd is running. Look for existing sshd unit and socket.
+    EXISTING_UNIT=""
+    for unit in sshd.service ssh.service; do
+        if systemctl cat "$unit" >/dev/null 2>&1; then
+            EXISTING_UNIT="$unit"
+            break
+        fi
+    done
+
+    EXISTING_SOCKET=""
+    for sock in sshd.socket ssh.socket; do
+        if systemctl cat "$sock" >/dev/null 2>&1; then
+            EXISTING_SOCKET="$sock"
+            break
+        fi
+    done
+
+    if [ -n "$EXISTING_UNIT" ]; then
+        # Case E: existing service unit. Idempotency: is the effective
+        # ExecStart already pointing at /opt/fil/sbin/sshd?
+        CURRENT_EXEC=$(systemctl show -p ExecStart "$EXISTING_UNIT" 2>/dev/null | head -1)
+        case "$CURRENT_EXEC" in
+            *"/opt/fil/sbin/sshd"*)
+                echo "$EXISTING_UNIT is already configured to use /opt/fil/sbin/sshd -"
+                echo "no systemd override needed."
+                SSHD_SYSTEMD_STATUS=ok
+                # If the service is currently active, restart it so any other
+                # changes from this run (e.g. a fresh SELinux label) take effect.
+                if systemctl is-active --quiet "$EXISTING_UNIT" 2>/dev/null; then
+                    echo "$EXISTING_UNIT is currently active - restarting to pick up any changes."
+                    restart_err=$(systemctl restart "$EXISTING_UNIT" 2>&1)
+                    if [ $? = 0 ]; then
+                        echo "Restarted $EXISTING_UNIT."
+                    else
+                        echo "WARNING: Failed to restart $EXISTING_UNIT: $restart_err"
+                        echo "Check 'journalctl -u $EXISTING_UNIT' for details."
+                    fi
+                fi
+                ;;
+            *)
+                echo "Found existing $EXISTING_UNIT pointing at the distribution sshd."
+                echo "Will create a systemd drop-in at:"
+                echo "    /etc/systemd/system/$EXISTING_UNIT.d/fil-c.conf"
+                echo "that redirects ExecStart/ExecStartPre/ExecReload lines that mention"
+                echo "/usr/sbin/sshd to /opt/fil/sbin/sshd. Other directives in the"
+                echo "distribution unit (EnvironmentFile, KillMode, hardening flags, etc.)"
+                echo "are left unchanged."
+                echo
+                echo "WARNING: After writing the drop-in, this will run 'systemctl"
+                echo "daemon-reload' and 'systemctl restart $EXISTING_UNIT', which will"
+                echo "RESTART THE SSH SERVICE. Under normal conditions (the distribution"
+                echo "unit uses KillMode=process) restarting sshd does not interrupt"
+                echo "already-connected SSH sessions, only the main listener. Make sure"
+                echo "you have a way back in if something goes wrong before proceeding."
+                echo
+
+                if [ "$UNATTENDED" = false ]; then
+                    echo "Type YES (in all caps) to proceed with systemd setup, or anything"
+                    echo "else to skip. (You can re-run this later with: ./setup.sh --ssh-setup)"
+                    read -r systemd_response
+                elif [ "$FULL_SETUP" = true ]; then
+                    systemd_response=YES
+                else
+                    systemd_response=NO
+                    echo "Skipping systemd setup (--unattended without --full-setup)."
+                    echo "You can run systemd setup later with: ./setup.sh --ssh-setup"
+                fi
+
+                if [ "$systemd_response" = "YES" ]; then
+                    echo
+                    DROP_IN_DIR="/etc/systemd/system/$EXISTING_UNIT.d"
+                    DROP_IN="$DROP_IN_DIR/fil-c.conf"
+
+                    mkdir_err=$(mkdir -p "$DROP_IN_DIR" 2>&1)
+                    if [ $? != 0 ]; then
+                        echo "WARNING: Failed to create $DROP_IN_DIR: $mkdir_err"
+                        SSHD_SYSTEMD_STATUS=failed
+                    else
+                        {
+                            echo "# Generated by Fil-C setup.sh"
+                            echo "# Remove with: systemctl revert $EXISTING_UNIT"
+                            echo "[Service]"
+                            systemctl cat "$EXISTING_UNIT" 2>/dev/null | while IFS= read -r line; do
+                                trimmed=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
+                                case "$trimmed" in
+                                    Exec*=*"/usr/sbin/sshd"*)
+                                        key="${trimmed%%=*}"
+                                        replaced=$(printf '%s' "$trimmed" | sed 's|/usr/sbin/sshd|/opt/fil/sbin/sshd|g')
+                                        printf '%s=\n%s\n' "$key" "$replaced"
+                                        ;;
+                                esac
+                            done
+                        } > "$DROP_IN"
+                        echo "Wrote $DROP_IN with contents:"
+                        sed 's/^/    /' "$DROP_IN"
+                        echo
+
+                        reload_err=$(systemctl daemon-reload 2>&1)
+                        if [ $? != 0 ]; then
+                            echo "WARNING: 'systemctl daemon-reload' failed: $reload_err"
+                            SSHD_SYSTEMD_STATUS=failed
+                        else
+                            echo "Reloaded systemd."
+                            restart_err=$(systemctl restart "$EXISTING_UNIT" 2>&1)
+                            if [ $? != 0 ]; then
+                                echo "WARNING: Failed to restart $EXISTING_UNIT: $restart_err"
+                                echo "Check 'journalctl -u $EXISTING_UNIT' for details."
+                                SSHD_SYSTEMD_STATUS=failed
+                            else
+                                echo "Restarted $EXISTING_UNIT."
+                                NEW_EXEC=$(systemctl show -p ExecStart "$EXISTING_UNIT" 2>/dev/null | head -1)
+                                case "$NEW_EXEC" in
+                                    *"/opt/fil/sbin/sshd"*)
+                                        echo "Verified: $EXISTING_UNIT is now configured to run /opt/fil/sbin/sshd."
+                                        SSHD_SYSTEMD_STATUS=ok
+                                        ;;
+                                    *)
+                                        echo "WARNING: After restart, $EXISTING_UNIT does not appear to be"
+                                        echo "running /opt/fil/sbin/sshd. ExecStart line is:"
+                                        echo "    $NEW_EXEC"
+                                        echo "Check 'journalctl -u $EXISTING_UNIT' for details."
+                                        SSHD_SYSTEMD_STATUS=failed
+                                        ;;
+                                esac
+                            fi
+                        fi
+                    fi
+                else
+                    SSHD_SYSTEMD_STATUS=skipped
+                fi
+                ;;
+        esac
+    elif [ -n "$EXISTING_SOCKET" ]; then
+        # Case D: socket but no service. Weird, refuse to touch it.
+        echo "WARNING: Found $EXISTING_SOCKET but no sshd.service or ssh.service."
+        echo "This is an unusual configuration that the installer does not know how"
+        echo "to handle automatically. /opt/fil/sbin/sshd was NOT set up to start"
+        echo "automatically. You will need to wire it in by hand."
+        SSHD_SYSTEMD_STATUS=skipped
+    else
+        # Case C: no service unit at all. Offer to create a minimal one.
+        echo "No existing sshd.service or ssh.service found on this systemd."
+        echo "Will create a minimal /etc/systemd/system/sshd.service that runs"
+        echo "/opt/fil/sbin/sshd, enable it to start on boot, and start it now."
+        echo
+        echo "WARNING: This will create and START a new sshd. Make sure you have a"
+        echo "way back in if something goes wrong."
+        echo
+
+        if [ "$UNATTENDED" = false ]; then
+            echo "Type YES (in all caps) to proceed with systemd setup, or anything"
+            echo "else to skip. (You can re-run this later with: ./setup.sh --ssh-setup)"
+            read -r systemd_response
+        elif [ "$FULL_SETUP" = true ]; then
+            systemd_response=YES
+        else
+            systemd_response=NO
+            echo "Skipping systemd setup (--unattended without --full-setup)."
+            echo "You can run systemd setup later with: ./setup.sh --ssh-setup"
+        fi
+
+        if [ "$systemd_response" = "YES" ]; then
+            echo
+            cat > /etc/systemd/system/sshd.service <<'EOF'
+# Generated by Fil-C setup.sh
+[Unit]
+Description=Fil-C OpenSSH server daemon
+Documentation=man:sshd(8) man:sshd_config(5)
+After=network.target
+
+[Service]
+ExecStart=/opt/fil/sbin/sshd -D
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            echo "Wrote /etc/systemd/system/sshd.service"
+
+            reload_err=$(systemctl daemon-reload 2>&1)
+            if [ $? != 0 ]; then
+                echo "WARNING: 'systemctl daemon-reload' failed: $reload_err"
+                SSHD_SYSTEMD_STATUS=failed
+            else
+                enable_err=$(systemctl enable sshd.service 2>&1)
+                if [ $? != 0 ]; then
+                    echo "WARNING: Failed to enable sshd.service: $enable_err"
+                fi
+                start_err=$(systemctl start sshd.service 2>&1)
+                if [ $? != 0 ]; then
+                    echo "WARNING: Failed to start sshd.service: $start_err"
+                    echo "Check 'journalctl -u sshd.service' for details."
+                    SSHD_SYSTEMD_STATUS=failed
+                else
+                    echo "Started and enabled sshd.service."
+                    SSHD_SYSTEMD_STATUS=ok
+                fi
+            fi
+        else
+            SSHD_SYSTEMD_STATUS=skipped
+        fi
+    fi
 fi
+
+set -e
+
 echo
-echo "To compile C programs with Fil-C:"
-echo "  filcc -o program program.c -g -O"
+echo "================================================================================"
+if [ "$SSH_SETUP_ONLY" = true ]; then
+    echo "                         SSH Setup Complete!"
+else
+    echo "                         Installation Complete!"
+fi
+echo "================================================================================"
 echo
-echo "To compile C++ programs with Fil-C++:"
-echo "  fil++ -o program program.cpp -g -O -std=c++20"
+if [ "$SSH_SETUP_ONLY" = false ]; then
+    echo "To use Fil-C, add /opt/fil/bin to your PATH:"
+    echo "  export PATH=/opt/fil/bin:\$PATH"
+    echo
+fi
+
+case "$SSHD_SYSTEMD_STATUS" in
+    ok)
+        echo "The Fil-C OpenSSH server (/opt/fil/sbin/sshd) is now wired into systemd."
+        echo "See sshd_setup.md in this directory for what was configured and how to"
+        echo "roll back."
+        ;;
+    skipped)
+        if [ "$SSHD_SELINUX_OK" != true ] || [ "$SSHD_SSH_OK" != true ]; then
+            echo "The Fil-C OpenSSH server (/opt/fil/sbin/sshd) was NOT wired into systemd"
+            echo "because an earlier setup step did not complete cleanly (see above)."
+            echo "After fixing the underlying issue you can retry with:"
+            echo "    ./setup.sh --ssh-setup"
+        else
+            echo "The Fil-C OpenSSH server (/opt/fil/sbin/sshd) was NOT wired into systemd"
+            echo "(setup was skipped). You can re-run it later with:"
+            echo "    ./setup.sh --ssh-setup"
+            echo "or set it up by hand following sshd_setup.md."
+        fi
+        ;;
+    failed)
+        echo "WARNING: systemd setup for /opt/fil/sbin/sshd did not complete cleanly"
+        echo "(see messages above). After fixing the underlying issue you can retry with:"
+        echo "    ./setup.sh --ssh-setup"
+        echo "or set it up by hand following sshd_setup.md."
+        ;;
+    na|*)
+        if [ "$SSHD_SELINUX_OK" = true ]; then
+            echo "You can run the memory-safe OpenSSH server at /opt/fil/sbin/sshd."
+            echo "See sshd_setup.md for guidance on running it under systemd."
+        else
+            echo "You can use the memory-safe OpenSSH server at:"
+            echo "  /opt/fil/sbin/sshd"
+            echo
+            echo "WARNING: SELinux labeling for /opt/fil/sbin/sshd was not completed"
+            echo "(see above). Running it under systemd is unlikely to work until you"
+            echo "apply a SELinux label. After fixing this you can retry the SSH"
+            echo "setup with:"
+            echo "    ./setup.sh --ssh-setup"
+        fi
+        ;;
+esac
 echo
-echo "For more information, see README.md in the distribution directory."
-echo
+
+if [ "$SSH_SETUP_ONLY" = false ]; then
+    echo "To compile C programs with Fil-C:"
+    echo "  filcc -o program program.c -g -O"
+    echo
+    echo "To compile C++ programs with Fil-C++:"
+    echo "  fil++ -o program program.cpp -g -O -std=c++20"
+    echo
+    echo "For more information, see README.md in the distribution directory."
+    echo
+fi
