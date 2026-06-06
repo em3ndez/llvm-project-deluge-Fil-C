@@ -120,7 +120,7 @@ echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
 echo "********************************************************************************"
 echo
 
-if [ `id -u` -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
     echo "ERROR: This installer must be run as root (use sudo or run as root user)."
     echo "Try 'setup.sh --help' for more information."
     exit 1
@@ -145,7 +145,7 @@ echo
 
 if [ "$UNATTENDED" = false ]; then
     echo "Type YES (in all caps) to proceed with installation, or anything else to abort:"
-    read response
+    read -r response
 
     if [ "$response" != "YES" ]; then
         echo "Installation aborted."
@@ -167,8 +167,9 @@ if [ ! -d /opt ]; then
     mkdir -p /opt
 fi
 
+INSTALLER_DIR=$(pwd)
 cd /opt
-tar -xf "$OLDPWD/fil.tar.xz"
+tar -xf "$INSTALLER_DIR/fil.tar.xz"
 
 echo
 echo "Checking SSH configuration..."
@@ -176,57 +177,106 @@ echo "Checking SSH configuration..."
 # SELinux labeling for /opt/fil/sbin/sshd
 # ========================================
 # Tracks whether the Installation Complete section should suggest using
-# /opt/fil/sbin/sshd under systemd. Set to false only when SELinux is enabled
-# but we could not (or refused to) apply a label, which would likely prevent
-# the binary from running under systemd.
-SSHD_SELINUX_OK=true
+# /opt/fil/sbin/sshd under systemd. Default false; explicit success paths
+# set it to true.
+SSHD_SELINUX_OK=false
 
 set +e
 
-if ! command -v selinuxenabled >/dev/null 2>&1 || ! command -v chcon >/dev/null 2>&1; then
-    echo "No SELinux labeling tools detected - no SELinux labeling needed for"
+# Detect whether SELinux is actually loaded by the kernel. This is more
+# reliable than selinuxenabled alone, which may not be installed even when
+# SELinux is active (e.g. policycoreutils not installed).
+SELINUX_KERNEL_ACTIVE=false
+SELINUX_ENFORCING=unknown
+if [ -d /sys/fs/selinux ] && [ -e /sys/fs/selinux/enforce ]; then
+    SELINUX_KERNEL_ACTIVE=true
+    enforce_state=$(cat /sys/fs/selinux/enforce 2>/dev/null)
+    case "$enforce_state" in
+        1) SELINUX_ENFORCING=true ;;
+        0) SELINUX_ENFORCING=false ;;
+    esac
+fi
+
+if [ "$SELINUX_KERNEL_ACTIVE" = false ]; then
+    echo "SELinux is not active on this system - no SELinux labeling needed for"
     echo "/opt/fil/sbin/sshd."
-elif ! selinuxenabled 2>/dev/null; then
-    echo "SELinux is not enabled on this system - no SELinux labeling needed for"
-    echo "/opt/fil/sbin/sshd."
-elif [ ! -e /usr/sbin/sshd ]; then
+    SSHD_SELINUX_OK=true
+elif ! command -v chcon >/dev/null 2>&1; then
+    echo "WARNING: SELinux is active on this system, but the 'chcon' tool is not"
+    echo "available. The installer cannot label /opt/fil/sbin/sshd automatically."
+    echo
+    echo "Install your distribution's SELinux user-space tools and label by hand"
+    echo "if you intend to run /opt/fil/sbin/sshd under systemd. On Rocky/RHEL/Fedora:"
+    echo
+    echo "    dnf install policycoreutils libselinux-utils"
+    echo "    chcon --reference=/usr/sbin/sshd /opt/fil/sbin/sshd"
+elif [ ! -e /opt/fil/sbin/sshd ]; then
+    echo "WARNING: /opt/fil/sbin/sshd was not present after extraction. Skipping"
+    echo "SELinux labeling. This may indicate an incomplete or corrupt distribution."
+elif [ ! -e /usr/sbin/sshd ] && [ ! -h /usr/sbin/sshd ]; then
     echo "No /usr/sbin/sshd found to use as a SELinux label reference - skipping"
-    echo "SELinux labeling of /opt/fil/sbin/sshd."
+    echo "SELinux labeling of /opt/fil/sbin/sshd. If sshd fails to run under systemd,"
+    echo "you may need to apply a SELinux label by hand."
+    SSHD_SELINUX_OK=true
 else
-    SELINUX_REF_LABEL=$(stat -c '%C' /usr/sbin/sshd 2>/dev/null)
+    SELINUX_REF_LABEL=$(stat -L -c '%C' /usr/sbin/sshd 2>/dev/null)
     case "$SELINUX_REF_LABEL" in
-        ""|"?"|"(null)"|"unlabeled_t"*)
-            echo "/usr/sbin/sshd has no recognizable SELinux label ('$SELINUX_REF_LABEL') -"
-            echo "no SELinux labeling needed for /opt/fil/sbin/sshd."
+        ""|"?"|"(null)"|"(unknown)")
+            echo "/usr/sbin/sshd has no SELinux label ('$SELINUX_REF_LABEL') - no SELinux"
+            echo "labeling needed for /opt/fil/sbin/sshd."
+            SSHD_SELINUX_OK=true
             ;;
         *)
-            SELINUX_REF_TYPE=$(printf '%s\n' "$SELINUX_REF_LABEL" | awk -F: '{print $3}')
+            # Extract the type field via parameter expansion. Handles both
+            # 4-field labels (user:role:type:level) and 3-field labels
+            # (user:role:type) without an MCS/MLS level.
+            _selinux_tmp="${SELINUX_REF_LABEL#*:}"
+            _selinux_tmp="${_selinux_tmp#*:}"
+            SELINUX_REF_TYPE="${_selinux_tmp%%:*}"
             case "$SELINUX_REF_TYPE" in
                 sshd_exec_t)
-                    if chcon --reference=/usr/sbin/sshd /opt/fil/sbin/sshd 2>/dev/null; then
+                    SELINUX_CHCON_ERR=$(chcon --reference=/usr/sbin/sshd /opt/fil/sbin/sshd 2>&1)
+                    SELINUX_CHCON_RC=$?
+                    if [ "$SELINUX_CHCON_RC" = 0 ]; then
                         echo "Applied SELinux label '$SELINUX_REF_LABEL' to /opt/fil/sbin/sshd"
                         echo "(matching /usr/sbin/sshd)."
+                        SSHD_SELINUX_OK=true
                     else
-                        SSHD_SELINUX_OK=false
                         echo "WARNING: Failed to apply SELinux label to /opt/fil/sbin/sshd."
+                        if [ -n "$SELINUX_CHCON_ERR" ]; then
+                            echo "    chcon error: $SELINUX_CHCON_ERR"
+                        fi
                         echo
                         echo "The reference label on /usr/sbin/sshd is:"
                         echo "    $SELINUX_REF_LABEL"
                         echo
-                        echo "Without this label, /opt/fil/sbin/sshd will likely fail to start under"
-                        echo "systemd, because sshd is expected to run in the sshd_t domain on SELinux"
-                        echo "systems. You can try applying the label manually:"
+                        if [ "$SELINUX_ENFORCING" = false ]; then
+                            echo "Without this label, /opt/fil/sbin/sshd will likely run with the wrong"
+                            echo "SELinux context. Because SELinux is in permissive mode on this system,"
+                            echo "that probably will not prevent sshd from starting, but it will produce"
+                            echo "SELinux denials in the audit log."
+                        else
+                            echo "Without this label, /opt/fil/sbin/sshd will likely fail to start under"
+                            echo "systemd, because sshd is expected to run in the sshd_t domain on SELinux"
+                            echo "systems."
+                        fi
+                        echo
+                        echo "You can try applying the label manually:"
                         echo
                         echo "    chcon --reference=/usr/sbin/sshd /opt/fil/sbin/sshd"
                         echo
                         echo "For a persistent label that survives restorecon and SELinux relabel:"
                         echo
-                        echo "    semanage fcontext -a -t $SELINUX_REF_TYPE '/opt/fil/sbin/sshd'"
+                        echo "    semanage fcontext -a -t '$SELINUX_REF_TYPE' '/opt/fil/sbin/sshd'"
                         echo "    restorecon -v /opt/fil/sbin/sshd"
                     fi
                     ;;
+                ""|unlabeled_t)
+                    echo "/usr/sbin/sshd has no usable SELinux type ('$SELINUX_REF_LABEL') -"
+                    echo "no SELinux labeling needed for /opt/fil/sbin/sshd."
+                    SSHD_SELINUX_OK=true
+                    ;;
                 *)
-                    SSHD_SELINUX_OK=false
                     echo "WARNING: /usr/sbin/sshd has an unrecognized SELinux label:"
                     echo "    $SELINUX_REF_LABEL"
                     echo
@@ -236,10 +286,17 @@ else
                     echo "whether copying this label would be safe or correct for your distribution's"
                     echo "SELinux policy."
                     echo
-                    echo "Without a correct SELinux label, /opt/fil/sbin/sshd will likely fail to"
-                    echo "start under systemd, or fail to function correctly when it does start,"
-                    echo "because sshd is expected to run in a specific SELinux domain on this"
-                    echo "system."
+                    if [ "$SELINUX_ENFORCING" = false ]; then
+                        echo "Without a correct SELinux label, /opt/fil/sbin/sshd will likely run with"
+                        echo "the wrong SELinux context. Because SELinux is in permissive mode on this"
+                        echo "system, that probably will not prevent sshd from starting, but it will"
+                        echo "produce SELinux denials in the audit log."
+                    else
+                        echo "Without a correct SELinux label, /opt/fil/sbin/sshd will likely fail to"
+                        echo "start under systemd, or fail to function correctly when it does start,"
+                        echo "because sshd is expected to run in a specific SELinux domain on this"
+                        echo "system."
+                    fi
                     echo
                     echo "To make /opt/fil/sbin/sshd work, you can try copying the same label that"
                     echo "/usr/sbin/sshd has by running:"
@@ -248,11 +305,11 @@ else
                     echo
                     echo "or, equivalently, by setting the label explicitly:"
                     echo
-                    echo "    chcon $SELINUX_REF_LABEL /opt/fil/sbin/sshd"
+                    echo "    chcon '$SELINUX_REF_LABEL' /opt/fil/sbin/sshd"
                     echo
                     echo "For a persistent label that survives restorecon and SELinux relabel:"
                     echo
-                    echo "    semanage fcontext -a -t $SELINUX_REF_TYPE '/opt/fil/sbin/sshd'"
+                    echo "    semanage fcontext -a -t '$SELINUX_REF_TYPE' '/opt/fil/sbin/sshd'"
                     echo "    restorecon -v /opt/fil/sbin/sshd"
                     echo
                     echo "If /opt/fil/sbin/sshd still does not work after that, consult your"
@@ -425,7 +482,7 @@ else
 
         if [ "$UNATTENDED" = false ]; then
             echo "Type YES (in all caps) to proceed with SSH setup, or anything else to skip:"
-            read ssh_response
+            read -r ssh_response
         elif [ "$FULL_SETUP" = true ]; then
             ssh_response=YES
         else
@@ -446,43 +503,66 @@ else
             if [ -n "$MISSING_FILES" ]; then
                 echo "Copying configuration files..."
                 for file in $MISSING_FILES; do
-                    if cp -v /opt/fil/share/examples/ssh/$file /etc/ssh/$file 2>/dev/null; then
+                    cp_err=$(cp -v "/opt/fil/share/examples/ssh/$file" "/etc/ssh/$file" 2>&1)
+                    if [ $? = 0 ]; then
                         echo "  Copied /etc/ssh/$file"
                     else
-                        echo "  WARNING: Failed to copy $file"
+                        echo "  WARNING: Failed to copy $file: $cp_err"
                     fi
                 done
+            fi
+
+            # Ensure the sshd privilege separation home directory exists. sshd
+            # may fail at runtime if /opt/fil/var/lib/sshd is missing.
+            if [ ! -d /opt/fil/var/lib/sshd ]; then
+                mkdir_err=$(mkdir -p /opt/fil/var/lib/sshd 2>&1)
+                if [ $? = 0 ]; then
+                    chmod 0755 /opt/fil/var/lib/sshd 2>/dev/null
+                    echo "Created /opt/fil/var/lib/sshd (sshd privilege separation home)"
+                else
+                    echo "WARNING: Failed to create /opt/fil/var/lib/sshd: $mkdir_err"
+                fi
             fi
 
             # Generate missing keys
             if [ "$MISSING_KEYS" = true ]; then
                 echo "Generating SSH host keys..."
-                if /opt/fil/bin/ssh-keygen -A 2>/dev/null; then
+                keygen_err=$(/opt/fil/bin/ssh-keygen -A 2>&1)
+                if [ $? = 0 ]; then
                     echo "  Host keys generated successfully"
                 else
-                    echo "  WARNING: Failed to generate some host keys"
+                    echo "  WARNING: Failed to generate some host keys: $keygen_err"
                 fi
             fi
 
-            # Create sshd group if needed
+            # Create sshd group if needed. Track success so we do not try to
+            # create the sshd user with a -g sshd that does not exist.
+            SSHD_GROUP_OK=true
             if [ "$MISSING_SSHD_GROUP" = true ]; then
-                if groupadd sshd 2>/dev/null; then
+                groupadd_err=$(groupadd sshd 2>&1)
+                if [ $? = 0 ]; then
                     echo "Created sshd group"
                 else
-                    echo "WARNING: Failed to create sshd group"
+                    echo "WARNING: Failed to create sshd group: $groupadd_err"
+                    SSHD_GROUP_OK=false
                 fi
             fi
 
             # Create sshd user if needed
             if [ "$MISSING_SSHD_USER" = true ]; then
-                if useradd -c 'sshd PrivSep' \
-                        -d /opt/fil/var/lib/sshd \
-                        -g sshd \
-                        -s /bin/false \
-                        sshd 2>/dev/null; then
-                    echo "Created sshd privilege separation user"
+                if [ "$SSHD_GROUP_OK" = false ]; then
+                    echo "WARNING: Skipping sshd user creation - sshd group is missing."
                 else
-                    echo "WARNING: Failed to create sshd user"
+                    useradd_err=$(useradd -c 'sshd PrivSep' \
+                            -d /opt/fil/var/lib/sshd \
+                            -g sshd \
+                            -s /bin/false \
+                            sshd 2>&1)
+                    if [ $? = 0 ]; then
+                        echo "Created sshd privilege separation user"
+                    else
+                        echo "WARNING: Failed to create sshd user: $useradd_err"
+                    fi
                 fi
             fi
 
@@ -490,10 +570,11 @@ else
             if [ -n "$KEYS_TO_FIX" ]; then
                 echo "Fixing host key permissions..."
                 for keyfile in $KEYS_TO_FIX; do
-                    if chmod 0600 "$keyfile" 2>/dev/null; then
+                    chmod_err=$(chmod 0600 "$keyfile" 2>&1)
+                    if [ $? = 0 ]; then
                         echo "  Changed $keyfile to mode 0600"
                     else
-                        echo "  WARNING: Failed to change permissions on $keyfile"
+                        echo "  WARNING: Failed to change permissions on $keyfile: $chmod_err"
                     fi
                 done
             fi
