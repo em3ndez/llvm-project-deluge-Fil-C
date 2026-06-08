@@ -441,22 +441,6 @@ cd ..
 rm -rf pizlonated-libffi
 hash -r
 
-tar -xf $FILCSRC/pizlix/coreutils-9.5.tar.xz
-cd coreutils-9.5
-patch -Np1 -i $FILCSRC/pizlix/coreutils-9.5-i18n-2.patch
-autoreconf -fiv
-CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ FORCE_UNSAFE_CONFIGURE=1 ./configure \
-    --prefix=/opt/fil
-make -j `nproc`
-make -j `nproc` install
-mv -v /opt/fil/bin/chroot /opt/fil/sbin
-mkdir -pv /opt/fil/share/man/man8
-mv -v /opt/fil/share/man/man1/chroot.1 /opt/fil/share/man/man8/chroot.8
-sed -i 's/"1"/"8"/' /opt/fil/share/man/man8/chroot.8
-cd ..
-rm -rf coreutils-9.5
-hash -r
-
 tar -xf $FILCSRC/pizlix/mg-3.7.tar.gz 
 cd mg-3.7
 CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ ./configure --prefix=/opt/fil
@@ -506,6 +490,22 @@ make -j `nproc` CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PR
 make -j `nproc` CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ DESTDIR=/opt/fil PREFIX=/ install
 cd ..
 rm -rf pizlonated-selinux
+hash -r
+
+tar -xf $FILCSRC/pizlix/coreutils-9.5.tar.xz
+cd coreutils-9.5
+patch -Np1 -i $FILCSRC/pizlix/coreutils-9.5-i18n-2.patch
+autoreconf -fiv
+CC=/opt/fil/bin/filcc CXX=/opt/fil/bin/fil++ FORCE_UNSAFE_CONFIGURE=1 ./configure \
+    --prefix=/opt/fil
+make -j `nproc`
+make -j `nproc` install
+mv -v /opt/fil/bin/chroot /opt/fil/sbin
+mkdir -pv /opt/fil/share/man/man8
+mv -v /opt/fil/share/man/man1/chroot.1 /opt/fil/share/man/man8/chroot.8
+sed -i 's/"1"/"8"/' /opt/fil/share/man/man8/chroot.8
+cd ..
+rm -rf coreutils-9.5
 hash -r
 
 tar -xf $FILCSRC/projects/Linux-PAM-1.7.1/pizlonated-pam.tar.gz

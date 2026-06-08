@@ -928,6 +928,20 @@ else
             SSHD_SSH_OK=false
         fi
     fi
+
+    if [ "$SSHD_SSH_OK" = true ]; then
+        echo
+        echo "Testing sshd configuration (/opt/fil/sbin/sshd -t)..."
+        echo
+        if /opt/fil/sbin/sshd -t; then
+            echo "sshd configuration confirmed!"
+        else
+            echo
+            echo "Cannot run sshd! If you want to use sshd, fix the errors above and run"
+            echo "./setup.sh --ssh-setup"
+            SSHD_SSH_OK=false
+        fi
+    fi
 fi
 
 echo
@@ -1058,12 +1072,27 @@ else
         fi
     done
 
-    # Idempotent fast-path: if an existing unit is already configured to
-    # run /opt/fil/sbin/sshd, just report that and optionally restart.
-    # This check runs *before* the SELinux/SSH gating so that a re-run of
-    # --ssh-setup which had a transient SELinux failure still reports the
-    # systemd state correctly instead of pretending it does not know.
-    if [ -n "$EXISTING_UNIT" ] && systemd_unit_uses_fil_sshd "$EXISTING_UNIT"; then
+    if [ "$SSHD_SELINUX_OK" != true ] || [ "$SSHD_SSH_OK" != true ]; then
+        # If the SELinux or SSH config steps did not complete cleanly, the new sshd is
+        # unlikely to start, so bail.
+        echo "Skipping systemd sshd service integration because an earlier step did not"
+        echo "complete cleanly:"
+        if [ "$SSHD_SELINUX_OK" != true ]; then
+            echo "  - SELinux labeling for /opt/fil"
+        fi
+        if [ "$SSHD_SSH_OK" != true ]; then
+            echo "  - SSH configuration / key / privilege-separation setup"
+        fi
+        echo "(see the warnings above). Wiring sshd into systemd before these are sorted"
+        echo "out could leave you with a broken sshd service. After fixing the underlying"
+        echo "issue you can retry with: ./setup.sh --ssh-setup"
+        SSHD_SYSTEMD_STATUS=skipped
+    elif [ -n "$EXISTING_UNIT" ] && systemd_unit_uses_fil_sshd "$EXISTING_UNIT"; then
+        # Idempotent fast-path: if an existing unit is already configured to
+        # run /opt/fil/sbin/sshd, just report that and optionally restart.
+        # This check runs *before* the SELinux/SSH gating so that a re-run of
+        # --ssh-setup which had a transient SELinux failure still reports the
+        # systemd state correctly instead of pretending it does not know.
         echo "$EXISTING_UNIT is already configured to use /opt/fil/sbin/sshd -"
         echo "no systemd override needed."
         SSHD_SYSTEMD_STATUS=ok
@@ -1082,22 +1111,6 @@ else
                 SSHD_SYSTEMD_STATUS=failed
             fi
         fi
-    elif [ "$SSHD_SELINUX_OK" != true ] || [ "$SSHD_SSH_OK" != true ]; then
-        # Anything beyond the idempotent fast-path needs to mutate
-        # systemd state. If the SELinux or SSH config steps did not
-        # complete cleanly, the new sshd is unlikely to start, so bail.
-        echo "Skipping systemd sshd service integration because an earlier step did not"
-        echo "complete cleanly:"
-        if [ "$SSHD_SELINUX_OK" != true ]; then
-            echo "  - SELinux labeling for /opt/fil"
-        fi
-        if [ "$SSHD_SSH_OK" != true ]; then
-            echo "  - SSH configuration / key / privilege-separation setup"
-        fi
-        echo "(see the warnings above). Wiring sshd into systemd before these are sorted"
-        echo "out could leave you with a broken sshd service. After fixing the underlying"
-        echo "issue you can retry with: ./setup.sh --ssh-setup"
-        SSHD_SYSTEMD_STATUS=skipped
     elif [ -n "$EXISTING_UNIT" ]; then
         # Case E: existing service unit, points at distribution sshd.
         # Read the actual path the unit's ExecStart uses straight from
