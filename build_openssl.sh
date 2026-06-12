@@ -28,7 +28,7 @@
 set -e
 set -x
 
-cd projects/openssl-3.3.1
+cd projects/openssl-3.5.7
 extract_source
 CC="$PWD/../../../build/bin/clang -g -O2" ./Configure \
     zlib --prefix=$PWD/../../../pizfix --libdir=lib
