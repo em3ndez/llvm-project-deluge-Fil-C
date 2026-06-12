@@ -16,6 +16,7 @@
 #include "internal/deprecated.h"
 
 #include "cipher_aes_gcm.h"
+#include <stdfil.h>
 
 static int aes_gcm_initkey(PROV_GCM_CTX *ctx, const unsigned char *key,
     size_t keylen)
