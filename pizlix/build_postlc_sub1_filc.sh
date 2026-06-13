@@ -34,7 +34,7 @@ rm -vf projects/pizlonated-*.tar.gz
 ./package-source.sh projects/bash-5.2.32 pizlonated-bash
 ./package-source.sh projects/perl-5.40.0 pizlonated-perl
 ./package-source.sh projects/XML-Parser-2.47 pizlonated-xml-parser
-./package-source.sh projects/openssl-3.3.1 pizlonated-openssl
+./package-source.sh projects/openssl-3.5.7 pizlonated-openssl
 ./package-source.sh projects/elfutils-0.191 pizlonated-elfutils
 ./package-source.sh projects/libffi-3.4.6 pizlonated-libffi
 ./package-source.sh projects/Python-3.12.5 pizlonated-cpython
