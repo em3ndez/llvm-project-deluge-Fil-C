@@ -8193,6 +8193,7 @@ class Pizlonator {
         {"and", {true, {RoleInput, RoleBoth}}},
         {"shl", {true, {RoleInput, RoleBoth}}},
         {"xor", {true, {RoleInput, RoleBoth}}},
+        {"add", {true, {RoleInput, RoleBoth}}},
         {"mov", {false, {RoleInput, RoleOutput}}},
         {"test", {true, {RoleInput, RoleInput}}},
         {"cmp", {true, {RoleInput, RoleInput}}},
