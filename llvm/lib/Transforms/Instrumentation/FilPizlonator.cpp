@@ -8002,6 +8002,7 @@ class Pizlonator {
 
     std::vector<ParsedConstraint> Constraints;
     bool HasCCClobber = false;
+    std::unordered_set<std::string> ClobberFamilies;
 
     std::string ConstraintStr = IA->getConstraintString();
     for (size_t idx = 0, end = ConstraintStr.size(); idx < end; ) {
@@ -8026,11 +8027,19 @@ class Pizlonator {
           if (name == "cc")
             HasCCClobber = true;
           else if (name == "memory" || name == "dirflag" || name == "fpsr" ||
-                   name == "flags" || !getRegFamily(name).empty()) {
-            // memory and fixed-register clobbers are allowed.
+                   name == "flags") {
+            // memory, dirflag, fpsr, and flags clobbers are allowed.
           } else {
-            Reason = "unsupported clobber for safe inline asm: " + cstr;
-            return false;
+            std::string family = getRegFamily(name);
+            if (family.empty()) {
+              Reason = "unsupported clobber for safe inline asm: " + cstr;
+              return false;
+            }
+            if (family == "sp" || family == "bp") {
+              Reason = "sp/bp registers cannot be used as safe inline asm clobbers: " + cstr;
+              return false;
+            }
+            ClobberFamilies.insert(family);
           }
         } else {
           size_t pos = 0;
@@ -8065,6 +8074,10 @@ class Pizlonator {
             std::string family = getRegFamily(regname);
             if (family.empty()) {
               Reason = "unknown fixed register constraint: " + cstr;
+              return false;
+            }
+            if (family == "sp" || family == "bp") {
+              Reason = "sp/bp registers cannot be used as safe inline asm constraints: " + cstr;
               return false;
             }
             pc.IsRegister = true;
@@ -8135,6 +8148,10 @@ class Pizlonator {
       errs() << "\n";
       errs() << "  Output families:";
       for (const auto& f : OutputFamilies)
+        errs() << " " << f;
+      errs() << "\n";
+      errs() << "  Clobber families:";
+      for (const auto& f : ClobberFamilies)
         errs() << " " << f;
       errs() << "\n";
       errs() << "  Has cc clobber: " << HasCCClobber << "\n";
@@ -8319,33 +8336,32 @@ class Pizlonator {
       while (!operands.empty() && operands.back().empty())
         operands.pop_back();
 
+      auto isOutputOrClobber = [&](const std::string& family) -> bool {
+        return OutputFamilies.count(family) || ClobberFamilies.count(family);
+      };
+
       if (baseMnemonic == "cpuid") {
         if (!operands.empty()) {
           Reason = "cpuid takes no operands";
           return false;
         }
-        if (!InputFamilies.count("ax")) {
-          Reason = "cpuid input eax not covered by input constraint";
+        // cpuid reads eax/ecx as inputs, but reading an undeclared register is
+        // harmless once the rest of the asm has been verified effect-free.
+        // Every register it writes must be declared as an output or clobber.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "cpuid output eax not covered by output constraint or clobber";
           return false;
         }
-        if (!InputFamilies.count("cx")) {
-          Reason = "cpuid input ecx not covered by input constraint";
+        if (!isOutputOrClobber("bx")) {
+          Reason = "cpuid output ebx not covered by output constraint or clobber";
           return false;
         }
-        if (!OutputFamilies.count("ax")) {
-          Reason = "cpuid output eax not covered by output constraint";
+        if (!isOutputOrClobber("cx")) {
+          Reason = "cpuid output ecx not covered by output constraint or clobber";
           return false;
         }
-        if (!OutputFamilies.count("bx")) {
-          Reason = "cpuid output ebx not covered by output constraint";
-          return false;
-        }
-        if (!OutputFamilies.count("cx")) {
-          Reason = "cpuid output ecx not covered by output constraint";
-          return false;
-        }
-        if (!OutputFamilies.count("dx")) {
-          Reason = "cpuid output edx not covered by output constraint";
+        if (!isOutputOrClobber("dx")) {
+          Reason = "cpuid output edx not covered by output constraint or clobber";
           return false;
         }
         continue;
@@ -8408,19 +8424,12 @@ class Pizlonator {
             return false;
           }
           OperandRole role = roles[i];
-          if (role == RoleInput) {
-            if (!InputFamilies.count(family)) {
-              Reason = "literal register " + op + " not covered by input constraint";
-              return false;
-            }
-          } else if (role == RoleOutput) {
-            if (!OutputFamilies.count(family)) {
-              Reason = "literal register " + op + " not covered by output constraint";
-              return false;
-            }
-          } else {
-            if (!InputFamilies.count(family) || !OutputFamilies.count(family)) {
-              Reason = "literal register " + op + " not covered by input/output constraints";
+          // Reading an arbitrary register is safe: the asm is otherwise
+          // effect-free, so it merely sees whatever value happened to be there.
+          // Writing a register requires it to be declared as an output or clobber.
+          if (role == RoleOutput || role == RoleBoth) {
+            if (!OutputFamilies.count(family) && !ClobberFamilies.count(family)) {
+              Reason = "literal register " + op + " not covered by output constraint or clobber";
               return false;
             }
           }
