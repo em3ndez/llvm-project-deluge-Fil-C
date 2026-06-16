@@ -8000,15 +8000,23 @@ class Pizlonator {
           std::string base = "k" + std::to_string(i);
           m[base] = base;
         }
-        m["st"] = "st";
+        m["st"] = "st(0)";
         for (int i = 0; i <= 7; ++i)
-          m["st(" + std::to_string(i) + ")"] = "st";
+          m["st(" + std::to_string(i) + ")"] = "st(" + std::to_string(i) + ")";
         return m;
       }();
       auto it = familyMap.find(r);
       if (it != familyMap.end())
         return it->second;
       return "";
+    };
+
+    // Return true if the given family is one of the x87 stack registers.
+    auto isX87Family = [&](const std::string& family) -> bool {
+      if (family == "st" || family == "st(0)")
+        return true;
+      return family.size() == 5 && family.substr(0, 3) == "st(" &&
+             family[3] >= '0' && family[3] <= '7' && family[4] == ')';
     };
 
     // Parse the constraint string.
@@ -8638,8 +8646,8 @@ class Pizlonator {
         // These read the source from ST(0) and write the result to ST(0).
         // Reading ST(0) is harmless, but the destination must be declared as an
         // output or clobber.
-        if (!isOutputOrClobber("st")) {
-          Reason = baseMnemonic + " output st not covered by output constraint or clobber";
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = baseMnemonic + " output st(0) not covered by output constraint or clobber";
           return false;
         }
         continue;
@@ -8655,8 +8663,8 @@ class Pizlonator {
         // They also set the FPU condition flags (C1/C2 for fcos/fsin, C1 for
         // fsqrt). Reading ST(0) is harmless, but the destination and fpsr must be
         // declared as outputs/clobbers.
-        if (!isOutputOrClobber("st")) {
-          Reason = baseMnemonic + " output st not covered by output constraint or clobber";
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = baseMnemonic + " output st(0) not covered by output constraint or clobber";
           return false;
         }
         if (!HasFPSRClobber) {
@@ -8675,8 +8683,8 @@ class Pizlonator {
         // ST(0). It also sets the FPU condition flags (C1). Reading ST(0) is
         // harmless, but the destination and fpsr must be declared as
         // outputs/clobbers.
-        if (!isOutputOrClobber("st")) {
-          Reason = "frndint output st not covered by output constraint or clobber";
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = "frndint output st(0) not covered by output constraint or clobber";
           return false;
         }
         if (!HasFPSRClobber) {
@@ -8695,8 +8703,8 @@ class Pizlonator {
         // They also set the FPU condition flags (C0/C1/C2/C3). Reading
         // ST(0)/ST(1) is harmless, but the destination and fpsr must be
         // declared as outputs/clobbers.
-        if (!isOutputOrClobber("st")) {
-          Reason = baseMnemonic + " output st not covered by output constraint or clobber";
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = baseMnemonic + " output st(0) not covered by output constraint or clobber";
           return false;
         }
         if (!HasFPSRClobber) {
@@ -8715,13 +8723,82 @@ class Pizlonator {
         // It also sets the FPU condition flags (C1). Reading ST(0)/ST(1) is
         // harmless, but the destination and fpsr must be declared as
         // outputs/clobbers.
-        if (!isOutputOrClobber("st")) {
-          Reason = "fscale output st not covered by output constraint or clobber";
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = "fscale output st(0) not covered by output constraint or clobber";
           return false;
         }
         if (!HasFPSRClobber) {
           Reason = "fscale modifies the floating-point status register; \"fpsr\" clobber is required";
           return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fnstsw" || baseMnemonic == "fstsw") {
+        if (operands.size() > 1) {
+          Reason = baseMnemonic + " expects 0 or 1 operands";
+          return false;
+        }
+        // fnstsw/fstsw store the FPU status word to AX (or memory). Only the
+        // explicit AX destination form is allowed in safe inline asm.
+        const ParsedConstraint* axOutput = nullptr;
+        int axOutputOperandIndex = -1;
+        int operandIndex = 0;
+        for (const auto& pc : Constraints) {
+          if (pc.Kind == ParsedConstraint::Output) {
+            if (pc.Family != "ax") {
+              Reason = baseMnemonic + " output constraint must be ax";
+              return false;
+            }
+            if (axOutput) {
+              Reason = baseMnemonic + " expects exactly one output constraint";
+              return false;
+            }
+            axOutput = &pc;
+            axOutputOperandIndex = operandIndex;
+          }
+          if (pc.Kind != ParsedConstraint::Clobber)
+            ++operandIndex;
+        }
+        bool hasAxClobber = ClobberFamilies.count("ax") != 0;
+        if (!axOutput && !hasAxClobber) {
+          Reason = baseMnemonic + " requires an ax output constraint or ax clobber";
+          return false;
+        }
+        if (!operands.empty()) {
+          const std::string& op = operands[0];
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(op, ph, family, numOperandConstraints,
+                                             operandError);
+          switch (kind) {
+          case OKMemory:
+            Reason = "unsupported operand in safe inline asm: " + op;
+            return false;
+          case OKError:
+            Reason = operandError;
+            return false;
+          case OKImmediate:
+            Reason = "immediate operand not allowed in " + baseMnemonic + ": " + op;
+            return false;
+          case OKReg:
+            if (family != "ax") {
+              Reason = baseMnemonic + " operand must be ax";
+              return false;
+            }
+            break;
+          case OKPlaceholder:
+            if (!axOutput) {
+              Reason = baseMnemonic + " operand placeholder requires an ax output constraint";
+              return false;
+            }
+            if (ph != axOutputOperandIndex) {
+              Reason = baseMnemonic + " operand placeholder must refer to the ax output constraint";
+              return false;
+            }
+            break;
+          }
         }
         continue;
       }
@@ -8820,18 +8897,11 @@ class Pizlonator {
           return false;
         }
         // fxch exchanges ST(0) with ST(1) (no operand) or with ST(i). Both
-        // registers are read and written, so the st family must be covered by an
-        // output constraint or clobber. The instruction also modifies the FPU
-        // condition flags (C1 is set to 0; C0/C2/C3 are undefined), so the fpsr
-        // clobber is required.
-        if (!isOutputOrClobber("st")) {
-          Reason = "fxch output st not covered by output constraint or clobber";
-          return false;
-        }
-        if (!HasFPSRClobber) {
-          Reason = "fxch modifies the floating-point status register; \"fpsr\" clobber is required";
-          return false;
-        }
+        // registers are read and written, so each register touched must be
+        // covered by an output constraint or clobber. The instruction also
+        // modifies the FPU condition flags (C1 is set to 0; C0/C2/C3 are
+        // undefined), so the fpsr clobber is required.
+        std::string otherFamily = "st(1)";
         if (!operands.empty()) {
           const std::string& op = operands[0];
           int ph = -1;
@@ -8850,15 +8920,28 @@ class Pizlonator {
             Reason = "immediate operand not allowed in fxch: " + op;
             return false;
           case OKReg:
-            if (family != "st") {
+            if (!isX87Family(family)) {
               Reason = "fxch operand must be an x87 register: " + op;
               return false;
             }
+            otherFamily = family;
             break;
           case OKPlaceholder:
             Reason = "operand placeholder not allowed in fxch: " + op;
             return false;
           }
+        }
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = "fxch output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber(otherFamily)) {
+          Reason = "fxch output " + otherFamily + " not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = "fxch modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
         }
         continue;
       }
@@ -8939,7 +9022,7 @@ class Pizlonator {
             Reason = "immediate operand not allowed in " + baseMnemonic + ": " + op;
             return false;
           case OKReg:
-            if (family != "st") {
+            if (!isX87Family(family)) {
               Reason = baseMnemonic + " operands must be x87 registers: " + op;
               return false;
             }
