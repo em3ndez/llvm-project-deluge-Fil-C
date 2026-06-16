@@ -8000,6 +8000,9 @@ class Pizlonator {
           std::string base = "k" + std::to_string(i);
           m[base] = base;
         }
+        m["st"] = "st";
+        for (int i = 0; i <= 7; ++i)
+          m["st(" + std::to_string(i) + ")"] = "st";
         return m;
       }();
       auto it = familyMap.find(r);
@@ -8019,6 +8022,7 @@ class Pizlonator {
 
     std::vector<ParsedConstraint> Constraints;
     bool HasCCClobber = false;
+    bool HasFPSRClobber = false;
     std::unordered_set<std::string> ClobberFamilies;
 
     std::string ConstraintStr = IA->getConstraintString();
@@ -8043,9 +8047,10 @@ class Pizlonator {
           std::string name = toLowerStr(cstr.substr(2, cstr.size() - 3));
           if (name == "cc")
             HasCCClobber = true;
-          else if (name == "memory" || name == "dirflag" || name == "fpsr" ||
-                   name == "flags") {
-            // memory, dirflag, fpsr, and flags clobbers are allowed.
+          else if (name == "memory" || name == "dirflag" || name == "flags") {
+            // memory, dirflag, and flags clobbers are allowed.
+          } else if (name == "fpsr") {
+            HasFPSRClobber = true;
           } else {
             std::string family = getRegFamily(name);
             if (family.empty()) {
@@ -8217,9 +8222,34 @@ class Pizlonator {
         return true;
       }
 
-      if (m == "cpuid" || m == "xgetbv") {
-        baseMnemonic = mnem;
+      if (m.starts_with("fcmov")) {
+        StringRef suffix = m.drop_front(5);
+        static const std::unordered_set<std::string> conds = {
+          "b", "c", "nae", "nb", "nc", "ae",
+          "e", "z", "ne", "nz",
+          "be", "na", "nbe", "a",
+          "u", "nu"
+        };
+        if (!conds.count(suffix.str()))
+          return false;
+        baseMnemonic = "fcmov";
         setsFlags = false;
+        roles = {RoleInput, RoleBoth};
+        return true;
+      }
+
+      if (m == "cpuid" || m == "xgetbv" || m == "cbw" || m == "cwde" ||
+          m == "cdqe" || m == "cwd" || m == "cdq" || m == "cqo" ||
+          m == "clc" || m == "cld" || m == "cmc" || m == "fabs" ||
+          m == "fchs" || m == "fclex" || m == "fnclex" || m == "fcos" ||
+          m == "fninit" ||
+          m == "fcom" || m == "fcomi" || m == "fucomi" ||
+          m == "fdiv" || m == "fdivr" ||
+          m == "fmul" ||
+          m == "fincstp") {
+        baseMnemonic = mnem;
+        setsFlags = (m == "clc" || m == "cld" || m == "cmc" ||
+                     m == "fcomi" || m == "fucomi");
         roles.clear();
         return true;
       }
@@ -8242,7 +8272,48 @@ class Pizlonator {
         {"mov", {false, {RoleInput, RoleOutput}}},
         {"test", {true, {RoleInput, RoleInput}}},
         {"cmp", {true, {RoleInput, RoleInput}}},
+        {"cmppd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"cmpps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"cmpss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"comisd", {true, {RoleInput, RoleInput}}},
+        {"comiss", {true, {RoleInput, RoleInput}}},
+        {"cvtdq2pd", {false, {RoleInput, RoleOutput}}},
+        {"cvtdq2ps", {false, {RoleInput, RoleOutput}}},
+        {"cvtpd2ps", {false, {RoleInput, RoleOutput}}},
+        // cvtpd2dq ends in 'q', so the parser strips the suffix and looks up cvtpd2d.
+        {"cvtpd2d", {false, {RoleInput, RoleOutput}}},
+        // cvttpd2dq ends in 'q', so the parser strips the suffix and looks up cvttpd2d.
+        {"cvttpd2d", {false, {RoleInput, RoleOutput}}},
+        // cvtps2dq ends in 'q', so the parser strips the suffix and looks up cvtps2d.
+        {"cvtps2d", {false, {RoleInput, RoleOutput}}},
+        // cvttps2dq ends in 'q', so the parser strips the suffix and looks up cvttps2d.
+        {"cvttps2d", {false, {RoleInput, RoleOutput}}},
+        {"cvtpd2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvttpd2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvtpi2pd", {false, {RoleInput, RoleOutput}}},
+        {"cvtpi2ps", {false, {RoleInput, RoleBoth}}},
+        {"cvtps2pd", {false, {RoleInput, RoleOutput}}},
+        {"cvtps2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvttps2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvtsd2si", {false, {RoleInput, RoleOutput}}},
+        {"cvtsd2ss", {false, {RoleInput, RoleBoth}}},
+        {"cvttsd2si", {false, {RoleInput, RoleOutput}}},
+        {"cvtss2si", {false, {RoleInput, RoleOutput}}},
+        {"cvttss2si", {false, {RoleInput, RoleOutput}}},
+        {"cvtsi2sd", {false, {RoleInput, RoleOutput}}},
+        {"cvtsi2ss", {false, {RoleInput, RoleOutput}}},
+        {"cvtss2sd", {false, {RoleInput, RoleBoth}}},
+        {"extractps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"dec", {true, {RoleBoth}}},
+        {"div", {true, {RoleInput}}},
+        {"cmpxchg", {true, {RoleInput, RoleBoth}}},
+        {"crc32", {true, {RoleInput, RoleBoth}}},
         {"bsf", {true, {RoleInput, RoleOutput}}},
+        {"bsr", {true, {RoleInput, RoleOutput}}},
+        {"bt", {true, {RoleInput, RoleInput}}},
+        {"btc", {true, {RoleInput, RoleBoth}}},
+        {"btr", {true, {RoleInput, RoleBoth}}},
+        {"bts", {true, {RoleInput, RoleBoth}}},
         {"andn", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"addpd", {false, {RoleInput, RoleBoth}}},
         {"addps", {false, {RoleInput, RoleBoth}}},
@@ -8250,6 +8321,12 @@ class Pizlonator {
         {"addss", {false, {RoleInput, RoleBoth}}},
         {"addsubpd", {false, {RoleInput, RoleBoth}}},
         {"addsubps", {false, {RoleInput, RoleBoth}}},
+        {"divpd", {false, {RoleInput, RoleBoth}}},
+        {"divps", {false, {RoleInput, RoleBoth}}},
+        {"divsd", {false, {RoleInput, RoleBoth}}},
+        {"divss", {false, {RoleInput, RoleBoth}}},
+        {"dppd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"dpps", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"aesdec", {false, {RoleInput, RoleBoth}}},
         {"aesdeclast", {false, {RoleInput, RoleBoth}}},
         {"aesenc", {false, {RoleInput, RoleBoth}}},
@@ -8261,8 +8338,12 @@ class Pizlonator {
         {"andps", {false, {RoleInput, RoleBoth}}},
         {"blendpd", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"blendps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"blendvpd", {false, {RoleInput, RoleBoth}}},
+        {"blendvps", {false, {RoleInput, RoleBoth}}},
         {"vblendpd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vblendps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vdppd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vdpps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vandnpd", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vandnps", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vandpd", {false, {RoleInput, RoleInput, RoleOutput}}},
@@ -8274,9 +8355,11 @@ class Pizlonator {
         {"vaesenc", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vaesenclast", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"bextr", {true, {RoleInput, RoleInput, RoleOutput}}},
+        {"bzhi", {true, {RoleInput, RoleInput, RoleOutput}}},
         {"blsi", {true, {RoleInput, RoleOutput}}},
         {"blsmsk", {true, {RoleInput, RoleOutput}}},
         {"blsr", {true, {RoleInput, RoleOutput}}},
+        {"bswap", {false, {RoleBoth}}},
       };
       auto it = info.find(base.str());
       if (it == info.end())
@@ -8502,6 +8585,289 @@ class Pizlonator {
         continue;
       }
 
+      if (baseMnemonic == "cbw" || baseMnemonic == "cwde" ||
+          baseMnemonic == "cdqe") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These sign-extend into ax/eax/rax. Reading the source register is
+        // harmless, but the destination must be declared as an output or clobber.
+        if (!isOutputOrClobber("ax")) {
+          Reason = baseMnemonic + " output ax not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cwd" || baseMnemonic == "cdq" ||
+          baseMnemonic == "cqo") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These sign-extend into dx:ax/edx:eax/rdx:rax. Reading the source
+        // register is harmless, but the destination (dx) must be declared as an
+        // output or clobber.
+        if (!isOutputOrClobber("dx")) {
+          Reason = baseMnemonic + " output dx not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fabs" || baseMnemonic == "fchs") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These read the source from ST(0) and write the result to ST(0).
+        // Reading ST(0) is harmless, but the destination must be declared as an
+        // output or clobber.
+        if (!isOutputOrClobber("st")) {
+          Reason = baseMnemonic + " output st not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fcos") {
+        if (!operands.empty()) {
+          Reason = "fcos takes no operands";
+          return false;
+        }
+        // fcos reads the source from ST(0) and writes the result to ST(0). It
+        // also sets the FPU condition flags (C1/C2). Reading ST(0) is harmless,
+        // but the destination and fpsr must be declared as outputs/clobbers.
+        if (!isOutputOrClobber("st")) {
+          Reason = "fcos output st not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = "fcos modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fclex" || baseMnemonic == "fnclex") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These clear the x87 floating-point exception flags in the floating-point
+        // status register. The user must declare the fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fninit") {
+        if (!operands.empty()) {
+          Reason = "fninit takes no operands";
+          return false;
+        }
+        // fninit initializes the x87 FPU, resetting the control word, status
+        // word, tag word, and pointer registers. The user must declare the fpsr
+        // clobber.
+        if (!HasFPSRClobber) {
+          Reason = "fninit modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fincstp") {
+        if (!operands.empty()) {
+          Reason = "fincstp takes no operands";
+          return false;
+        }
+        // fincstp increments the x87 stack-top pointer (TOP field of the
+        // floating-point status register). The user must declare the fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = "fincstp modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fcom") {
+        if (!operands.empty()) {
+          Reason = "fcom takes no operands";
+          return false;
+        }
+        // fcom reads ST(0) and ST(1) and sets the FPU condition flags in the
+        // floating-point status register. The user must declare the fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = "fcom modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fcomi" || baseMnemonic == "fucomi") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // fcomi/fucomi read ST(0) and ST(i) and set the integer condition codes.
+        // The user must declare the cc clobber.
+        if (!HasCCClobber) {
+          Reason = baseMnemonic + " sets the condition codes; \"cc\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      auto isX87RegOperand = [&](const std::string& op) -> bool {
+        if (op.size() < 3 || op[0] != '%' || op[1] != 's' || op[2] != 't')
+          return false;
+        if (op.size() == 3)
+          return true;
+        if (op.size() < 5 || op[3] != '(' || op.back() != ')')
+          return false;
+        for (size_t i = 4; i + 1 < op.size(); ++i) {
+          if (!std::isdigit(static_cast<unsigned char>(op[i])))
+            return false;
+        }
+        return true;
+      };
+
+      if (baseMnemonic == "fdiv" || baseMnemonic == "fdivr" ||
+          baseMnemonic == "fmul") {
+        // Only the explicit-operand forms of FDIV/FDIVR/FMUL are supported.
+        // The no-operand popping forms and the popping suffixed forms (FDIVP,
+        // FDIVRP, FMULP) manipulate the x87 register stack and are rejected.
+        if (operands.empty()) {
+          Reason = baseMnemonic + " with no operands pops the x87 register stack and is not supported";
+          return false;
+        }
+        // All forms modify the floating-point status register (exception flags
+        // and/or C1).
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        // Normalize one-operand forms to two-operand forms.
+        std::vector<std::string> effectiveOperands = operands;
+        if (effectiveOperands.size() == 1) {
+          effectiveOperands.push_back("%st");
+        } else if (effectiveOperands.size() != 2) {
+          Reason = baseMnemonic + " expects 1 or 2 operands";
+          return false;
+        }
+        // These instructions use src,dst operand ordering in AT&T syntax.
+        std::vector<OperandRole> fdivRoles = {RoleInput, RoleBoth};
+        for (size_t i = 0; i < effectiveOperands.size(); ++i) {
+          const std::string& op = effectiveOperands[i];
+          if (!isX87RegOperand(op) && op.find_first_of("()[]") != std::string::npos) {
+            Reason = "memory/indirect operand not allowed in safe inline asm: " + op;
+            return false;
+          }
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(op, ph, family, numOperandConstraints,
+                                             operandError);
+          switch (kind) {
+          case OKMemory:
+            Reason = "unsupported operand in safe inline asm: " + op;
+            return false;
+          case OKError:
+            Reason = operandError;
+            return false;
+          case OKImmediate:
+            Reason = "immediate operand not allowed in " + baseMnemonic + ": " + op;
+            return false;
+          case OKReg:
+            if (family != "st") {
+              Reason = baseMnemonic + " operands must be x87 registers: " + op;
+              return false;
+            }
+            if (fdivRoles[i] == RoleBoth) {
+              if (!OutputFamilies.count(family) && !ClobberFamilies.count(family)) {
+                Reason = "literal register " + op + " not covered by output constraint or clobber";
+                return false;
+              }
+            }
+            break;
+          case OKPlaceholder:
+            Reason = "operand placeholder not allowed in " + baseMnemonic + ": " + op;
+            return false;
+          }
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cmpxchg") {
+        // cmpxchg compares the accumulator (ax) against the destination and
+        // writes ax as well as the destination. The destination is covered by
+        // the generic operand checks, but the implicit ax write must be
+        // declared.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "cmpxchg output/clobber ax not covered by output constraint or clobber";
+          return false;
+        }
+      }
+
+      if (baseMnemonic == "div") {
+        // div divides the implicit dividend in ax (or dx:ax) by the explicit
+        // operand. The quotient goes to ax and the remainder to dx (for sizes
+        // larger than byte). Reading the implicit dividend registers is
+        // harmless, but every register written must be declared as an output
+        // or clobber. div also leaves the condition codes undefined.
+        if (operands.size() != 1) {
+          Reason = "div expects one operand";
+          return false;
+        }
+        int size = 0;
+        if (!mnemonic.empty()) {
+          char suffix = mnemonic.back();
+          if (suffix == 'b')
+            size = 8;
+          else if (suffix == 'w')
+            size = 16;
+          else if (suffix == 'l')
+            size = 32;
+          else if (suffix == 'q')
+            size = 64;
+        }
+        if (size == 0 && !operands[0].empty() && operands[0][0] == '%') {
+          std::string reg = toLowerStr(operands[0].substr(1));
+          if (reg == "al" || reg == "bl" || reg == "cl" || reg == "dl" ||
+              reg == "ah" || reg == "bh" || reg == "ch" || reg == "dh" ||
+              reg == "r8b" || reg == "r9b" || reg == "r10b" || reg == "r11b" ||
+              reg == "r12b" || reg == "r13b" || reg == "r14b" || reg == "r15b")
+            size = 8;
+          else if (reg == "ax" || reg == "bx" || reg == "cx" || reg == "dx" ||
+                   reg == "si" || reg == "di" || reg == "bp" || reg == "sp" ||
+                   (reg.size() >= 2 && reg.substr(reg.size() - 1) == "w"))
+            size = 16;
+          else if (reg == "eax" || reg == "ebx" || reg == "ecx" || reg == "edx" ||
+                   reg == "esi" || reg == "edi" || reg == "ebp" || reg == "esp" ||
+                   (reg.size() >= 2 && reg.substr(reg.size() - 1) == "d"))
+            size = 32;
+          else if (reg == "rax" || reg == "rbx" || reg == "rcx" || reg == "rdx" ||
+                   reg == "rsi" || reg == "rdi" || reg == "rbp" || reg == "rsp" ||
+                   (reg.size() >= 2 && reg.substr(reg.size() - 1) == "q") ||
+                   (reg.size() >= 2 && reg[0] == 'r' &&
+                    std::isdigit(static_cast<unsigned char>(reg[1]))))
+            size = 64;
+        }
+        if (!isOutputOrClobber("ax")) {
+          Reason = "div output/clobber ax not covered by output constraint or clobber";
+          return false;
+        }
+        if (size == 0 || size > 8) {
+          if (!isOutputOrClobber("dx")) {
+            Reason = "div output/clobber dx not covered by output constraint or clobber";
+            return false;
+          }
+        }
+      }
+
       if (baseMnemonic == "sar" || baseMnemonic == "shr" ||
           baseMnemonic == "shl") {
         if (operands.size() == 1)
@@ -8517,7 +8883,7 @@ class Pizlonator {
 
       for (size_t i = 0; i < operands.size(); ++i) {
         const std::string& op = operands[i];
-        if (op.find_first_of("()[]") != std::string::npos) {
+        if (!isX87RegOperand(op) && op.find_first_of("()[]") != std::string::npos) {
           Reason = "memory/indirect operand not allowed in safe inline asm: " + op;
           return false;
         }
