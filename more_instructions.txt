@@ -83,4 +83,7 @@ Then the toplevel agent should spawn another identical subagent.
 
 Stop if the subagent gets stuck repeatedly processing the same exact instruction as the previous subagent already processed. Stop if the subagent reports that there are no more instructions to process. Stop if the subagent reports that the instructions_stop file told it to stop, or if you see that the instructions_stop file exists.
 
+NOTE: The instructions_stop file appears because the user created it. Do not question why it was created. If it exists, that means that the user wants you to stop implementing more instructions.
+
+
 

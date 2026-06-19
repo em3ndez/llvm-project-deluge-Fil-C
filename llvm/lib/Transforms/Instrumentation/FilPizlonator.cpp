@@ -8327,6 +8327,7 @@ class Pizlonator {
           m == "frndint" || m == "fsin" || m == "fsqrt" ||
           m == "fninit" || m == "fnop" ||
           m == "fwait" || m == "wait" ||
+          m == "pause" ||
           m == "fcom" || m == "fucom" || m == "fcomi" || m == "fucomi" ||
           m == "ftst" || m == "fxam" || m == "fxch" ||
           m == "fdiv" || m == "fdivr" ||
@@ -8486,6 +8487,8 @@ class Pizlonator {
         {"vgf2p8affineq", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"gf2p8mul", {false, {RoleInput, RoleBoth}}},
         {"vgf2p8mul", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pclmulqdq", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpclmulqdq", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"aesdec", {false, {RoleInput, RoleBoth}}},
         {"aesdeclast", {false, {RoleInput, RoleBoth}}},
         {"aesenc", {false, {RoleInput, RoleBoth}}},
@@ -8497,12 +8500,48 @@ class Pizlonator {
         {"andps", {false, {RoleInput, RoleBoth}}},
         {"orpd", {false, {RoleInput, RoleBoth}}},
         {"orps", {false, {RoleInput, RoleBoth}}},
+        {"pabsb", {false, {RoleInput, RoleOutput}}},
+        {"pabsd", {false, {RoleInput, RoleOutput}}},
+        {"pabsw", {false, {RoleInput, RoleOutput}}},
+        {"paddb", {false, {RoleInput, RoleBoth}}},
+        {"paddd", {false, {RoleInput, RoleBoth}}},
+        {"paddq", {false, {RoleInput, RoleBoth}}},
+        {"paddsb", {false, {RoleInput, RoleBoth}}},
+        {"paddsw", {false, {RoleInput, RoleBoth}}},
+        {"paddusb", {false, {RoleInput, RoleBoth}}},
+        {"paddusw", {false, {RoleInput, RoleBoth}}},
+        {"paddw", {false, {RoleInput, RoleBoth}}},
+        {"packssdw", {false, {RoleInput, RoleBoth}}},
+        {"packsswb", {false, {RoleInput, RoleBoth}}},
+        {"packusdw", {false, {RoleInput, RoleBoth}}},
+        {"packuswb", {false, {RoleInput, RoleBoth}}},
+        {"palignr", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pand", {false, {RoleInput, RoleBoth}}},
+        {"pandn", {false, {RoleInput, RoleBoth}}},
+        {"pavgb", {false, {RoleInput, RoleBoth}}},
+        {"pavgw", {false, {RoleInput, RoleBoth}}},
+        {"pblendvb", {false, {RoleInput, RoleBoth}}},
+        {"pblendw", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pcmpeqb", {false, {RoleInput, RoleBoth}}},
+        {"pcmpeqd", {false, {RoleInput, RoleBoth}}},
+        {"pcmpeqq", {false, {RoleInput, RoleBoth}}},
+        {"pcmpeqw", {false, {RoleInput, RoleBoth}}},
+        {"pcmpestri", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"pcmpestrm", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"pcmpgtb", {false, {RoleInput, RoleBoth}}},
+        {"pcmpgtd", {false, {RoleInput, RoleBoth}}},
+        {"pcmpgtq", {false, {RoleInput, RoleBoth}}},
+        {"pcmpgtw", {false, {RoleInput, RoleBoth}}},
+        {"pcmpistri", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"pcmpistrm", {true, {RoleInput, RoleInput, RoleInput}}},
         {"blendpd", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"blendps", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"blendvpd", {false, {RoleInput, RoleBoth}}},
         {"blendvps", {false, {RoleInput, RoleBoth}}},
         {"vblendpd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vblendps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vpblendvb", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vpblendw", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vdppd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vdpps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vmpsadbw", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
@@ -8523,6 +8562,46 @@ class Pizlonator {
         {"blsi", {true, {RoleInput, RoleOutput}}},
         {"blsmsk", {true, {RoleInput, RoleOutput}}},
         {"blsr", {true, {RoleInput, RoleOutput}}},
+        {"pdep", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pext", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrb", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrq", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pinsrb", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pinsrd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pinsrq", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pinsrw", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"phaddw", {false, {RoleInput, RoleBoth}}},
+        {"vphaddw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phaddd", {false, {RoleInput, RoleBoth}}},
+        {"vphaddd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phaddsw", {false, {RoleInput, RoleBoth}}},
+        {"vphaddsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phsubw", {false, {RoleInput, RoleBoth}}},
+        {"vphsubw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phsubd", {false, {RoleInput, RoleBoth}}},
+        {"vphsubd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phsubsw", {false, {RoleInput, RoleBoth}}},
+        {"vphsubsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phminposuw", {false, {RoleInput, RoleOutput}}},
+        {"vphminposuw", {false, {RoleInput, RoleOutput}}},
+        {"pmaddubsw", {false, {RoleInput, RoleBoth}}},
+        {"vpmaddubsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaddwd", {false, {RoleInput, RoleBoth}}},
+        {"vpmaddwd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxsb", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxsb", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxsd", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxsd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxsw", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxub", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxub", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxud", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxud", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxuw", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxuw", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"bswap", {false, {RoleBoth}}},
         {"not", {false, {RoleBoth}}},
         {"lar", {true, {RoleInput, RoleOutput}}},
@@ -8875,6 +8954,32 @@ class Pizlonator {
       auto isOutputOrClobber = [&](const std::string& family) -> bool {
         return OutputFamilies.count(family) || ClobberFamilies.count(family);
       };
+
+      // PCMPESTRI/PCMPISTRI write the result index to ECX and set the arithmetic
+      // flags. Their three explicit operands (xmm1, xmm2, imm8) are all inputs;
+      // PCMPESTRI also reads EAX/RAX and EDX/RDX implicitly, but reading
+      // registers is harmless. The output ECX must be declared as an output or
+      // clobber, and the flags require a "cc" clobber (checked below). Fall
+      // through to the generic operand validation for the explicit operands.
+      if (baseMnemonic == "pcmpestri" || baseMnemonic == "pcmpistri") {
+        if (!isOutputOrClobber("cx")) {
+          Reason = baseMnemonic + " output ecx not covered by output constraint or clobber";
+          return false;
+        }
+      }
+
+      // PCMPESTRM/PCMPISTRM write the result mask to XMM0 and set the arithmetic
+      // flags. Their three explicit operands (xmm1, xmm2, imm8) are all inputs;
+      // PCMPESTRM also reads EAX/RAX and EDX/RDX implicitly, but reading
+      // registers is harmless. The output XMM0 must be declared as an output or
+      // clobber, and the flags require a "cc" clobber (checked below). Fall
+      // through to the generic operand validation for the explicit operands.
+      if (baseMnemonic == "pcmpestrm" || baseMnemonic == "pcmpistrm") {
+        if (!isOutputOrClobber("xmm0")) {
+          Reason = baseMnemonic + " output xmm0 not covered by output constraint or clobber";
+          return false;
+        }
+      }
 
       if (baseMnemonic == "cpuid") {
         if (!operands.empty()) {
