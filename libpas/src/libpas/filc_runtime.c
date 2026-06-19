@@ -39,6 +39,7 @@
 #include "filc_native.h"
 #include "filc_runtime_inlines.h"
 #include "filc_sampling_profiler.h"
+#include "filc_setproctitle.h"
 #include "fugc.h"
 #include "pas_hashtable.h"
 #include "pas_scavenger.h"
@@ -6602,9 +6603,14 @@ void filc_execute_constant_relocations(
 }
 
 void filc_set_user_environment(filc_thread* my_thread,
-                               int argc, filc_ptr argv, filc_ptr environ, filc_ptr auxv)
+                               int argc, char** native_argv,
+                               filc_ptr argv, filc_ptr environ, filc_ptr auxv)
 {
     PAS_ASSERT(!user_environment_is_set);
+
+    /* This is needed to support setproctitle. */
+    filc_setproctitle_initialize(argc, native_argv);
+    
     user_argc = argc;
     filc_flight_ptr_store(my_thread, &user_argv, argv);
     filc_flight_ptr_store(my_thread, &user_environ, environ);
@@ -13360,6 +13366,11 @@ bool filc_native_zget_quiet_panic(filc_thread* my_thread)
 {
     PAS_UNUSED_PARAM(my_thread);
     return filc_quiet_panic;
+}
+
+void filc_native_zsetproctitle(filc_thread* my_thread, filc_ptr title_ptr)
+{
+    filc_setproctitle(filc_check_and_get_tmp_str(my_thread, title_ptr));
 }
 
 void filc_get_bool_env(const char* name, bool* value_ptr)

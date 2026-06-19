@@ -207,6 +207,7 @@ addSig "void", "zdump_pas_status"
 addSig "void", "zset_scavenger_periods_to_1ms"
 addSig "void", "zset_quiet_panic", "bool"
 addSig "bool", "zget_quiet_panic"
+addSig "void", "zsetproctitle", "filc_ptr"
 
 addSig "int", "zsys_ioctl", "int", "int", "..."
 addSig "ssize_t", "zsys_writev", "int", "filc_ptr", "int"

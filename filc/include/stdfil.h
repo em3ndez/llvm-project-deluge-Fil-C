@@ -874,6 +874,10 @@ void zset_quiet_panic(filc_bool value);
 /* Tells if quiet panic mode is enabled. */
 filc_bool zget_quiet_panic(void);
 
+/* Set the process title. `title` must be a null-terminated string (otherwise you may get a panic).
+   The title may be truncated. */
+void zsetproctitle(const char* title);
+
 #ifdef __cplusplus
 }
 #endif
