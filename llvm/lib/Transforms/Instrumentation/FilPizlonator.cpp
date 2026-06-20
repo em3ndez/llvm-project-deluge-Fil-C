@@ -9665,7 +9665,11 @@ class Pizlonator {
         }
         // SAHF loads EFLAGS (SF, ZF, AF, PF, CF) from AH. Reading AH is
         // harmless, but the instruction sets the arithmetic flags, so the "cc"
-        // clobber is required (checked below via AnySetsFlags).
+        // clobber is required.
+        if (!HasCCClobber) {
+          Reason = "sahf sets the condition codes; \"cc\" clobber is required";
+          return false;
+        }
         continue;
       }
 
