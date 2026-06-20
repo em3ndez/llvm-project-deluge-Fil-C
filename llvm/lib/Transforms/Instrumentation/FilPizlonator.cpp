@@ -8366,6 +8366,7 @@ class Pizlonator {
           m == "fprem" || m == "fprem1" ||
           m == "fscale" ||
           m == "fincstp" ||
+          m == "vzeroupper" || m == "vzeroall" ||
           m == "ud2") {
         baseMnemonic = mnem;
         setsFlags = (m == "clc" || m == "cld" || m == "cmc" ||
@@ -8495,6 +8496,18 @@ class Pizlonator {
         {"mul", {true, {RoleInput}}},
         {"imul", {true, {RoleInput}}},
         {"cmpxchg", {true, {RoleInput, RoleBoth}}},
+        // XADD (exchange and add): Intel order XADD dest, src. Computes
+        // temp=dest; dest=dest+src; src=temp. Both operands are read and
+        // written, and the arithmetic flags (CF/OF/SF/ZF/AF/PF) are set like
+        // ADD. AT&T order reverses the operands (src, dest). Only the
+        // register-to-register form is safe; the memory form (which has an
+        // implicit LOCK) is rejected by the generic memory-operand check below.
+        {"xadd", {true, {RoleBoth, RoleBoth}}},
+        // XCHG (exchange): Intel order XCHG dest, src. Swaps the two operands;
+        // both are read and written. No flags are modified. Only the
+        // register-to-register form is safe; the memory form (which has an
+        // implicit LOCK) is rejected by the generic memory-operand check below.
+        {"xchg", {false, {RoleBoth, RoleBoth}}},
         {"crc32", {true, {RoleInput, RoleBoth}}},
         {"bsf", {true, {RoleInput, RoleOutput}}},
         {"bsr", {true, {RoleInput, RoleOutput}}},
@@ -8616,6 +8629,31 @@ class Pizlonator {
         {"vfnmadd213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"vfnmadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"vfnmadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFNMSUB132/213/231{PD,PS,SD,SS} (FMA3): fused negative multiply-Subtract
+        // of packed or scalar floating-point values. Computes
+        // -(src_i * src_j) - src_k with the 132/213/231 suffix selecting which
+        // operands are multiplied/subtracted. Identical 3-operand structure and
+        // safety properties as VFNMADD above: the destination is also the first
+        // source operand (read and written), the other two sources are read-only,
+        // no EFLAGS are modified, and the scalar (SD/SS) variants preserve the
+        // upper elements of the destination. Only the VEX-encoded
+        // (register-to-register) forms are supported; the EVEX (AVX-512) forms
+        // and memory forms are rejected (the latter by the generic memory-operand
+        // check below).
+        {"vfnmsub132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"vmovshdup", {false, {RoleInput, RoleOutput}}},
         {"vmovsldup", {false, {RoleInput, RoleOutput}}},
         // VBROADCASTSS/VBROADCASTSD (AVX2): broadcast the low element of a
@@ -8626,6 +8664,17 @@ class Pizlonator {
         // generic memory-operand rejection below blocks any memory form.
         {"vbroadcastss", {false, {RoleInput, RoleOutput}}},
         {"vbroadcastsd", {false, {RoleInput, RoleOutput}}},
+        // VPBROADCASTB/W/D/Q (AVX2): broadcast the low byte/word/dword/qword
+        // element of the source register to all locations in the destination
+        // register. AT&T order: src, dst. The source is read-only and the
+        // destination is write-only; no flags are modified. Only the VEX-encoded
+        // (register-to-register) forms are supported; the EVEX (AVX-512) forms
+        // and memory forms are rejected (the latter by the generic
+        // memory-operand rejection below).
+        {"vpbroadcastb", {false, {RoleInput, RoleOutput}}},
+        {"vpbroadcastw", {false, {RoleInput, RoleOutput}}},
+        {"vpbroadcastd", {false, {RoleInput, RoleOutput}}},
+        {"vpbroadcastq", {false, {RoleInput, RoleOutput}}},
         {"divpd", {false, {RoleInput, RoleBoth}}},
         {"divps", {false, {RoleInput, RoleBoth}}},
         {"divsd", {false, {RoleInput, RoleBoth}}},
@@ -8669,6 +8718,14 @@ class Pizlonator {
         {"vgf2p8mul", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"pclmulqdq", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"vpclmulqdq", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // AVX-VNNI dot-product-accumulate instructions. These are VEX-encoded
+        // three-operand instructions: VPDPBUSD xmm1, xmm2, xmm3/m128. The
+        // destination (xmm1) accumulates the result (read+written). AT&T operand
+        // order is src2, src1, dest.
+        {"vpdpbusd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpdpbusds", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpdpwssd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpdpwssds", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"aesdec", {false, {RoleInput, RoleBoth}}},
         {"aesdeclast", {false, {RoleInput, RoleBoth}}},
         {"aesenc", {false, {RoleInput, RoleBoth}}},
@@ -8692,6 +8749,13 @@ class Pizlonator {
         {"andps", {false, {RoleInput, RoleBoth}}},
         {"orpd", {false, {RoleInput, RoleBoth}}},
         {"orps", {false, {RoleInput, RoleBoth}}},
+        // XORPD/XORPS (SSE2/SSE): bitwise XOR of packed double/single
+        // precision values. Intel order: dest, src. The destination is read and
+        // written (RoleBoth), the source is read-only. No flags are modified.
+        // Register-to-register forms are available; memory forms are rejected
+        // by the generic memory-operand check below.
+        {"xorpd", {false, {RoleInput, RoleBoth}}},
+        {"xorps", {false, {RoleInput, RoleBoth}}},
         {"pabsb", {false, {RoleInput, RoleOutput}}},
         {"pabsd", {false, {RoleInput, RoleOutput}}},
         {"pabsw", {false, {RoleInput, RoleOutput}}},
@@ -8737,6 +8801,7 @@ class Pizlonator {
         {"vblendps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vpblendvb", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vpblendw", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vpblendd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vdppd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vdpps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vmpsadbw", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
@@ -8809,6 +8874,18 @@ class Pizlonator {
         {"vpminud", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"pminuw", {false, {RoleInput, RoleBoth}}},
         {"vpminuw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPSLLVD/VPSLLVQ/VPSRAVD/VPSRLVD/VPSRLVQ (AVX2): variable packed bit
+        // shifts. Each element of src1 is shifted by the count held in the
+        // corresponding element of src2. VEX-encoded three-operand forms
+        // (xmm/ymm) only; no flags are modified. AT&T operand order is
+        // src2, src1, dest -> {RoleInput, RoleInput, RoleOutput}. The EVEX
+        // (AVX-512) variants and memory forms are rejected (the latter by the
+        // generic memory-operand rejection below).
+        {"vpsllvd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsllvq", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsravd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsrlvd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsrlvq", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"pmovmskb", {false, {RoleInput, RoleOutput}}},
         {"vpmovmskb", {false, {RoleInput, RoleOutput}}},
         {"pmovsxbw", {false, {RoleInput, RoleOutput}}},
@@ -8967,6 +9044,89 @@ class Pizlonator {
         // (VEXTRACTI32x4/I64x2/I32x8/I64x4) are not supported. Memory forms
         // are rejected by the generic memory-operand check below.
         {"vextracti128", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VINSERTF128 (AVX): insert a 128-bit packed floating-point lane from
+        // an XMM source into a 256-bit YMM destination, copying the remaining
+        // lane from a second YMM source. Intel order: dst, src1, src2, imm8.
+        // AT&T order: $imm8, src2, src1, dst. The imm8[0] selects the low (0)
+        // or high (1) 128-bit lane to receive src2; the other lane comes from
+        // src1. Both sources are read-only and the destination is write-only
+        // (all bits come from the two sources, dst is never read); no flags
+        // are modified. Only the VEX-encoded (AVX) register-to-register form is
+        // supported; the EVEX-encoded (AVX-512) variants
+        // (VINSERTF32x4/F64x2/F32x8/F64x4) are not supported. Memory forms are
+        // rejected by the generic memory-operand check below.
+        {"vinsertf128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VINSERTI128 (AVX2): insert a 128-bit packed integer lane from an XMM
+        // source into a 256-bit YMM destination, copying the remaining lane
+        // from a second YMM source. Same structure as VINSERTF128 but for
+        // integer data. Only the VEX-encoded (AVX2) register-to-register form
+        // is supported; the EVEX-encoded (AVX-512) variants
+        // (VINSERTI32x4/I64x2/I32x8/I64x4) are not supported. Memory forms are
+        // rejected by the generic memory-operand check below.
+        {"vinserti128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VPERM2F128 (AVX): permute 128-bit floating-point lanes from two YMM
+        // sources into a YMM destination under control of an imm8. Intel order:
+        // dst, src1, src2, imm8. AT&T order: $imm8, src2, src1, dst. The
+        // destination is write-only (ModRM:reg (w)); both sources are read-only;
+        // no flags are modified. Only the VEX-encoded (AVX) register-to-register
+        // form is supported; memory forms are rejected by the generic
+        // memory-operand check below.
+        {"vperm2f128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VPERM2I128 (AVX2): permute 128-bit integer lanes from two YMM sources
+        // into a YMM destination under control of an imm8. Identical operand
+        // structure and safety properties as VPERM2F128 but for integer data.
+        // Only the VEX-encoded (AVX2) register-to-register form is supported;
+        // memory forms are rejected by the generic memory-operand check below.
+        {"vperm2i128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VPERMD (AVX2): permute doubleword elements of a YMM source using
+        // indices from a second YMM source, storing the result in a YMM
+        // destination. Intel order: dst, src1(idx), src2. AT&T order: src2,
+        // src1, dst. The destination is write-only (ModRM:reg (w)); both sources
+        // are read-only; no flags are modified. Only the VEX-encoded (AVX2)
+        // register-to-register form is supported; the EVEX (AVX-512) forms and
+        // memory forms are rejected (the latter by the generic memory-operand
+        // check below).
+        {"vpermd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMILPD (AVX): permute in-lane pairs of double-precision values.
+        // Two register-only forms: the variable form
+        //   VPERMILPD xmm1, xmm2, xmm3/m128
+        // (Intel order: dst, data, control) and the immediate form
+        //   VPERMILPD xmm1, xmm2/m128, imm8
+        // (Intel order: dst, data, imm8). AT&T order reverses both to
+        // {control/imm8, data, dst}. The destination is write-only
+        // (ModRM:reg (w)); sources are read-only; no flags are modified. Only
+        // the VEX-encoded (AVX) register-to-register forms are supported; the
+        // EVEX (AVX-512) forms and memory forms are rejected (the latter by the
+        // generic memory-operand check below).
+        {"vpermilpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMILPS (AVX): permute in-lane single-precision values. Identical
+        // operand structure and safety properties as VPERMILPD but for 32-bit
+        // elements. Both register-only AVX forms (variable and immediate) are
+        // supported; EVEX (AVX-512) and memory forms are rejected below.
+        {"vpermilps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMPD (AVX2): permute double-precision values across a full YMM
+        // destination under control of an imm8. AVX2 provides only the
+        // immediate form
+        //   VPERMPD ymm1, ymm2/m256, imm8
+        // (Intel order: dst, data, imm8). AT&T order: $imm8, data, dst. The
+        // destination is write-only; the source is read-only; no flags are
+        // modified. Only the VEX-encoded (AVX2) register-to-register form is
+        // supported; EVEX (AVX-512) forms and memory forms are rejected below.
+        {"vpermpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMPS (AVX2): permute single-precision values using indices from a
+        // second YMM source. AVX2 provides only the variable form
+        //   VPERMPS ymm1, ymm2(idx), ymm3/m256(data)
+        // (Intel order: dst, idx, data). AT&T order: data, idx, dst. The
+        // destination is write-only; both sources are read-only; no flags are
+        // modified. Only the VEX-encoded (AVX2) register-to-register form is
+        // supported; EVEX (AVX-512) forms and memory forms are rejected below.
+        {"vpermps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMQ (AVX2): permute quadword values across a full YMM destination
+        // under control of an imm8. Identical operand structure and safety
+        // properties as VPERMPD but for 64-bit integer elements. Only the
+        // VEX-encoded (AVX2) register-to-register immediate form is supported;
+        // EVEX (AVX-512) forms and memory forms are rejected below.
+        {"vpermq", {false, {RoleInput, RoleInput, RoleOutput}}},
         // VFIXUPIMM{PD,PS,SD,SS} (AVX-512): fix up special floating-point
         // values using a lookup table. Intel order: dst, src1, src2, imm8.
         // AT&T order: $imm8, src2, src1, dst. The imm8 is an exception-
@@ -8984,6 +9144,14 @@ class Pizlonator {
         {"vfixupimmps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vfixupimmsd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
         {"vfixupimmss", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VTESTPD/VTESTPS (AVX): bitwise test of packed double/single precision
+        // floating-point values. Intel order: xmm1, xmm2/m128. Both operands are
+        // read-only (no destination register is written); only ZF and CF are
+        // modified. Register-to-register forms are available; memory forms are
+        // rejected by the generic memory-operand check below. AT&T order reverses
+        // the two sources. Analogous to PTEST.
+        {"vtestpd", {true, {RoleInput, RoleInput}}},
+        {"vtestps", {true, {RoleInput, RoleInput}}},
       };
 
       StringRef base = m;
@@ -9557,6 +9725,32 @@ class Pizlonator {
         if (!isOutputOrClobber("dx")) {
           Reason = "rdpkru output edx not covered by output constraint or clobber";
           return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "vzeroupper" || baseMnemonic == "vzeroall") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // VZEROUPPER zeros the upper 128 bits of YMM0-YMM15; VZEROALL zeros all
+        // 256 bits of YMM0-YMM15. Neither instruction accesses memory, modifies
+        // flags, or has any control-flow effect -- they only write to the vector
+        // registers. Because they unconditionally write ALL of YMM0-YMM15, every
+        // one of those registers must be declared as a clobber (or output) so
+        // that the compiler knows the values have been destroyed. The XMM (low
+        // 128-bit) halves are preserved by VZEROUPPER, but inline-asm clobbers
+        // are whole-register, so clobbering the full YMM is the conservative and
+        // only available option. If the CPU lacks AVX the instruction #UDs
+        // (SIGILL), a safe uncatchable trap.
+        for (int i = 0; i < 16; ++i) {
+          std::string ymm = "ymm" + std::to_string(i);
+          if (!isOutputOrClobber(ymm)) {
+            Reason = baseMnemonic + " modifies " + ymm +
+                     "; it must be declared as a clobber or output";
+            return false;
+          }
         }
         continue;
       }
