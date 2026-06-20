@@ -8365,7 +8365,8 @@ class Pizlonator {
           m == "fsub" || m == "fsubr" ||
           m == "fprem" || m == "fprem1" ||
           m == "fscale" ||
-          m == "fincstp") {
+          m == "fincstp" ||
+          m == "ud2") {
         baseMnemonic = mnem;
         setsFlags = (m == "clc" || m == "cld" || m == "cmc" ||
                      m == "stc" ||
@@ -8460,6 +8461,8 @@ class Pizlonator {
         {"cmpsd", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"comisd", {true, {RoleInput, RoleInput}}},
         {"comiss", {true, {RoleInput, RoleInput}}},
+        {"ucomisd", {true, {RoleInput, RoleInput}}},
+        {"ucomiss", {true, {RoleInput, RoleInput}}},
         {"cvtdq2pd", {false, {RoleInput, RoleOutput}}},
         {"cvtdq2ps", {false, {RoleInput, RoleOutput}}},
         {"cvtpd2ps", {false, {RoleInput, RoleOutput}}},
@@ -8497,6 +8500,7 @@ class Pizlonator {
         {"bsr", {true, {RoleInput, RoleOutput}}},
         {"lzcnt", {true, {RoleInput, RoleOutput}}},
         {"popcnt", {true, {RoleInput, RoleOutput}}},
+        {"tzcnt", {true, {RoleInput, RoleOutput}}},
         {"bt", {true, {RoleInput, RoleInput}}},
         {"btc", {true, {RoleInput, RoleBoth}}},
         {"btr", {true, {RoleInput, RoleBoth}}},
@@ -8525,8 +8529,22 @@ class Pizlonator {
         {"hsubps", {false, {RoleInput, RoleBoth}}},
         {"vhsubpd", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vhsubps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // AVX three-operand forms of the floating-point unpack and interleave
+        // instructions: two read-only sources and a write-only destination.
+        {"vunpckhpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vunpckhps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vunpcklpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vunpcklps", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vmovshdup", {false, {RoleInput, RoleOutput}}},
         {"vmovsldup", {false, {RoleInput, RoleOutput}}},
+        // VBROADCASTSS/VBROADCASTSD (AVX2): broadcast the low element of a
+        // source register to all elements of the destination register. AT&T
+        // order: src, dst. The source is read-only and the destination is
+        // write-only; no flags are modified. Memory-only forms (e.g.
+        // VBROADCASTF128) and AVX-512 variants are not supported here; the
+        // generic memory-operand rejection below blocks any memory form.
+        {"vbroadcastss", {false, {RoleInput, RoleOutput}}},
+        {"vbroadcastsd", {false, {RoleInput, RoleOutput}}},
         {"divpd", {false, {RoleInput, RoleBoth}}},
         {"divps", {false, {RoleInput, RoleBoth}}},
         {"divsd", {false, {RoleInput, RoleBoth}}},
@@ -8791,6 +8809,14 @@ class Pizlonator {
         {"punpckldq", {false, {RoleInput, RoleBoth}}},
         {"punpcklqdq", {false, {RoleInput, RoleBoth}}},
         {"punpcklwd", {false, {RoleInput, RoleBoth}}},
+        // SSE/SSE2 floating-point unpack and interleave instructions. The
+        // destination is read-modify-write (RoleBoth) and the source is
+        // read-only. No flags, no implicit register outputs, register-only
+        // forms are available.
+        {"unpckhpd", {false, {RoleInput, RoleBoth}}},
+        {"unpckhps", {false, {RoleInput, RoleBoth}}},
+        {"unpcklpd", {false, {RoleInput, RoleBoth}}},
+        {"unpcklps", {false, {RoleInput, RoleBoth}}},
         {"bswap", {false, {RoleBoth}}},
         {"not", {false, {RoleBoth}}},
         {"lar", {true, {RoleInput, RoleOutput}}},
@@ -8826,6 +8852,22 @@ class Pizlonator {
         {"sldt", {false, {RoleOutput}}},
         {"smsw", {false, {RoleOutput}}},
         {"str", {false, {RoleOutput}}},
+        // VCVTPH2PS (F16C/AVX): convert packed FP16 values in the source
+        // XMM register to packed single-precision FP values in the
+        // destination XMM/YMM register. AT&T order: src, dst. The source is
+        // read-only and the destination is write-only; no flags are modified.
+        // Only the VEX-encoded (F16C) register-to-register forms are safe;
+        // the EVEX-encoded (AVX-512) variants are not supported. Memory
+        // forms are rejected by the generic memory-operand check below.
+        {"vcvtph2ps", {false, {RoleInput, RoleOutput}}},
+        // VCVTPS2PH (F16C/AVX): convert packed single-precision FP values in the
+        // source XMM/YMM register to packed FP16 values in the destination XMM
+        // register. AT&T order: $imm8, src, dst. The imm8 selects the rounding
+        // mode; the source is read-only and the destination is write-only; no
+        // flags are modified. Only the VEX-encoded (F16C) register-to-register
+        // forms are safe; the EVEX-encoded (AVX-512) variants are not supported.
+        // Memory forms are rejected by the generic memory-operand check below.
+        {"vcvtps2ph", {false, {RoleInput, RoleInput, RoleOutput}}},
       };
 
       StringRef base = m;
