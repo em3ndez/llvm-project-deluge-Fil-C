@@ -8081,6 +8081,7 @@ class Pizlonator {
     std::vector<ParsedConstraint> Constraints;
     bool HasCCClobber = false;
     bool HasFPSRClobber = false;
+    bool HasDirFlagClobber = false;
     std::unordered_set<std::string> ClobberFamilies;
 
     std::string ConstraintStr = IA->getConstraintString();
@@ -8105,8 +8106,10 @@ class Pizlonator {
           std::string name = toLowerStr(cstr.substr(2, cstr.size() - 3));
           if (name == "cc")
             HasCCClobber = true;
-          else if (name == "memory" || name == "dirflag" || name == "flags") {
-            // memory, dirflag, and flags clobbers are allowed.
+          else if (name == "dirflag")
+            HasDirFlagClobber = true;
+          else if (name == "memory" || name == "flags") {
+            // memory and flags clobbers are allowed.
           } else if (name == "fpsr") {
             HasFPSRClobber = true;
           } else {
@@ -8369,7 +8372,7 @@ class Pizlonator {
           m == "vzeroupper" || m == "vzeroall" ||
           m == "ud2") {
         baseMnemonic = mnem;
-        setsFlags = (m == "clc" || m == "cld" || m == "cmc" ||
+        setsFlags = (m == "clc" || m == "cmc" ||
                      m == "stc" ||
                      m == "sahf" ||
                      m == "fcomi" || m == "fucomi");
@@ -9668,6 +9671,21 @@ class Pizlonator {
         // clobber is required.
         if (!HasCCClobber) {
           Reason = "sahf sets the condition codes; \"cc\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cld") {
+        if (!operands.empty()) {
+          Reason = "cld takes no operands";
+          return false;
+        }
+        // CLD clears the direction flag. Reading the direction flag is
+        // harmless, but the instruction modifies the direction flag, so the
+        // "dirflag" clobber is required.
+        if (!HasDirFlagClobber) {
+          Reason = "cld modifies the direction flag; \"dirflag\" clobber is required";
           return false;
         }
         continue;
