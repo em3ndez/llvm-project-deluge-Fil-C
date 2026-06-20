@@ -8535,6 +8535,87 @@ class Pizlonator {
         {"vunpckhps", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vunpcklpd", {false, {RoleInput, RoleInput, RoleOutput}}},
         {"vunpcklps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VFMADD132/213/231{PD,PS,SD,SS} (FMA3): fused multiply-add of packed
+        // or scalar floating-point values. Intel order: dst, src2, src3, where
+        // the destination is also the first source operand (read and written).
+        // AT&T order: src3, src2, dst. The 132/213/231 suffixes select which
+        // operands are multiplied and added. No EFLAGS are modified; the only
+        // side effects are writing the destination (an XMM/YMM register) and
+        // possibly updating MXCSR exception-status flags (a benign register
+        // effect, the same kind comiss/ucomiss already produce). The scalar
+        // (SD/SS) variants preserve the upper elements of the destination.
+        // Only the register-to-register forms are supported; memory forms are
+        // rejected by the generic memory-operand check below.
+        {"vfmadd132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFMADDSUB132/213/231{PD,PS} (FMA3): fused multiply-Alternating
+        // Add/Subtract of packed floating-point values. Same 3-operand
+        // structure and safety properties as VFMADD above: destination is read
+        // and written (first source), the other two sources are read-only.
+        // Register-to-register forms only; memory forms rejected below.
+        {"vfmaddsub132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFMSUB132/213/231{PD,PS,SD,SS} (FMA3): fused multiply-Subtract of
+        // packed or scalar floating-point values. Identical 3-operand
+        // structure and safety properties as VFMADD above.
+        {"vfmsub132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFMSUBADD132/213/231{PD,PS} (FMA3): fused multiply-Alternating
+        // Subtract/Add of packed floating-point values. The inverse of
+        // VFMADDSUB (odd elements subtracted, even added). Identical 3-operand
+        // structure and safety properties as VFMADD/VFMSUB above: destination is
+        // read and written (first source), the other two sources are read-only.
+        // Register-to-register forms only; memory forms rejected below.
+        {"vfmsubadd132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFNMADD132/213/231{PD,PS,SD,SS} (FMA3): fused negative multiply-add of
+        // packed or scalar floating-point values. Computes
+        // -(src_i * src_j) + src_k with the 132/213/231 suffix selecting which
+        // operands are multiplied/added. Same 3-operand structure and safety
+        // properties as VFMADD above: the destination is also the first source
+        // operand (read and written), the other two sources are read-only, and no
+        // EFLAGS are modified. The scalar (SD/SS) variants preserve the upper
+        // elements of the destination. Only the VEX-encoded (register-to-register)
+        // forms are supported; the EVEX (AVX-512) forms and memory forms are
+        // rejected (the latter by the generic memory-operand check below).
+        {"vfnmadd132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
         {"vmovshdup", {false, {RoleInput, RoleOutput}}},
         {"vmovsldup", {false, {RoleInput, RoleOutput}}},
         // VBROADCASTSS/VBROADCASTSD (AVX2): broadcast the low element of a
@@ -8868,6 +8949,41 @@ class Pizlonator {
         // forms are safe; the EVEX-encoded (AVX-512) variants are not supported.
         // Memory forms are rejected by the generic memory-operand check below.
         {"vcvtps2ph", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VEXTRACTF128 (AVX): extract a 128-bit packed floating-point lane from
+        // a 256-bit YMM source register into a 128-bit XMM destination. AT&T
+        // order: $imm8, src, dst. The imm8 selects the low (0) or high (1)
+        // 128-bit lane; the source is read-only and the destination is
+        // write-only; no flags are modified. Only the VEX-encoded (AVX)
+        // register-to-register form is supported here; the EVEX-encoded
+        // (AVX-512) variants (VEXTRACTF32x4/F64x2/F32x8/F64x4) are not
+        // supported. Memory forms are rejected by the generic memory-operand
+        // check below.
+        {"vextractf128", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VEXTRACTI128 (AVX2): extract a 128-bit packed integer lane from a
+        // 256-bit YMM source register into a 128-bit XMM destination. AT&T
+        // order: $imm8, src, dst. Same structure as VEXTRACTF128 but for
+        // integer data. Only the VEX-encoded (AVX2) register-to-register form
+        // is supported; the EVEX-encoded (AVX-512) variants
+        // (VEXTRACTI32x4/I64x2/I32x8/I64x4) are not supported. Memory forms
+        // are rejected by the generic memory-operand check below.
+        {"vextracti128", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VFIXUPIMM{PD,PS,SD,SS} (AVX-512): fix up special floating-point
+        // values using a lookup table. Intel order: dst, src1, src2, imm8.
+        // AT&T order: $imm8, src2, src1, dst. The imm8 is an exception-
+        // reporting specifier; with imm8=0 no MXCSR flags are updated. Even
+        // with nonzero imm8, MXCSR exception mask bits are ignored (all
+        // exceptions are masked), so the instruction never traps - it only
+        // updates the MXCSR.IE/ZE status flags (a benign register effect,
+        // the same kind comiss/ucomiss already produce). The opmask {k1}/{z}
+        // and {sae} decorators are optional; without them the destination is
+        // write-only (all elements written). The register-only forms need no
+        // memory access. Memory forms and masked forms (which append
+        // decorators to the destination operand) are rejected by the generic
+        // memory-operand classification below.
+        {"vfixupimmpd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vfixupimmps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vfixupimmsd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vfixupimmss", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
       };
 
       StringRef base = m;
