@@ -132,12 +132,12 @@ else
     echo "This distribution includes the Fil-C compiler (filcc/fil++) and runtime and"
     echo "these memory safe programs and libraries compiled with Fil-C:"
     echo
-    echo "   acl, attr, bash, binutils, bzip2, coreutils, curl, diff, find, flex, gawk,"
-    echo "   git, glibc, grep, gzip, icu4c, keyutils, kerberos5, less, libaudit, libc++,"
-    echo "   libedit, libevent, libidn2, libpsl, libselinux, libtasn1, libuv, lz4, m4,"
-    echo "   make, mg, nghttp2, openssl, openssh, p11-kit, patch, patchelf, pam, pcre2,"
-    echo "   pkgconf, procps-ng, psmisc, readline, rsync, sed, sudo, tar, tmux,"
-    echo "   unistring, wget, xxhash, xz, zlib, and zstd"
+    echo "   acl  attr  bash  binutils  bzip2  coreutils  curl  diff  find  flex  gawk"
+    echo "   git  glibc  grep  gzip  icu4c  keyutils  kerberos5  less  libaudit  libc++"
+    echo "   libedit  libevent  libidn2  libpsl  libselinux  libtasn1  libuv  lz4  m4"
+    echo "   make  mg  nghttp2  openssl  openssh  p11-kit  patch  patchelf  pam  pcre2"
+    echo "   pkgconf  procps-ng  psmisc  readline  rsync  sed  sudo  tar  tmux"
+    echo "   unistring  wget  xxhash  xz  zlib  zstd"
     echo
     echo "THIS SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND."
     echo "********************************************************************************"
