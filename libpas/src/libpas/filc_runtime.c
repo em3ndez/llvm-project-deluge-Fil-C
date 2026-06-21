@@ -4368,7 +4368,7 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_stack_alignment_contradiction
     finish_optimized_alignment_contradiction(panic_context, contradiction_origin);
 }
 
-PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
+PAS_NEVER_INLINE PAS_NO_RETURN static void masked_access_check_fail_impl(
     filc_ptr ptr, uint64_t mask, size_t size, filc_access_kind access_kind, const filc_origin* origin)
 {
     filc_panic_context* panic_context = filc_start_panicking();
@@ -4383,11 +4383,65 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
     filc_panic_context_printf(panic_context, "    pointer: ");
     filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
     filc_panic_context_printf(panic_context, "\n");
-    filc_panic_context_printf(panic_context, "    mask: %lx\n", mask);
+    filc_panic_context_printf(panic_context, "    mask: 0x%lx\n", mask);
     filc_panic_context_printf(panic_context, "    vector size in bytes: %zu\n", size);
     filc_panic_context_printf(panic_context, "origin:\n");
     filc_thread_dump_stack(my_thread, filc_panic_context_stream(panic_context));
     filc_finish_panicking(panic_context, "thwarted a futile attempt to violate memory safety.");
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin)
+{
+    masked_access_check_fail_impl(ptr, mask, size, filc_write_access, origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin)
+{
+    masked_access_check_fail_impl(ptr, mask, size, filc_read_access, origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN static void compress_expand_access_check_fail_impl(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size,
+    filc_access_kind access_kind, const filc_origin* origin)
+{
+    filc_panic_context* panic_context = filc_start_panicking();
+    filc_thread* my_thread = filc_get_my_thread();
+    PAS_ASSERT(my_thread->top_frame);
+    if (origin)
+        my_thread->top_frame->origin = origin;
+    filc_panic_context_printf(
+        panic_context,
+        "filc safety error: %s not in bounds (even accounting for the mask).\n",
+        access_kind == filc_write_access ? "compress store" : "expand load");
+    filc_panic_context_printf(panic_context, "    pointer: ");
+    filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
+    filc_panic_context_printf(panic_context, "\n");
+    filc_panic_context_printf(panic_context, "    mask: 0x%lx (%u bits)\n",
+                              mask, (unsigned)__builtin_popcount(mask));
+    filc_panic_context_printf(panic_context, "    vector size in bytes: %zu\n", vector_size);
+    filc_panic_context_printf(panic_context, "    element size in bytes: %zu\n", element_size);
+    filc_panic_context_printf(panic_context, "    access size in bytes: %zu\n",
+                              element_size * (size_t)__builtin_popcount(mask));
+    
+    filc_panic_context_printf(panic_context, "origin:\n");
+    filc_thread_dump_stack(my_thread, filc_panic_context_stream(panic_context));
+    filc_finish_panicking(panic_context, "thwarted a futile attempt to violate memory safety.");
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_compress_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin)
+{
+    compress_expand_access_check_fail_impl(ptr, mask, element_size, vector_size, filc_write_access,
+                                           origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_expand_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin)
+{
+    compress_expand_access_check_fail_impl(ptr, mask, element_size, vector_size, filc_read_access,
+                                           origin);
 }
 
 void filc_check_function_call(filc_ptr ptr)

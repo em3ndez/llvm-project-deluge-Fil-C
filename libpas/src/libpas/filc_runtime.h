@@ -3968,9 +3968,14 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_stack_alignment_contradiction
     const filc_optimized_alignment_contradiction_origin* contradiction_origin);
 
 /* FIXME: 64-bit mask is just barely enough. */
-PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
-    filc_ptr ptr, uint64_t mask, size_t size, filc_access_kind access_kind,
-    const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_compress_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_expand_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin);
 
 #define FILC_LOAD_PTR_FIELD(my_thread, ptr, struct_type, field_name) \
     filc_load_ptr((my_thread), (ptr), PAS_OFFSETOF(struct_type, field_name))

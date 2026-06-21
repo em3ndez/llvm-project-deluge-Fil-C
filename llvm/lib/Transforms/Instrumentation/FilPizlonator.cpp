@@ -1537,7 +1537,10 @@ class Pizlonator {
   FunctionCallee OptimizedAccessCheckFail;
   FunctionCallee OptimizedStackAlignmentContradiction;
   FunctionCallee OptimizedStackAccessCheckFail;
-  FunctionCallee MaskedAccessCheckFail;
+  FunctionCallee MaskedWriteCheckFail;
+  FunctionCallee MaskedReadCheckFail;
+  FunctionCallee CompressWriteCheckFail;
+  FunctionCallee ExpandReadCheckFail;
   FunctionCallee CheckFunctionCallFail;
   FunctionCallee CheckClosureFail;
   FunctionCallee ComdatLinkFail;
@@ -7007,12 +7010,22 @@ class Pizlonator {
       MaskIntPhi->addIncoming(MaskInt, IsBelowUpper->getParent());
     }
 
-    CallInst::Create(
-      MaskedAccessCheckFail,
-      { Ptr, castInt(MaskIntPhi, Int64Ty, FailTerm),
-        ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)), ConstantInt::get(Int32Ty, isStore),
-        getOrigin(II->getDebugLoc()) },
-      "", FailTerm);
+    if (IAD.IsContiguous) {
+      CallInst::Create(
+        isStore ? CompressWriteCheckFail : ExpandReadCheckFail,
+        { Ptr, castInt(MaskIntPhi, Int64Ty, FailTerm),
+          ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
+          ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)),
+          getOrigin(II->getDebugLoc()) },
+        "", FailTerm);
+    } else {
+      CallInst::Create(
+        isStore ? MaskedWriteCheckFail : MaskedReadCheckFail,
+        { Ptr, castInt(MaskIntPhi, Int64Ty, FailTerm),
+          ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)),
+          getOrigin(II->getDebugLoc()) },
+        "", FailTerm);
+    }
   }
   
   static constexpr unsigned InlineMemmoveDstSizeLimit = 40;
@@ -13843,8 +13856,14 @@ public:
       "filc_optimized_stack_alignment_contradiction", VoidTy, IntPtrTy, IntPtrTy, RawPtrTy);
     OptimizedStackAccessCheckFail = M.getOrInsertFunction(
       "filc_optimized_stack_access_check_fail", VoidTy, IntPtrTy, IntPtrTy, RawPtrTy);
-    MaskedAccessCheckFail = M.getOrInsertFunction(
-      "filc_masked_access_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, Int32Ty, RawPtrTy);
+    MaskedWriteCheckFail = M.getOrInsertFunction(
+      "filc_masked_write_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, RawPtrTy);
+    MaskedReadCheckFail = M.getOrInsertFunction(
+      "filc_masked_read_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, RawPtrTy);
+    CompressWriteCheckFail = M.getOrInsertFunction(
+      "filc_compress_write_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, IntPtrTy, RawPtrTy);
+    ExpandReadCheckFail = M.getOrInsertFunction(
+      "filc_expand_read_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, IntPtrTy, RawPtrTy);
     Memset = M.getOrInsertFunction(
       "filc_memset", VoidTy, RawPtrTy, FlightPtrTy, Int32Ty, IntPtrTy, RawPtrTy);
     Memmove = M.getOrInsertFunction(
