@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2019-2022 Apple Inc. All rights reserved.
  * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -428,8 +429,11 @@ static void ensure_thread_holding_lock(void)
         pas_reasonably_fill_sigset(&fullset);
         sigset_t oldset;
         PAS_ASSERT(!pthread_sigmask(SIG_BLOCK, &fullset, &oldset));
-        pas_create_detached_thread(scavenger_thread_main, NULL);
+        /* This will fail if another thread is execing. */
+        bool success = pas_create_detached_thread_allowing_errors(scavenger_thread_main, NULL);
         PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
+        if (!success)
+            pas_scavenger_current_state = pas_scavenger_state_no_thread;
     }
 }
 
@@ -441,6 +445,7 @@ void pas_scavenger_lock_thread(void)
     PAS_ASSERT(!pas_scavenger_should_suspend_count);
     pas_scavenger_shutdown_enabled = false;
     ensure_thread_holding_lock();
+    PAS_ASSERT(pas_scavenger_current_state == pas_scavenger_state_polling);
     pas_system_mutex_unlock(&data->lock);
 }
 
