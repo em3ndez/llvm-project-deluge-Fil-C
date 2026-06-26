@@ -19,6 +19,8 @@
 
 #include "VCSVersion.inc"
 
+#define FILC_VERSION "0.680"
+
 namespace clang {
 
 std::string getClangRepositoryPath() {
@@ -58,7 +60,7 @@ std::string getLLVMRevision() {
 }
 
 std::string getClangVendor() {
-  return "Fil-C 0.680 ";
+  return "";
 }
 
 std::string getClangFullRepositoryVersion() {
@@ -66,8 +68,10 @@ std::string getClangFullRepositoryVersion() {
   llvm::raw_string_ostream OS(buf);
   std::string Path = getClangRepositoryPath();
   std::string Revision = getClangRevision();
+  OS << '(';
+  OS << "Fil-C " << FILC_VERSION;
   if (!Path.empty() || !Revision.empty()) {
-    OS << '(';
+    OS << ' ';
     if (!Path.empty())
       OS << Path;
     if (!Revision.empty()) {
@@ -75,8 +79,8 @@ std::string getClangFullRepositoryVersion() {
         OS << ' ';
       OS << Revision;
     }
-    OS << ')';
   }
+  OS << ')';
   // Support LLVM in a separate repository.
   std::string LLVMRev = getLLVMRevision();
   if (!LLVMRev.empty() && LLVMRev != Revision) {
