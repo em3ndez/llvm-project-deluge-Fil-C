@@ -50,8 +50,7 @@ void zmake_setjmp_save_sigmask(filc_bool save_sigmask);
 
 typedef struct zfiber_context zfiber_context;
 zfiber_context* zfiber_context_new(void);
-void zfiber_context_set_sigset(zfiber_context* fiber_context, const void* sigset);
-void zfiber_context_get_sigset(zfiber_context* fiber_context, void* sigset);
+void zfiber_context_bind_sigset(zfiber_context* fiber_context, void* sigset);
 void zfiber_context_getcontext(zfiber_context* fiber_context);
 void zfiber_context_setcontext(zfiber_context* fiber_context);
 void zfiber_context_makecontext(zfiber_context* fiber_context, __SIZE_TYPE__ stack_size,

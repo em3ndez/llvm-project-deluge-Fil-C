@@ -77,6 +77,9 @@ raise unless $?.exited?
 raise unless $?.exitstatus == 0 or $?.exitstatus == 1
 $hasAVX512 = $?.exitstatus == 0
 
+# Check if we're using glibc
+$hasGLIBC = Pathname.new($pizfix) + "lib" + "libc.so.6666"
+
 raise unless system("#{$compilerPrefix}#{$pizfix}/../build/bin/clang -O3 -c -o filc/tests/utils.o filc/tests/utils.c -g")
 
 $testDirectory = Pathname.new("filc/tests")
@@ -120,6 +123,12 @@ $testDirectory.each_entry {
     if manifest["needsAVX512"] and not $hasAVX512
         if $verbose
             puts "Skipping #{testName}, requires AVX512"
+        end
+        next
+    end
+    if manifest["needsGLIBC"] and not $hasGLIBC
+        if $verbose
+            puts "Skipping #{testName}, requires GLIBC"
         end
         next
     end

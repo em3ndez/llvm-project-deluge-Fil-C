@@ -1379,6 +1379,7 @@ struct filc_fiber_context {
     filc_stack_limit stack_limit;
     void* stack;
     filc_ptr closure_ptr;
+    filc_ptr bound_sigset_ptr;
     filc_object* object_that_owns_stack;
 };
 #endif /* FILC_HAS_FIBER_CONTEXT */

@@ -1890,6 +1890,9 @@ void filc_special_type_dump(filc_special_type type, pas_stream* stream)
     case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
         pas_stream_printf(stream, "finalizer_queue");
         return;
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
+        pas_stream_printf(stream, "fiber_context");
+        return;
     default:
         pas_stream_printf(stream, "?%u", (unsigned)type);
         return;
@@ -7871,31 +7874,33 @@ void filc_fiber_context_destruct(filc_fiber_context* fiber_context)
     bmalloc_deallocate(fiber_context->stack);
 }
 
-void filc_native_zfiber_context_set_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
-                                           filc_ptr sigset_ptr)
+void fiber_context_send_sigset_to_user(filc_fiber_context* fiber_context)
 {
-    PAS_UNUSED_PARAM(my_thread);
-    
-    filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
-    filc_check_user_sigset(sigset_ptr, filc_read_access);
-
-    filc_fiber_context* fiber_context = (filc_fiber_context*)filc_ptr_ptr(fiber_context_ptr);
-    pas_lock_lock(&fiber_context->lock);
-    filc_from_user_sigset((sigset_t*)filc_ptr_ptr(sigset_ptr), &fiber_context->context.uc_sigmask);
-    pas_lock_unlock(&fiber_context->lock);
+    filc_ptr sigset_ptr = filc_flight_ptr_load_with_manual_tracking(&fiber_context->bound_sigset_ptr);
+    if (!filc_ptr_ptr(sigset_ptr))
+        return;
+    filc_check_user_sigset(sigset_ptr, filc_write_access);
+    filc_to_user_sigset(&fiber_context->context.uc_sigmask, (sigset_t*)filc_ptr_ptr(sigset_ptr));
 }
 
-void filc_native_zfiber_context_get_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
-                                           filc_ptr sigset_ptr)
+void fiber_context_receive_sigset_from_user(filc_fiber_context* fiber_context)
 {
-    PAS_UNUSED_PARAM(my_thread);
-    
+    filc_ptr sigset_ptr = filc_flight_ptr_load_with_manual_tracking(&fiber_context->bound_sigset_ptr);
+    if (!filc_ptr_ptr(sigset_ptr))
+        return;
+    filc_check_user_sigset(sigset_ptr, filc_read_access);
+    filc_from_user_sigset((sigset_t*)filc_ptr_ptr(sigset_ptr), &fiber_context->context.uc_sigmask);
+}
+
+void filc_native_zfiber_context_bind_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
+                                            filc_ptr sigset_ptr)
+{
     filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
-    filc_check_user_sigset(sigset_ptr, filc_write_access);
 
     filc_fiber_context* fiber_context = (filc_fiber_context*)filc_ptr_ptr(fiber_context_ptr);
     pas_lock_lock(&fiber_context->lock);
-    filc_to_user_sigset(&fiber_context->context.uc_sigmask, (sigset_t*)filc_ptr_ptr(sigset_ptr));
+    filc_flight_ptr_store(my_thread, &fiber_context->bound_sigset_ptr, sigset_ptr);
+    fiber_context_receive_sigset_from_user(fiber_context);
     pas_lock_unlock(&fiber_context->lock);
 }
 
@@ -7916,6 +7921,7 @@ void filc_native_zfiber_context_getcontext(filc_thread* my_thread, filc_ptr fibe
         filc_fiber_context_state_get_string(fiber_context->state));
     PAS_ASSERT(!getcontext(&fiber_context->context));
     fiber_context->state = filc_fiber_context_after_getcontext;
+    fiber_context_send_sigset_to_user(fiber_context);
     pas_lock_unlock(&fiber_context->lock);
 }
 
@@ -7937,6 +7943,7 @@ void filc_native_zfiber_context_setcontext(filc_thread* my_thread, filc_ptr fibe
        switched to. I think that's right. */
     my_thread->current_fiber_context = NULL;
     my_thread->switching_to_fiber_context = fiber_context;
+    fiber_context_receive_sigset_from_user(fiber_context);
     setcontext(&fiber_context->context);
     PAS_ASSERT(!"Should not be reached");
 }
@@ -7964,10 +7971,12 @@ static filc_thread* finish_switch_to_fiber_context(void)
     fiber_context->special_signal_deferral_depth = 0;
     my_thread->stack_limit = fiber_context->stack_limit.stack_limit;
     my_thread->stack_top = fiber_context->stack_limit.stack_top;
-    pas_lock_unlock(&fiber_context->lock);
-    if (my_thread->current_fiber_context)
+    if (my_thread->current_fiber_context) {
+        fiber_context_send_sigset_to_user(my_thread->current_fiber_context);
         pas_lock_unlock(&my_thread->current_fiber_context->lock);
+    }
     my_thread->current_fiber_context = fiber_context;
+    pas_lock_unlock(&fiber_context->lock);
 
     return my_thread;
 }
@@ -7998,7 +8007,7 @@ static void start_fiber_context(void)
 }
 
 void filc_native_zfiber_context_makecontext(filc_thread* my_thread, filc_ptr fiber_context_ptr,
-                                            size_t stack_size, filc_ptr closure_ptr)
+                                            size_t passed_stack_size, filc_ptr closure_ptr)
 {
     filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
 
@@ -8011,13 +8020,22 @@ void filc_native_zfiber_context_makecontext(filc_thread* my_thread, filc_ptr fib
         "(fiber context ptr = %s, state = %s).",
         filc_ptr_to_new_string(fiber_context_ptr),
         filc_fiber_context_state_get_string(fiber_context->state));
-    stack_size += stack_slack;
+    size_t stack_size = passed_stack_size + stack_slack;
+    FILC_CHECK(
+        stack_size > stack_slack,
+        NULL,
+        "invalid stack_size in call to makecontext (passed stack_size = %zu).",
+        passed_stack_size);
     fiber_context->stack = bmalloc_allocate(stack_size);
     fiber_context->stack_limit = compute_stack_limit_for_stack_and_size(fiber_context->stack,
                                                                         stack_size);
     fiber_context->context.uc_stack.ss_sp = fiber_context->stack;
     fiber_context->context.uc_stack.ss_size = stack_size;
+    /* I don't know if makecontext uses or sets the sigset, but let's just pretend that it does to
+       be sure. */
+    fiber_context_receive_sigset_from_user(fiber_context);
     makecontext(&fiber_context->context, start_fiber_context, 0);
+    fiber_context_send_sigset_to_user(fiber_context);
     filc_flight_ptr_store(my_thread, &fiber_context->closure_ptr, closure_ptr);
     fiber_context->state = filc_fiber_context_runnable;
     pas_lock_unlock(&fiber_context->lock);
@@ -8034,6 +8052,19 @@ void filc_native_zfiber_context_swapcontext(filc_thread* my_thread, filc_ptr fro
     filc_fiber_context* to_fiber_context =
         (filc_fiber_context*)filc_ptr_ptr(to_fiber_context_ptr);
 
+    /* In glibc, swapcontext with from==to is almost a no-op, except stuff happens with the signal
+       mask.
+
+       This behavior is not guaranteed by POSIX.
+
+       I think it's safest to just reject programs that do this, even though it would not be that
+       hard to support it. */
+    FILC_CHECK(
+        from_fiber_context != to_fiber_context,
+        NULL,
+        "cannot call swapcontext with from == to (from/to fiber context = %s).",
+        filc_ptr_to_new_string(from_fiber_context_ptr));
+    
     if (from_fiber_context < to_fiber_context) {
         pas_lock_lock(&from_fiber_context->lock);
         pas_lock_lock(&to_fiber_context->lock);
@@ -8124,6 +8155,7 @@ void filc_native_zfiber_context_swapcontext(filc_thread* my_thread, filc_ptr fro
 
     PAS_ASSERT(my_thread->current_fiber_context == from_fiber_context);
     my_thread->switching_to_fiber_context = to_fiber_context;
+    fiber_context_receive_sigset_from_user(to_fiber_context);
     PAS_ASSERT(!swapcontext(&from_fiber_context->context, &to_fiber_context->context));
 
     filc_thread* hopefully_my_thread = finish_switch_to_fiber_context();
@@ -8139,22 +8171,13 @@ filc_ptr filc_native_zfiber_context_new(filc_thread* my_thread)
     filc_internal_panic(NULL, "zfiber_context_new not supported.");
 }
 
-void filc_native_zfiber_context_set_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
-                                           filc_ptr sigset_ptr)
+void filc_native_zfiber_context_bind_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
+                                            filc_ptr sigset_ptr)
 {
     PAS_UNUSED_PARAM(my_thread);
     PAS_UNUSED_PARAM(fiber_context_ptr);
     PAS_UNUSED_PARAM(sigset_ptr);
-    filc_internal_panic(NULL, "zfiber_context_set_sigset not supported.");
-}
-
-void filc_native_zfiber_context_get_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
-                                           filc_ptr sigset_ptr)
-{
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(fiber_context_ptr);
-    PAS_UNUSED_PARAM(sigset_ptr);
-    filc_internal_panic(NULL, "zfiber_context_get_sigset not supported.");
+    filc_internal_panic(NULL, "zfiber_context_bind_sigset not supported.");
 }
 
 void filc_native_zfiber_context_getcontext(filc_thread* my_thread, filc_ptr fiber_context_ptr)
