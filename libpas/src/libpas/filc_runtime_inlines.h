@@ -516,15 +516,14 @@ static PAS_ALWAYS_INLINE void filc_fiber_context_mark_saved_state_holding_lock(
 {
     switch (fiber_context->state) {
     case filc_fiber_context_runnable:
-    case filc_fiber_context_runnable_grey:
         filc_mark_outgoing_ptrs_in_frames(fiber_context->top_frame, marker, stack);
         filc_mark_outgoing_ptrs_in_native_frames(fiber_context->top_native_frame, marker, stack);
         filc_mark_outgoing_ptrs_in_allocation_roots(&fiber_context->allocation_roots, marker);
-        fiber_context->state = filc_fiber_context_runnable;
         break;
     default:
         break;
     }
+    fiber_context->is_grey = false;
 }
 
 static PAS_ALWAYS_INLINE void filc_fiber_context_mark_outgoing_ptrs(filc_fiber_context* fiber_context,
@@ -605,10 +604,11 @@ static PAS_ALWAYS_INLINE void filc_thread_mark_roots(filc_thread* my_thread,
     for (index = my_thread->grey_fibers.size; index--;) {
         filc_fiber_context* fiber_context = (filc_fiber_context*)my_thread->grey_fibers.array[index];
         pas_lock_lock(&fiber_context->lock);
-        if (fiber_context->state == filc_fiber_context_runnable_grey)
+        if (fiber_context->is_grey)
             filc_fiber_context_mark_saved_state_holding_lock(fiber_context, marker, stack);
         pas_lock_unlock(&fiber_context->lock);
     }
+    filc_raw_ptr_array_reset(&my_thread->grey_fibers);
 #endif /* FILC_HAS_FIBER_CONTEXT */
 }
 

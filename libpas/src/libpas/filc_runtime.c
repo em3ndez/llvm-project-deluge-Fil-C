@@ -7943,8 +7943,7 @@ void filc_native_zfiber_context_getcontext(filc_thread* my_thread, filc_ptr fibe
 static void check_target_context(filc_thread* my_thread, filc_fiber_context* fiber_context)
 {
     FILC_CHECK(
-        fiber_context->state == filc_fiber_context_runnable ||
-        fiber_context->state == filc_fiber_context_runnable_grey,
+        fiber_context->state == filc_fiber_context_runnable,
         NULL,
         "cannot switch to a context unless it's runnable "
         "(to fiber context = %s, state = %s).",
@@ -7991,8 +7990,7 @@ static filc_thread* finish_switch_to_fiber_context(void)
     PAS_ASSERT(fiber_context);
     my_thread->switching_to_fiber_context = NULL;
     
-    PAS_ASSERT(fiber_context->state == filc_fiber_context_runnable ||
-               fiber_context->state == filc_fiber_context_runnable_grey);
+    PAS_ASSERT(fiber_context->state == filc_fiber_context_runnable);
     fiber_context->state = filc_fiber_context_running;
     my_thread->top_frame = fiber_context->top_frame;
     fiber_context->top_frame = NULL;
@@ -8148,12 +8146,11 @@ void filc_native_zfiber_context_swapcontext(filc_thread* my_thread, filc_ptr fro
         my_thread->current_fiber_context = from_fiber_context;
     }
 
-    if (filc_current_marking_state
-        && from_fiber_context->state != filc_fiber_context_runnable_grey) {
+    if (filc_current_marking_state && !from_fiber_context->is_grey) {
         filc_raw_ptr_array_add(&my_thread->grey_fibers, from_fiber_context);
-        from_fiber_context->state = filc_fiber_context_runnable_grey;
-    } else
-        from_fiber_context->state = filc_fiber_context_runnable;
+        from_fiber_context->is_grey = true;
+    }
+    from_fiber_context->state = filc_fiber_context_runnable;
 
     from_fiber_context->top_frame = my_thread->top_frame;
     my_thread->top_frame = NULL;

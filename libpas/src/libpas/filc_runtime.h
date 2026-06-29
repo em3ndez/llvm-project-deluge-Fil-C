@@ -1362,7 +1362,6 @@ enum filc_fiber_context_state {
     filc_fiber_context_uninitialized,
     filc_fiber_context_after_getcontext,
     filc_fiber_context_runnable,
-    filc_fiber_context_runnable_grey,
     filc_fiber_context_running
 };
 
@@ -1382,6 +1381,7 @@ struct filc_fiber_context {
     filc_ptr bound_sigset_ptr;
     filc_thread* owning_thread;
     filc_fiber_context* stack_owner;
+    bool is_grey;
 };
 #endif /* FILC_HAS_FIBER_CONTEXT */
 
@@ -4426,8 +4426,6 @@ static inline const char* filc_fiber_context_state_get_string(filc_fiber_context
         return "after_getcontext";
     case filc_fiber_context_runnable:
         return "runnable";
-    case filc_fiber_context_runnable_grey:
-        return "runnable_grey";
     case filc_fiber_context_running:
         return "running";
     }
