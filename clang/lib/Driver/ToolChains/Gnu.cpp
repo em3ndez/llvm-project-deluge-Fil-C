@@ -296,7 +296,11 @@ static const char *getLDMOption(const llvm::Triple &T, const ArgList &Args) {
 }
 
 static bool getStaticPIE(const ArgList &Args, const ToolChain &TC) {
-  bool HasStaticPIE = Args.hasArg(options::OPT_static_pie);
+  // We turn -static into -static-pie to ensure that global variables are mapped above the low
+  // 4GB. This is necessary for filc_call_syscall_with_guarded_ptr to work right without using a
+  // smaller min_address setting (and if we use a smaller min_address setting then ioctls like
+  // CDROM_DRIVE_STATUS, CDSL_CURRENT stop working because CDSL_CURRENT is INT_MAX).
+  bool HasStaticPIE = Args.hasArg(options::OPT_static_pie) || Args.hasArg(options::OPT_static);
   if (HasStaticPIE && Args.hasArg(options::OPT_no_pie)) {
     const Driver &D = TC.getDriver();
     const llvm::opt::OptTable &Opts = D.getOpts();
@@ -308,8 +312,7 @@ static bool getStaticPIE(const ArgList &Args, const ToolChain &TC) {
 }
 
 static bool getStatic(const ArgList &Args) {
-  return Args.hasArg(options::OPT_static) &&
-      !Args.hasArg(options::OPT_static_pie);
+  return false;
 }
 
 void tools::gnutools::StaticLibTool::ConstructJob(

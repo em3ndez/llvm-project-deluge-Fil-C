@@ -13723,8 +13723,11 @@ void filc_call_syscall_with_guarded_ptr(filc_thread* my_thread,
                                         void* user_arg)
 {
     static const bool verbose = false;
-    
-    static const uintptr_t min_address = 65536;
+
+    /* We get away with this because we're always either dynamically linked or we use -static-pie.
+       Gnu.cpp in the clang driver turns -static into -static-pie for us to support this
+       assumption. */
+    static const uintptr_t min_address = 0x100000000;
 
     /* It's possible that someone is calling an ioctl that takes an int or long argument. But, we
        don't know if the ioctl will actually interpret the argument as an int or long - it might
