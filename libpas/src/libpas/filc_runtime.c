@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -33,11 +34,16 @@
 
 #include "bmalloc_heap.h"
 #include "bmalloc_heap_config.h"
+#include "filc_dump_heap.h"
+#include "filc_dump_stacks.h"
 #include "filc_native.h"
 #include "filc_runtime_inlines.h"
+#include "filc_sampling_profiler.h"
+#include "filc_setproctitle.h"
 #include "fugc.h"
 #include "pas_hashtable.h"
 #include "pas_scavenger.h"
+#include "pas_status_reporter.h"
 #include "pas_string_stream.h"
 #include "pas_utils.h"
 #include "verse_heap_inlines.h"
@@ -78,6 +84,8 @@
 #include <sys/syscall.h>
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
 #include <sys/signalfd.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
@@ -99,11 +107,16 @@
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
 #include <sys/reboot.h>
+#include <linux/keyctl.h>
+#include <fenv.h>
+#include <dlfcn.h>
 
 #if PAS_GLIBC
 #include <sys/pidfd.h>
 #include <sys/fanotify.h>
 #endif
+
+PAS_BEGIN_EXTERN_C;
 
 pas_system_thread_id filc_panicking_thread;
 
@@ -128,7 +141,6 @@ pas_system_thread_id filc_panicking_thread;
 
 FILC_FOR_EACH_LOCK(DEFINE_LOCK);
 
-PAS_DEFINE_LOCK(filc_soft_handshake);
 PAS_DEFINE_LOCK(filc_global_initialization);
 PAS_DEFINE_LOCK(filc_global_variable_roots);
 
@@ -141,7 +153,7 @@ filc_global_initialization_work_item_hash_map filc_global_initialization_map =
     PAS_HASHTABLE_INITIALIZER;
 
 unsigned filc_stop_the_world_count;
-pas_system_condition filc_stop_the_world_cond;
+pas_system_condition filc_handshake_cond;
 
 filc_thread* filc_first_thread;
 pthread_key_t filc_thread_key;
@@ -178,7 +190,7 @@ static void check_user_sigaction(filc_ptr ptr, filc_access_kind access_kind)
    It registers it with the global thread list. But once the thread is started, it will dispose itself
    once done, and remove it from the list. So, it's necessary to track threads after creating them
    somehow, unless it's a thread that cannot be disposed. */
-filc_thread* filc_thread_create_with_manual_tracking(void)
+filc_thread* filc_thread_create_with_manual_tracking(filc_thread* my_thread)
 {
     static const bool verbose = false;
     if (sizeof(filc_thread) > FILC_THREAD_ALLOCATOR_OFFSET) {
@@ -188,7 +200,7 @@ filc_thread* filc_thread_create_with_manual_tracking(void)
     PAS_ASSERT(sizeof(filc_thread) <= FILC_THREAD_ALLOCATOR_OFFSET);
     filc_object* thread_object = filc_allocate_special_early(
         FILC_THREAD_SIZE_WITH_ALLOCATORS, FILC_CC_ALIGNMENT, FILC_SPECIAL_TYPE_THREAD);
-    filc_thread* thread = filc_object_lower(thread_object);
+    filc_thread* thread = (filc_thread*)filc_object_lower(thread_object);
     if (verbose)
         pas_log("created thread: %p, size %zu\n", thread, (size_t)FILC_THREAD_SIZE_WITH_ALLOCATORS);
     PAS_ASSERT(filc_object_for_special_payload(thread) == thread_object);
@@ -198,6 +210,9 @@ filc_thread* filc_thread_create_with_manual_tracking(void)
     filc_raw_ptr_array_construct(&thread->allocation_roots);
     filc_mark_stack_construct(&thread->mark_stack);
     filc_object_array_construct(&thread->thread_locals);
+#if FILC_HAS_FIBER_CONTEXT
+    filc_raw_ptr_array_construct(&thread->grey_fibers);
+#endif /* FILC_HAS_FIBER_CONTEXT */
 
     unsigned allocator_index = 0;
     unsigned last_size = UINT_MAX;
@@ -245,6 +260,7 @@ filc_thread* filc_thread_create_with_manual_tracking(void)
 
     /* The rest of the fields are initialized to zero already. */
 
+    filc_store_barrier(my_thread, filc_object_for_special_payload(thread));
     filc_thread_list_lock_lock();
     thread->next_thread = filc_first_thread;
     thread->prev_thread = NULL;
@@ -271,6 +287,9 @@ void filc_thread_undo_create(filc_thread* thread)
     PAS_ASSERT(!filc_mark_stack_num_objects(&thread->mark_stack));
     filc_raw_ptr_array_destruct(&thread->allocation_roots);
     filc_object_array_destruct(&thread->thread_locals);
+#if FILC_HAS_FIBER_CONTEXT
+    filc_raw_ptr_array_destruct(&thread->grey_fibers);
+#endif /* FILC_HAS_FIBER_CONTEXT */
     filc_thread_destroy_space_with_guard_page(thread);
 }
 
@@ -336,22 +355,53 @@ static filc_ptr user_auxv;
 static bool is_initialized = false; /* Useful for assertions. */
 
 bool filc_exit_on_panic = false;
+bool filc_quiet_panic = false;
 bool filc_dump_errnos = false;
 bool filc_run_global_ctors = true;
 bool filc_run_global_dtors = true;
 bool filc_verbose_stop_the_world = false;
+unsigned filc_dump_heap_on_signal = 0;
+unsigned filc_dump_stacks_on_signal = 0;
 
-static void set_stack_limit(filc_thread* thread)
+static const size_t stack_slack = 32768;
+
+static filc_stack_limit create_null_stack_limit(void)
+{
+    filc_stack_limit result;
+    result.stack_limit = NULL;
+    result.stack_top = NULL;
+    return result;
+}
+
+static filc_stack_limit compute_stack_limit_for_stack_and_size(char* stack,
+                                                               size_t stack_size)
+{
+    static const size_t stack_slack = 32768;
+
+    PAS_ASSERT(stack);
+    PAS_ASSERT(stack_size > stack_slack);
+
+    filc_stack_limit result;
+    
+    result.stack_limit = stack + stack_slack;
+    result.stack_top = stack + stack_size;
+    
+    return result;
+}
+
+filc_stack_limit filc_try_compute_stack_limit(void)
 {
     static const bool verbose = false;
     
-    static const size_t stack_slack = 32768;
-
     pthread_attr_t attr;
-    PAS_ASSERT(!pthread_getattr_np(pthread_self(), &attr));
+
+    if (pthread_getattr_np(pthread_self(), &attr))
+        return create_null_stack_limit();
+    
     char* stack;
     size_t stack_size;
-    PAS_ASSERT(!pthread_attr_getstack(&attr, (void**)&stack, &stack_size));
+    if (pthread_attr_getstack(&attr, (void**)&stack, &stack_size))
+        return create_null_stack_limit();
 
     if (verbose)
         pas_log("stack = %p, stack_size = %zu\n", stack, stack_size);
@@ -362,10 +412,28 @@ static void set_stack_limit(filc_thread* thread)
     PAS_ASSERT(stack);
     PAS_ASSERT((char*)&stack > stack);
     PAS_ASSERT((char*)&stack < stack + stack_size);
-    PAS_ASSERT(stack_size > stack_slack);
     PAS_ASSERT((char*)&stack > stack + stack_slack);
 
-    thread->stack_limit = stack + stack_slack;
+    return compute_stack_limit_for_stack_and_size(stack, stack_size);
+}
+
+filc_stack_limit filc_compute_stack_limit(void)
+{
+    filc_stack_limit result = filc_try_compute_stack_limit();
+    PAS_ASSERT(filc_stack_limit_did_succeed(result));
+    return result;
+}
+
+static void set_stack_limit(filc_thread* thread, filc_stack_limit stack_limit)
+{
+    thread->stack_limit = stack_limit.stack_limit;
+    thread->stack_top = stack_limit.stack_top;
+    thread->original_stack_limit = stack_limit;
+}
+
+static void compute_and_set_stack_limit(filc_thread* thread)
+{
+    set_stack_limit(thread, filc_compute_stack_limit());
 }
 
 static int file_log_fd = -1;
@@ -387,7 +455,61 @@ static void open_new_log_file_if_necessary(void)
         open_new_log_file();
 }
 
-void filc_initialize(void)
+static void add_cpu_indicator_globals(void);
+
+static bool is_unsafe_signal_for_kill(int signum)
+{
+    unsigned index;
+    for (index = num_libc_internal_signals; index--;) {
+        if (signum == libc_internal_signals[index])
+            return true;
+    }
+    return false;
+}
+
+static bool is_unsafe_signal_for_handlers(int signum)
+{
+    switch (signum) {
+    case SIGILL:
+    case SIGTRAP:
+    case SIGBUS:
+    case SIGSEGV:
+    case SIGFPE:
+        return true;
+    default:
+        return is_unsafe_signal_for_kill(signum);
+    }
+}
+
+static void signal_pizlonator(int signum, siginfo_t* info, void* context);
+
+static filc_signal_handler* install_dummy_signal_handler(int signum)
+{
+    if (filc_signal_table[signum])
+        return filc_signal_table[signum];
+    /* This code assumes that it's running before the GC can run. */
+    PAS_ASSERT(!is_unsafe_signal_for_handlers(signum));
+    filc_signal_handler* handler = (filc_signal_handler*)filc_object_special_payload_with_manual_tracking(
+        filc_allocate_special_early(
+            sizeof(filc_signal_handler), 1, FILC_SPECIAL_TYPE_SIGNAL_HANDLER));
+    handler->function_ptr = filc_ptr_forge_null();
+    PAS_ASSERT(!sigemptyset(&handler->mask));
+    handler->user_signum = signum;
+    handler->flags = 0;
+    handler->dump_heap = false;
+    handler->dump_stacks = false;
+    filc_signal_table[signum] = handler;
+    struct sigaction act;
+    pas_zero_memory(&act, sizeof(act));
+    PAS_ASSERT(!sigemptyset(&act.sa_mask));
+    act.sa_flags = SA_SIGINFO;
+    act.sa_sigaction = signal_pizlonator;
+    if (sigaction(signum, &act, NULL) < 0)
+        pas_panic("cannot install signal handler for heap dump: %s\n", strerror(errno));
+    return handler;
+}
+
+void filc_initialize(filc_stack_limit stack_limit)
 {
     bool should_log_to_file = false;
     filc_get_bool_env("FILC_LOG_TO_FILE", &should_log_to_file);
@@ -415,7 +537,6 @@ void filc_initialize(void)
     PAS_ASSERT(FILC_OBJECT_FLAG_READONLY == 2);
     PAS_ASSERT(FILC_OBJECT_FLAG_FREE == 4);
     PAS_ASSERT(FILC_OBJECT_FLAG_GLOBAL_AUX == 16);
-    PAS_ASSERT(FILC_OBJECT_FLAG_CLOSURE == 64);
     PAS_ASSERT(FILC_OBJECT_FLAGS_SPECIAL_SHIFT == 7);
     PAS_ASSERT(FILC_OBJECT_FLAGS_ALIGN_SHIFT == 11);
     PAS_ASSERT(FILC_ATOMIC_BOX_BIT == 1);
@@ -432,19 +553,25 @@ void filc_initialize(void)
     FILC_FOR_EACH_LOCK(INITIALIZE_LOCK);
 #undef INITIALIZE_LOCK
 
-    pas_system_condition_construct(&filc_stop_the_world_cond);
+    pas_system_condition_construct(&filc_handshake_cond);
 
     fugc_initialize_settings();
 
     filc_get_bool_env("FILC_EXIT_ON_PANIC", &filc_exit_on_panic);
+    filc_get_bool_env("FILC_QUIET_PANIC", &filc_quiet_panic);
     filc_get_bool_env("FILC_DUMP_ERRNOS", &filc_dump_errnos);
-    filc_get_bool_env("FILC_RUN_GLOBAL_CTORS", &filc_run_global_ctors);
-    filc_get_bool_env("FILC_RUN_GLOBAL_DTORS", &filc_run_global_dtors);
+    if (PAS_ENABLE_TESTING) {
+        filc_get_bool_env("FILC_RUN_GLOBAL_CTORS", &filc_run_global_ctors);
+        filc_get_bool_env("FILC_RUN_GLOBAL_DTORS", &filc_run_global_dtors);
+    }
     filc_get_bool_env("FILC_VERBOSE_STW", &filc_verbose_stop_the_world);
+    filc_get_unsigned_env("FILC_DUMP_HEAP_ON_SIGNAL", &filc_dump_heap_on_signal);
+    filc_get_unsigned_env("FILC_DUMP_STACKS_ON_SIGNAL", &filc_dump_stacks_on_signal);
 
     filc_override_settings_if_appropriate();
     
     fugc_parse_settings();
+    filc_sampling_profiler_parse_settings();
 
     bool should_dump_setup = false;
     filc_get_bool_env("FILC_DUMP_SETUP", &should_dump_setup);
@@ -456,15 +583,28 @@ void filc_initialize(void)
         pas_log("    run global ctors: %s\n", filc_run_global_ctors ? "yes" : "no");
         pas_log("    run global dtors: %s\n", filc_run_global_dtors ? "yes" : "no");
         pas_log("    verbose stop the world: %s\n", filc_verbose_stop_the_world ? "yes" : "no");
+        pas_log("    dump heap on signal: ");
+        if (filc_dump_heap_on_signal)
+            pas_log("yes, signal %u\n", filc_dump_heap_on_signal);
+        else
+            pas_log("no\n");
+        pas_log("    dump stacks on signal: ");
+        if (filc_dump_heap_on_signal)
+            pas_log("yes, signal %u\n", filc_dump_stacks_on_signal);
+        else
+            pas_log("no\n");
         fugc_dump_setup();
+        filc_sampling_profiler_dump_settings();
     }
     
     fugc_initialize_heaps();
 
     filc_object_array_construct(&filc_global_variable_roots);
+    add_cpu_indicator_globals();
+    
     filc_object_array_construct(&filc_global_variable_root_ptrs);
 
-    filc_thread* thread = filc_thread_create_with_manual_tracking();
+    filc_thread* thread = filc_thread_create_with_manual_tracking(NULL);
     thread->has_started = true;
     thread->has_stopped = false;
     thread->thread = pthread_self();
@@ -475,15 +615,23 @@ void filc_initialize(void)
     thread->tlc_node_version = pas_thread_local_cache_node_version(thread->tlc_node);
     PAS_ASSERT(!pthread_key_create(&filc_thread_key, NULL));
     PAS_ASSERT(!pthread_setspecific(filc_thread_key, thread));
-    set_stack_limit(thread);
+    PAS_ASSERT(filc_stack_limit_did_succeed(stack_limit));
+    set_stack_limit(thread, stack_limit);
+
+    /* This code assumes that it's running before the GC can run. */
+    if (filc_dump_heap_on_signal)
+        install_dummy_signal_handler(filc_dump_heap_on_signal)->dump_heap = true;
+    if (filc_dump_stacks_on_signal)
+        install_dummy_signal_handler(filc_dump_stacks_on_signal)->dump_stacks = true;
 
     /* This has to happen *after* we do our primordial allocations. */
     fugc_initialize_collector();
+    filc_sampling_profiler_initialize();
 
     is_initialized = true;
 }
 
-PAS_NEVER_INLINE void* filc_thread_allocate_slow(size_t size)
+PAS_NEVER_INLINE pas_allocation_result filc_thread_allocate_slow(size_t size)
 {
     return verse_heap_allocate(fugc_default_heap, size);
 }
@@ -520,14 +668,23 @@ void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads)
             PAS_ASSERT(thread->next_thread->prev_thread == thread);
         (*num_threads)++;
     }
-    /* NOTE: This barely works with fork! We snapshot exited, which disagrees with the idea that
-       we can only bmalloc_allocate when entered. But, we snapshot when handshaking, an we cannot
-       have handshakes in progress at time of fork, so it's fine. */
-    *threads = (filc_thread**)bmalloc_allocate(sizeof(filc_thread*) * *num_threads);
-    size_t index = 0;
-    for (thread = filc_first_thread; thread; thread = thread->next_thread)
-        (*threads)[index++] = thread;
+    if (threads) {
+        /* NOTE: This barely works with fork! We snapshot exited, which disagrees with the idea that
+           we can only bmalloc_allocate when entered. But, we snapshot when handshaking, and we cannot
+           have handshakes in progress at time of fork, so it's fine. */
+        *threads = (filc_thread**)bmalloc_allocate(sizeof(filc_thread*) * *num_threads);
+        size_t index = 0;
+        for (thread = filc_first_thread; thread; thread = thread->next_thread)
+            (*threads)[index++] = thread;
+    }
     filc_thread_list_lock_unlock();
+}
+
+size_t filc_count_threads(void)
+{
+    size_t result;
+    filc_snapshot_threads(NULL, &result);
+    return result;
 }
 
 bool filc_thread_participates_in_handshakes(filc_thread* thread)
@@ -556,9 +713,9 @@ void filc_stop_the_world(void)
     static const bool verbose = false;
     
     filc_assert_my_thread_is_not_entered();
-    filc_stop_the_world_lock_lock();
+    filc_handshake_lock_lock();
     if (filc_stop_the_world_count++) {
-        filc_stop_the_world_lock_unlock();
+        filc_handshake_lock_unlock();
         return;
     }
     
@@ -607,7 +764,7 @@ void filc_stop_the_world(void)
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
 
-    filc_stop_the_world_lock_unlock();
+    filc_handshake_lock_unlock();
 }
 
 void filc_resume_the_world(void)
@@ -615,9 +772,9 @@ void filc_resume_the_world(void)
     static const bool verbose = false;
     
     filc_assert_my_thread_is_not_entered();
-    filc_stop_the_world_lock_lock();
+    filc_handshake_lock_lock();
     if (--filc_stop_the_world_count) {
-        filc_stop_the_world_lock_unlock();
+        filc_handshake_lock_unlock();
         return;
     }
 
@@ -654,15 +811,15 @@ void filc_resume_the_world(void)
     if (verbose)
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
-    pas_system_condition_broadcast(&filc_stop_the_world_cond);
-    filc_stop_the_world_lock_unlock();
+    pas_system_condition_broadcast(&filc_handshake_cond);
+    filc_handshake_lock_unlock();
 }
 
 void filc_wait_for_world_resumption_holding_lock(void)
 {
-    filc_stop_the_world_lock_assert_held();
+    filc_handshake_lock_assert_held();
     while (filc_stop_the_world_count)
-        pas_system_condition_wait(&filc_stop_the_world_cond, &filc_stop_the_world_lock);
+        pas_system_condition_wait(&filc_handshake_cond, &filc_handshake_lock);
 }
 
 static void run_pollcheck_callback(filc_thread* thread)
@@ -723,7 +880,7 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
     static const bool verbose = false;
 
     filc_assert_my_thread_is_not_entered();
-    filc_soft_handshake_lock_lock();
+    filc_handshake_lock_lock();
 
     sigset_t fullset;
     sigset_t oldset;
@@ -793,7 +950,17 @@ void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), vo
     if (verbose)
         pas_log("%s: unblocking signals\n", __PRETTY_FUNCTION__);
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
-    filc_soft_handshake_lock_unlock();
+    filc_handshake_lock_unlock();
+}
+
+void filc_runtime_threads_handshake(void (*callback)(void* arg), void* arg)
+{
+    /* FIXME: This is currently quite inefficient because it does things sequentially. */
+    pas_scavenger_handshake(callback, arg);
+    fugc_handshake(callback, arg);
+
+    /* FIXME: We could support handshaking the profiler. */
+    PAS_ASSERT(!filc_sampling_profiler_enabled);
 }
 
 static void run_pollcheck_callback_if_necessary(filc_thread* my_thread)
@@ -861,6 +1028,8 @@ void filc_enter(filc_thread* my_thread)
     PAS_ASSERT((my_thread->state & FILC_THREAD_STATE_ENTERED));
 }
 
+static uintptr_t heap_dump_count = 0;
+
 static void call_signal_handler(filc_thread* my_thread, filc_signal_handler* handler, siginfo_t* info)
 {
     static const bool verbose = false;
@@ -884,19 +1053,49 @@ static void call_signal_handler(filc_thread* my_thread, filc_signal_handler* han
     filc_native_frame native_frame;
     filc_push_native_frame(my_thread, &native_frame);
 
+    if (handler->dump_heap || handler->dump_stacks) {
+        filc_increase_special_signal_deferral_depth(my_thread);
+        if (handler->dump_heap) {
+            filc_exit(my_thread);
+            uintptr_t heap_dump_number = pas_atomic_exchange_add_uintptr(&heap_dump_count, 1);
+            char filename[100];
+            snprintf(filename, sizeof(filename), "heap-dump-%d-%zu.txt",
+                     getpid(), (size_t)heap_dump_number);
+            pas_log("[%d] dump heap to %s...\n", getpid(), filename);
+            int fd = open(filename, O_CREAT | O_WRONLY | O_EXCL, 0600);
+            if (fd < 0)
+                pas_log("[%d] heap dump failed: %s\n", getpid(), strerror(errno));
+            else {
+                filc_dump_heap(fd);
+                pas_log("[%d] heap dump complete.\n", getpid());
+                close(fd);
+            }
+            filc_enter(my_thread);
+        }
+        if (handler->dump_stacks) {
+            filc_exit(my_thread);
+            filc_dump_stacks();
+            filc_enter(my_thread);
+        }
+        filc_decrease_special_signal_deferral_depth(my_thread);
+    }
+
     /* Load the function from the handler first since as soon as we exit, the handler might get GC'd.
-       Also, we're choosing not to rely on the fact that functions are global and we track them anyway. */
+       Also, we're choosing not to rely on the fact that functions are global and we track them
+       anyway. */
     filc_ptr function_ptr = filc_flight_ptr_load(my_thread, &handler->function_ptr);
-
-    /* At this point, a GC can happen and we're not rooting the handler. So, we cannot touch the
-       handler anymore after this point. */
-
-    filc_ptr info_ptr = filc_ptr_create_with_object(
-        my_thread, filc_allocate_with_alignment(my_thread, sizeof(siginfo_t), alignof(siginfo_t)));
-    memcpy(filc_ptr_ptr(info_ptr), info, sizeof(siginfo_t));
-
-    filc_call_user_void_int_ptr_ptr(
-        my_thread, function_ptr, info->si_signo, info_ptr, filc_ptr_forge_null());
+    if (filc_ptr_ptr(function_ptr)) {
+        /* At this point, a GC can happen and we're not rooting the handler. So, we cannot touch the
+           handler anymore after this point. */
+        
+        filc_ptr info_ptr = filc_ptr_create_with_object(
+            my_thread,
+            filc_allocate_with_alignment(my_thread, sizeof(siginfo_t), alignof(siginfo_t)));
+        memcpy(filc_ptr_ptr(info_ptr), info, sizeof(siginfo_t));
+        
+        filc_call_user_void_int_ptr_ptr(
+            my_thread, function_ptr, info->si_signo, info_ptr, filc_ptr_forge_null());
+    }
 
     filc_pop_native_frame(my_thread, &native_frame);
     filc_pop_frame(my_thread, frame);
@@ -1207,7 +1406,7 @@ void filc_exit_with_allocation_root(filc_thread* my_thread, void* allocation_roo
 
 filc_raw_ptr_array* filc_raw_ptr_array_create(void)
 {
-    filc_raw_ptr_array* result = bmalloc_allocate(sizeof(filc_raw_ptr_array));
+    filc_raw_ptr_array* result = (filc_raw_ptr_array*)bmalloc_allocate(sizeof(filc_raw_ptr_array));
     filc_raw_ptr_array_construct(result);
     return result;
 }
@@ -1231,7 +1430,7 @@ void filc_raw_ptr_array_add(filc_raw_ptr_array* array, void* ptr)
         else
             new_capacity = 2;
 
-        new_array = bmalloc_allocate(sizeof(void*) * new_capacity);
+        new_array = (void**)bmalloc_allocate(sizeof(void*) * new_capacity);
         memcpy(new_array, array->array, sizeof(void*) * array->size);
 
         bmalloc_deallocate(array->array);
@@ -1287,7 +1486,7 @@ PAS_NEVER_INLINE void filc_object_array_impl_enlarge(filc_object_array_impl* arr
     PAS_ASSERT(new_objects_capacity >= anticipated_size);
     size_t total_size;
     PAS_ASSERT(!pas_mul_uintptr_overflow(new_objects_capacity, sizeof(filc_object*), &total_size));
-    new_objects = bmalloc_iso_allocate_array_by_size(heap, total_size);
+    new_objects = (filc_object**)bmalloc_iso_allocate_array_by_size(heap, total_size);
     /* These need to be ptr-safe atomic memcpy's and memset's, because we could get our hands
        on an array backing store that is being cowboyed. */
     filc_low_level_ptr_safe_memcpy(
@@ -1363,7 +1562,7 @@ static PAS_NEVER_INLINE void native_frame_enlarge(filc_native_frame* frame)
     new_capacity = frame->capacity << 1;
     PAS_ASSERT(new_capacity > frame->capacity);
 
-    new_array = bmalloc_allocate(sizeof(uintptr_t) * new_capacity);
+    new_array = (uintptr_t*)bmalloc_allocate(sizeof(uintptr_t) * new_capacity);
     memcpy(new_array, frame->array, sizeof(uintptr_t) * frame->size);
 
     if (frame->array != frame->inline_array)
@@ -1486,6 +1685,24 @@ void filc_thread_sweep_mark_stack(filc_thread* my_thread)
     filc_mark_stack_reset(&my_thread->mark_stack);
 }
 
+void filc_thread_reset_grey_fibers(filc_thread* my_thread)
+{
+#if FILC_HAS_FIBER_CONTEXT
+    filc_raw_ptr_array_reset(&my_thread->grey_fibers);
+#else /* FILC_HAS_FIBER_CONTEXT -> so !FILC_HAS_FIBER_CONTEXT */
+    PAS_UNUSED_PARAM(my_thread);
+#endif /* FILC_HAS_FIBER_CONTEXT -> so end of !FILC_HAS_FIBER_CONTEXT */
+}
+
+void filc_thread_assert_no_grey_fibers(filc_thread* my_thread)
+{
+#if FILC_HAS_FIBER_CONTEXT
+    PAS_ASSERT(!my_thread->grey_fibers.size);
+#else /* FILC_HAS_FIBER_CONTEXT -> so !FILC_HAS_FIBER_CONTEXT */
+    PAS_UNUSED_PARAM(my_thread);
+#endif /* FILC_HAS_FIBER_CONTEXT -> so end of !FILC_HAS_FIBER_CONTEXT */
+}
+
 void filc_thread_donate(filc_thread* my_thread)
 {
     filc_thread_assert_participates_in_pollchecks(my_thread);
@@ -1596,6 +1813,16 @@ const filc_origin* filc_origin_next_inline(const filc_origin* origin)
 
 void filc_origin_dump_self(const filc_origin* origin, pas_stream* stream)
 {
+    Dl_info dl_info;
+    if (dladdr(origin, &dl_info)) {
+        if (dl_info.dli_fname) {
+            const char* dso_name = dl_info.dli_fname;
+            const char* last_slash = strrchr(dso_name, '/');
+            if (last_slash && last_slash[1])
+                dso_name = last_slash + 1;
+            pas_stream_printf(stream, "(%s) ", dso_name);
+        }
+    }
     if (origin) {
         PAS_ASSERT(origin->origin_node);
         if (origin->origin_node->filename)
@@ -1663,6 +1890,9 @@ void filc_special_type_dump(filc_special_type type, pas_stream* stream)
     case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
         pas_stream_printf(stream, "finalizer_queue");
         return;
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
+        pas_stream_printf(stream, "fiber_context");
+        return;
     default:
         pas_stream_printf(stream, "?%u", (unsigned)type);
         return;
@@ -1710,10 +1940,6 @@ void filc_object_flags_dump_with_comma(filc_object_flags flags, bool* comma, pas
     if (flags & FILC_OBJECT_FLAG_WEAK_KEY) {
         pas_stream_print_comma(stream, comma, ",");
         pas_stream_printf(stream, "weak_key");
-    }
-    if (flags & FILC_OBJECT_FLAG_CLOSURE) {
-        pas_stream_print_comma(stream, comma, ",");
-        pas_stream_printf(stream, "closure");
     }
     if (filc_object_flags_is_aligned(flags)) {
         pas_stream_print_comma(stream, comma, ",");
@@ -1812,12 +2038,14 @@ char* filc_ptr_contents_to_new_string(filc_ptr ptr)
     return pas_string_stream_take_string(&stream);
 }
 
-void filc_store_ptr_atomic_with_ptr_pair_outline(filc_thread* my_thread,
-                                                 void** ptr_ptr,
-                                                 filc_lower_or_box* lower_or_box_ptr,
-                                                 filc_ptr value)
+filc_ptr filc_load_ptr_atomic_with_manual_tracking_outline(filc_ptr ptr)
 {
-    return filc_store_ptr_atomic_with_ptr_pair(my_thread, ptr_ptr, lower_or_box_ptr, value);
+    return filc_load_ptr_atomic_with_manual_tracking(ptr, 0);
+}
+
+void filc_store_ptr_atomic_outline(filc_thread* my_thread, filc_ptr ptr, filc_ptr value)
+{
+    filc_store_ptr_atomic(my_thread, ptr, 0, value);
 }
 
 bool filc_weak_cas_ptr(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
@@ -1843,8 +2071,10 @@ bool filc_weak_cas_ptr(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
                 continue;
             did_succeed = true;
         }
-        if (did_succeed)
+        if (did_succeed) {
+            pas_store_store_fence();
             *(void**)filc_ptr_ptr(ptr) = filc_ptr_ptr(new_value);
+        }
         return did_succeed;
     }
 }
@@ -1887,7 +2117,7 @@ filc_ptr filc_xchg_ptr_with_manual_tracking(
     filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset, filc_ptr new_value)
 {
     for (;;) {
-        filc_ptr result = filc_load_ptr_with_manual_tracking(ptr, offset);
+        filc_ptr result = filc_load_ptr_atomic_with_manual_tracking(ptr, offset);
         if (filc_weak_cas_ptr(my_thread, ptr, offset, result, new_value))
             return result;
     }
@@ -1900,8 +2130,8 @@ void filc_thread_ensure_cc_outline_buffer_slow(filc_thread* my_thread, size_t si
     size = pas_round_up_to_power_of_2(size, FILC_CC_ALIGNMENT);
     bmalloc_deallocate(my_thread->cc_outline_buffer);
     bmalloc_deallocate(my_thread->cc_outline_aux_buffer);
-    my_thread->cc_outline_buffer = bmalloc_allocate_with_alignment(size, FILC_CC_ALIGNMENT);
-    my_thread->cc_outline_aux_buffer = bmalloc_allocate_with_alignment(size, FILC_CC_ALIGNMENT);
+    my_thread->cc_outline_buffer = (char*)bmalloc_allocate_with_alignment(size, FILC_CC_ALIGNMENT);
+    my_thread->cc_outline_aux_buffer = (char*)bmalloc_allocate_with_alignment(size, FILC_CC_ALIGNMENT);
     pas_zero_memory(my_thread->cc_outline_buffer, size);
     pas_zero_memory(my_thread->cc_outline_aux_buffer, size);
     my_thread->cc_outline_size = size;
@@ -1936,7 +2166,29 @@ static PAS_ALWAYS_INLINE void barrier_impl(filc_thread* my_thread, filc_object* 
 {
     PAS_TESTING_ASSERT(my_thread == filc_get_my_thread());
     PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
-    if (PAS_LIKELY(fugc_mark_fast(object) != fugc_mark_fast_marked_and_need_slow_path))
+    /* NOTE: We do not do the leaf marking optimization here because of the following race:
+       
+       One thread does:
+
+       T1. Allocate aux just before barrier is enabled and shove it into object X.
+       
+       And another thread does:
+       
+       T2. Mark object X in response to barriers being enabled.
+       
+       And imagine that happens right as the barrier is being enabled, so T1 doesn't see the barrier
+       being enabled yet (and that means that we're allocating white, since black allocation is after
+       barrier enablement) while T2 does see the barrier being enabled.
+       
+       What could happen is that T2 doesn't see that X has an aux, so it leaf-marks it.
+       
+       Then, we have an aux that never gets marked!
+       
+       The easiest way to fix this is to just turn off the leaf marking optimization in the barrier.
+       But, we could be more precise if we really wanted - for example, we could just turn off the
+       leaf marking in the barrier when we haven't yet acknowledged the first soft handshake (the one
+       after the barrier is enabled). */
+    if (PAS_LIKELY(fugc_mark_fast(object) == fugc_mark_fast_already_marked))
         return;
     barrier_slowest_path_impl(my_thread, object);
 }
@@ -2036,7 +2288,7 @@ void filc_check_access_special(filc_ptr ptr, filc_special_type special_type)
     FILC_CHECK(
         filc_object_is_special(filc_ptr_object(ptr)),
         NULL,
-        "cannot access pointer as %s, object isn't even special (pts = %s).",
+        "cannot access pointer as %s, object isn't even special (ptr = %s).",
         filc_special_type_to_new_string(special_type), filc_ptr_to_new_string(ptr));
     
     FILC_CHECK(
@@ -2184,28 +2436,32 @@ static PAS_ALWAYS_INLINE char* ensure_aux_ptr_slow_size_specialized(
     PAS_TESTING_ASSERT(object != &filc_free_singleton);
     PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
     PAS_TESTING_ASSERT(size);
-    char* aux_ptr = filc_thread_allocate(my_thread, size);
-    if (verbose)
-        pas_log("allocated aux at %p with size %zu, ending at %p\n", aux_ptr, size, aux_ptr + size);
-    if (size_mode == filc_small_size || !exit_allowed_mode)
-        filc_memset_small_word(aux_ptr, 0, size);
-    else {
-        /* It's wild that we have to do this, but it's really necessary, and it means that anytime
-           we do a store, it's a safepoint.
-        
-           Fortunately, any object referenced from roots is guaranteed to be kept alive along with its
-           aux. even if this exit happens, anything the compiler had been able to prove about objects
-           referenced from locals will continue to be true.
-           
-           The only thing that the compiler can't reason about at all are barriers, but that was
-           already true due to the fantastic properties of Phil's concurrent marking (even if you just
-           allocated an object you still need a barrier). */
-        filc_exit_with_allocation_root(my_thread, aux_ptr);
-        memset(aux_ptr, 0, size);
-        filc_enter_with_allocation_root(my_thread, aux_ptr);
+    pas_allocation_result aux_ptr_result = filc_thread_allocate(my_thread, size);
+    if (verbose) {
+        pas_log("allocated aux at %p with size %zu, ending at %p\n",
+                (void*)aux_ptr_result.begin, size, (char*)aux_ptr_result.begin + size);
+    }
+    if (!aux_ptr_result.zero_mode) {
+        if (size_mode == filc_small_size || !exit_allowed_mode)
+            filc_memset_small_word((void*)aux_ptr_result.begin, 0, size);
+        else {
+            /* It's wild that we have to do this, but it's really necessary, and it means that anytime
+               we do a store, it's a safepoint.
+               
+               Fortunately, any object referenced from roots is guaranteed to be kept alive along with
+               its aux. even if this exit happens, anything the compiler had been able to prove about
+               objects referenced from locals will continue to be true.
+                
+               The only thing that the compiler can't reason about at all are barriers, but that was
+               already true due to the fantastic properties of Phil's concurrent marking (even if you
+               just allocated an object you still need a barrier). */
+            filc_exit_with_allocation_root(my_thread, (void*)aux_ptr_result.begin);
+            memset((void*)aux_ptr_result.begin, 0, size);
+            filc_enter_with_allocation_root(my_thread, (void*)aux_ptr_result.begin);
+        }
     }
     if (PAS_UNLIKELY(filc_current_marking_state))
-        verse_heap_set_is_marked_relaxed(aux_ptr, true);
+        verse_heap_set_is_marked_relaxed((void*)aux_ptr_result.begin, true);
     for (;;) {
         uintptr_t aux = object->aux;
         PAS_TESTING_ASSERT(!(filc_aux_get_flags(aux) & FILC_OBJECT_FLAGS_SPECIAL_MASK));
@@ -2220,17 +2476,18 @@ static PAS_ALWAYS_INLINE char* ensure_aux_ptr_slow_size_specialized(
         if (PAS_UNLIKELY(filc_aux_get_flags(aux) & FILC_OBJECT_FLAG_FREE))
             ensure_aux_ptr_free_fail(object);
         if (not_atomic_hack) {
-            object->aux = filc_aux_create(filc_aux_get_flags(aux), aux_ptr);
-            return aux_ptr;
+            object->aux = filc_aux_create(filc_aux_get_flags(aux), (char*)aux_ptr_result.begin);
+            return (char*)aux_ptr_result.begin;
         }
         if (pas_compare_and_swap_uintptr_weak(
-                &object->aux, aux, filc_aux_create(filc_aux_get_flags(aux), aux_ptr))) {
+                &object->aux, aux, filc_aux_create(filc_aux_get_flags(aux),
+                                                   (char*)aux_ptr_result.begin))) {
             if (verbose) {
-                pas_log("created aux at %p: ", aux_ptr);
+                pas_log("created aux at %p: ", (void*)aux_ptr_result.begin);
                 filc_object_dump(object, pas_log_stream);
                 pas_log("\n");
             }
-            return aux_ptr;
+            return (char*)aux_ptr_result.begin;
         }
     }
 }
@@ -2300,7 +2557,8 @@ char* filc_object_ensure_aux_ptr_outline(filc_thread* my_thread, filc_object* ob
 
 filc_atomic_box* filc_atomic_box_create_for_ptr_store(filc_thread* my_thread, filc_ptr value)
 {
-    filc_atomic_box* result = filc_thread_allocate(my_thread, sizeof(filc_atomic_box));
+    filc_atomic_box* result = (filc_atomic_box*)filc_thread_allocate(my_thread,
+                                                                     sizeof(filc_atomic_box)).begin;
     /* We know that the ptr value is already barriered. */
     result->ptr = value;
     if (PAS_UNLIKELY(filc_current_marking_state))
@@ -2330,6 +2588,7 @@ filc_object* filc_allocate_special_early_with_heap(size_t size, size_t alignment
     case FILC_SPECIAL_TYPE_THREAD:
     case FILC_SPECIAL_TYPE_PTR_TABLE:
     case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
         PAS_ASSERT(heap == fugc_destructor_heap);
         break;
     case FILC_SPECIAL_TYPE_WEAK:
@@ -2355,22 +2614,25 @@ filc_object* filc_allocate_special_early_with_heap(size_t size, size_t alignment
         base_size = sizeof(filc_object);
     PAS_ASSERT(!pas_add_uintptr_overflow(base_size, size, &total_size));
 
-    void* allocation = verse_heap_allocate_with_alignment(heap, total_size, alignment);
+    pas_allocation_result allocation_result =
+        verse_heap_allocate_with_alignment(heap, total_size, alignment);
     filc_log_align log_align;
     filc_object* result;
     if (alignment > FILC_MINALIGN) {
-        filc_alignment_header_construct(NULL, (filc_alignment_header*)allocation, alignment, NULL);
-        result = (filc_object*)((char*)allocation + alignment) - 1;
+        filc_alignment_header_construct(NULL, (filc_alignment_header*)allocation_result.begin,
+                                        alignment, NULL);
+        result = (filc_object*)((char*)allocation_result.begin + alignment) - 1;
         log_align = pas_log2(alignment);
     } else {
-        result = (filc_object*)allocation;
+        result = (filc_object*)allocation_result.begin;
         log_align = 0;
     }
     PAS_ASSERT((log_align & FILC_LOG_ALIGN_MASK) == log_align);
     filc_object_flags object_flags = filc_object_flags_create(0, special_type, log_align);
     result->upper = filc_object_lower_not_null(result);
-    result->aux = filc_aux_create(object_flags, filc_object_lower(result));
-    pas_zero_memory(filc_object_lower(result), size);
+    result->aux = filc_aux_create(object_flags, (char*)filc_object_lower(result));
+    if (!allocation_result.zero_mode)
+        pas_zero_memory(filc_object_lower(result), size);
     pas_store_store_fence();
 
     return result;
@@ -2391,6 +2653,7 @@ filc_object* filc_allocate_special_early(size_t size, size_t alignment,
     case FILC_SPECIAL_TYPE_THREAD:
     case FILC_SPECIAL_TYPE_PTR_TABLE:
     case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
         heap = fugc_destructor_heap;
         break;
     case FILC_SPECIAL_TYPE_WEAK:
@@ -2451,11 +2714,11 @@ filc_object* filc_allocate_special_with_existing_payload(
     PAS_ASSERT(special_type == FILC_SPECIAL_TYPE_FUNCTION ||
                special_type == FILC_SPECIAL_TYPE_DL_HANDLE);
 
-    filc_object* result = (filc_object*)filc_thread_allocate(my_thread, sizeof(filc_object));
+    filc_object* result = (filc_object*)filc_thread_allocate(my_thread, sizeof(filc_object)).begin;
     result->upper = filc_object_lower_not_null(result);
     result->aux = filc_aux_create(
         filc_object_flags_create(0, special_type, 0),
-        payload);
+        (char*)payload);
     pas_store_store_fence();
     return result;
 }
@@ -2512,50 +2775,61 @@ static PAS_ALWAYS_INLINE filc_object* initialize_object_header(
 }
 
 static PAS_NEVER_INLINE filc_object* finish_allocate_large(
-    filc_thread* my_thread, filc_object* result, size_t size)
+    filc_thread* my_thread, filc_object* result, size_t size, pas_zero_mode zero_mode,
+    filc_object_flags object_flags)
 {
     static const bool verbose = false;
 
     if (verbose)
-        pas_log("allocated large %p\n", result);
-    
-    filc_exit_with_allocation_root(my_thread, filc_object_mark_base(result));
-    
-    pas_zero_memory(filc_object_lower(result), size);
-    
-    pas_store_store_fence();
-    
-    filc_enter_with_allocation_root(my_thread, filc_object_mark_base(result));
+        pas_log("allocated large %p %s\n", result, pas_zero_mode_get_string(zero_mode));
+
+    if (zero_mode || (object_flags & FILC_OBJECT_FLAG_MMAP))
+        pas_store_store_fence();
+    else {
+        filc_exit_with_allocation_root(my_thread, filc_object_mark_base(result));
+        
+        pas_zero_memory(filc_object_lower(result), size);
+        
+        pas_store_store_fence();
+        
+        filc_enter_with_allocation_root(my_thread, filc_object_mark_base(result));
+    }
     return result;
 }
 
-static PAS_ALWAYS_INLINE filc_object* finish_allocate_small(filc_object* result, size_t size)
+static PAS_ALWAYS_INLINE filc_object* finish_allocate_small(filc_object* result, size_t size,
+                                                            pas_zero_mode zero_mode,
+                                                            filc_object_flags object_flags)
 {
-    filc_memset_small_word(filc_object_lower(result), 0, size);
+    if (!zero_mode && !(object_flags & FILC_OBJECT_FLAG_MMAP))
+        filc_memset_small_word(filc_object_lower(result), 0, size);
     pas_store_store_fence();
     return result;
 }
 
 static PAS_ALWAYS_INLINE filc_object* finish_allocate(
-    filc_thread* my_thread, void* allocation, size_t size, size_t alignment,
+    filc_thread* my_thread, pas_allocation_result allocation_result, size_t size, size_t alignment,
     size_t offset_to_payload, filc_object_flags object_flags,
     filc_exit_allowed_mode exit_allowed_mode, filc_finalizer_queue* finalizer_queue)
 {
     static const bool verbose = false;
     if (verbose && (object_flags & FILC_OBJECT_FLAG_MMAP)) {
-        pas_log("[%d] allocated mmap %p...%p\n",
+        pas_log("[%d] allocated mmap %p...%p, %s\n",
                 getpid(),
-                (char*)allocation + offset_to_payload,
-                (char*)allocation + offset_to_payload + size);
+                (char*)allocation_result.begin + offset_to_payload,
+                (char*)allocation_result.begin + offset_to_payload + size,
+                pas_zero_mode_get_string(allocation_result.zero_mode));
         filc_thread_dump_stack(my_thread, pas_log_stream);
     }
-    filc_thread_assert_allocation_color(my_thread, allocation);
+    filc_thread_assert_allocation_color(my_thread, (void*)allocation_result.begin);
     filc_object* result = initialize_object_header(
-        my_thread, allocation, size, alignment, offset_to_payload, object_flags, NULL,
-        finalizer_queue);
-    if (PAS_UNLIKELY(size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) && exit_allowed_mode)
-        return finish_allocate_large(my_thread, result, size);
-    return finish_allocate_small(result, size);
+        my_thread, (void*)allocation_result.begin, size, alignment, offset_to_payload, object_flags,
+        NULL, finalizer_queue);
+    if (PAS_UNLIKELY(size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) && exit_allowed_mode) {
+        return finish_allocate_large(my_thread, result, size, allocation_result.zero_mode,
+                                     object_flags);
+    }
+    return finish_allocate_small(result, size, allocation_result.zero_mode, object_flags);
 }
 
 static PAS_ALWAYS_INLINE filc_object* allocate_impl(
@@ -2648,15 +2922,15 @@ filc_object* filc_allocate_finalizable_with_alignment(filc_thread* my_thread,
 }
 
 static filc_object* finish_reallocate(
-    filc_thread* my_thread, void* allocation, filc_object* old_object, size_t new_size,
-    size_t alignment, size_t offset_to_payload)
+    filc_thread* my_thread, pas_allocation_result allocation_result, filc_object* old_object,
+    size_t new_size, size_t alignment, size_t offset_to_payload)
 {
     static const bool verbose = false;
 
     if (verbose)
         pas_log("new_size = %zu\n", new_size);
 
-    filc_thread_assert_allocation_color(my_thread, allocation);
+    filc_thread_assert_allocation_color(my_thread, (void*)allocation_result.begin);
     
     check_object_accessible(old_object);
 
@@ -2664,36 +2938,37 @@ static filc_object* finish_reallocate(
     char* old_aux_ptr = filc_object_aux_ptr(old_object);
 
     size_t common_size = pas_min_uintptr(new_size, old_size);
-    char* new_aux_ptr = NULL;
+    pas_allocation_result new_aux_ptr_result = pas_allocation_result_create_failure();
     if (old_aux_ptr) {
-        new_aux_ptr = filc_thread_allocate(my_thread, new_size);
+        new_aux_ptr_result = filc_thread_allocate(my_thread, new_size);
         if (PAS_UNLIKELY(filc_current_marking_state)) {
             /* It's posssible that the allocation of the object observed that we're in black
                allocation mode, but the allocation of the aux didn't, because of how TLCs work. So,
                we need to mark the aux if marking is set, just like allocating the aux in
                filc_object_ensure_aux_ptr_slow. */
-            verse_heap_set_is_marked_relaxed(new_aux_ptr, true);
+            verse_heap_set_is_marked_relaxed((void*)new_aux_ptr_result.begin, true);
         }
     }
 
     filc_object* result = initialize_object_header(
-        my_thread, allocation, new_size, alignment, offset_to_payload, 0, new_aux_ptr, NULL);
+        my_thread, (void*)allocation_result.begin, new_size, alignment, offset_to_payload, 0,
+        (char*)new_aux_ptr_result.begin, NULL);
     if (verbose)
         pas_log("old_object = %p, result = %p\n", old_object, result);
     if (new_size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) {
-        if (new_aux_ptr)
-            filc_push_allocation_root(my_thread, new_aux_ptr);
-        filc_exit_with_allocation_root(my_thread, allocation);
+        if (new_aux_ptr_result.begin)
+            filc_push_allocation_root(my_thread, (void*)new_aux_ptr_result.begin);
+        filc_exit_with_allocation_root(my_thread, (void*)allocation_result.begin);
     }
     memcpy(filc_object_lower(result), filc_object_lower(old_object), common_size);
-    if (new_size > common_size)
+    if (new_size > common_size && !allocation_result.zero_mode)
         pas_zero_memory((char*)filc_object_lower(result) + common_size, new_size - common_size);
-    if (new_aux_ptr)
-        pas_zero_memory(new_aux_ptr, new_size);
+    if (new_aux_ptr_result.begin && !new_aux_ptr_result.zero_mode)
+        pas_zero_memory((void*)new_aux_ptr_result.begin, new_size);
     if (new_size > FILC_MAX_BYTES_BETWEEN_POLLCHECKS) {
-        filc_enter_with_allocation_root(my_thread, allocation);
-        if (new_aux_ptr)
-            filc_pop_allocation_root(my_thread, new_aux_ptr);
+        filc_enter_with_allocation_root(my_thread, (void*)allocation_result.begin);
+        if (new_aux_ptr_result.begin)
+            filc_pop_allocation_root(my_thread, (void*)new_aux_ptr_result.begin);
         FILC_CHECK(
             !(filc_object_get_flags(old_object) & FILC_OBJECT_FLAG_FREE),
             NULL,
@@ -2703,12 +2978,13 @@ static filc_object* finish_reallocate(
     /* FIXME: We could conditionalize this. */
     filc_thread_track_object(my_thread, result);
     /* FIXME: This could be optimized the same way that memmove is. */
-    if (new_aux_ptr) {
+    if (new_aux_ptr_result.begin) {
         size_t offset;
         PAS_ASSERT(pas_is_aligned(common_size, sizeof(filc_lower_or_box)));
         for (offset = 0; offset < common_size; offset += sizeof(filc_lower_or_box)) {
             filc_lower_or_box* old_lower_or_box_ptr = (filc_lower_or_box*)(old_aux_ptr + offset);
-            filc_lower_or_box* new_lower_or_box_ptr = (filc_lower_or_box*)(new_aux_ptr + offset);
+            filc_lower_or_box* new_lower_or_box_ptr = (filc_lower_or_box*)(new_aux_ptr_result.begin
+                                                                           + offset);
             filc_lower_or_box lower_or_box = filc_lower_or_box_load_unfenced(old_lower_or_box_ptr);
             void* lower = filc_lower_or_box_extract_lower(lower_or_box);
             filc_store_barrier(my_thread, filc_object_for_lower(lower));
@@ -2820,9 +3096,11 @@ filc_ptr_table* filc_ptr_table_create(filc_thread* my_thread)
     pas_lock_construct(&result->lock);
     filc_ptr_uintptr_hash_map_construct(&result->encode_map);
     result->free_indices_capacity = 10;
-    result->free_indices = bmalloc_allocate(sizeof(uintptr_t) * result->free_indices_capacity);
+    result->free_indices = (uintptr_t*)bmalloc_allocate(sizeof(uintptr_t) * result->free_indices_capacity);
     result->num_free_indices = 0;
-    result->array = filc_ptr_table_array_create(my_thread, 10);
+    filc_ptr_table_array* array = filc_ptr_table_array_create(my_thread, 10);
+    filc_store_barrier(my_thread, filc_object_for_special_payload(array));
+    result->array = array;
 
     if (PAS_ENABLE_TESTING)
         pas_atomic_exchange_add_uintptr(&num_ptrtables, 1);
@@ -2881,6 +3159,8 @@ static uintptr_t ptr_table_encode_holding_lock(
             }
 
             new_array->num_entries = ptr_table->array->num_entries;
+            pas_store_store_fence();
+            filc_store_barrier(my_thread, filc_object_for_special_payload(new_array));
             ptr_table->array = new_array;
         }
 
@@ -2985,19 +3265,19 @@ uintptr_t filc_exact_ptr_table_encode(filc_thread* my_thread, filc_exact_ptr_tab
 {
     static const bool verbose = false;
     
-    if (!filc_ptr_object(ptr)
-        || (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
-        return (uintptr_t)filc_ptr_ptr(ptr);
-
-    pas_allocation_config allocation_config;
-    bmalloc_initialize_allocation_config(&allocation_config);
-
     if (verbose) {
         pas_log("exact ptr table %p (%s) encoding ",
                 ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength));
         filc_ptr_dump(ptr, pas_log_stream);
         pas_log("\n");
     }
+
+    if (!filc_ptr_object(ptr)
+        || (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_FREE))
+        return (uintptr_t)filc_ptr_ptr(ptr);
+
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
 
     filc_uintptr_ptr_hash_map_entry decode_entry;
     decode_entry.key = (uintptr_t)filc_ptr_ptr(ptr);
@@ -3014,28 +3294,53 @@ filc_ptr filc_exact_ptr_table_decode_with_manual_tracking(filc_thread* my_thread
                                                           filc_exact_ptr_table* ptr_table,
                                                           uintptr_t encoded_ptr)
 {
+    static const bool verbose = false;
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) decoding %p\n",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength), (void*)encoded_ptr);
+    }
+    
     if (!ptr_table->decode_map.key_count)
         return filc_ptr_forge_invalid((void*)encoded_ptr);
     pas_lock_lock(&ptr_table->lock);
     filc_uintptr_ptr_hash_map_entry result =
         filc_uintptr_ptr_hash_map_get(&ptr_table->decode_map, encoded_ptr);
     pas_lock_unlock(&ptr_table->lock);
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) decoding %p, tentatively got ",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength), (void*)encoded_ptr);
+        filc_ptr_dump(result.value, pas_log_stream);
+        pas_log("\n");
+    }
+    
     if (filc_ptr_is_totally_null(result.value))
         return filc_ptr_forge_invalid((void*)encoded_ptr);
     PAS_ASSERT((uintptr_t)filc_ptr_ptr(result.value) == encoded_ptr);
     PAS_ASSERT(filc_ptr_object(result.value));
     switch(ptr_table->ref_strength) {
     case filc_strong_ref_strength:
-        if (!(filc_object_get_flags(filc_ptr_object(result.value)) & FILC_OBJECT_FLAG_FREE))
-            return result.value;
-        return filc_ptr_forge_invalid((void*)encoded_ptr);
+        if ((filc_object_get_flags(filc_ptr_object(result.value)) & FILC_OBJECT_FLAG_FREE))
+            result.value = filc_ptr_forge_invalid((void*)encoded_ptr);
+        break;
     case filc_weak_ref_strength:
-        if (filc_weak_load_barrier(my_thread, result.value))
-            return result.value;
-        return filc_ptr_forge_invalid((void*)encoded_ptr);
+        if (!filc_weak_load_barrier(my_thread, result.value))
+            result.value = filc_ptr_forge_invalid((void*)encoded_ptr);
+        break;
+    default:
+        PAS_ASSERT(!"Should not be reached");
+        break;
     }
-    PAS_ASSERT(!"Should not be reached");
-    return filc_ptr_forge_null();
+
+    if (verbose) {
+        pas_log("exact ptr table %p (%s) decoding %p, returning ",
+                ptr_table, filc_ref_strength_get_string(ptr_table->ref_strength), (void*)encoded_ptr);
+        filc_ptr_dump(result.value, pas_log_stream);
+        pas_log("\n");
+    }
+
+    return result.value;
 }
 
 filc_ptr filc_exact_ptr_table_decode(filc_thread* my_thread, filc_exact_ptr_table* ptr_table,
@@ -3447,10 +3752,12 @@ static PAS_NO_RETURN PAS_NEVER_INLINE void object_for_deallocate_fail(filc_ptr p
 
 static PAS_ALWAYS_INLINE filc_object* object_for_deallocate(filc_ptr ptr)
 {
-    if (!filc_ptr_object(ptr) ||
-        filc_object_is_special(filc_ptr_object(ptr)) ||
-        (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_GLOBAL) ||
-        (filc_object_get_flags(filc_ptr_object(ptr)) & FILC_OBJECT_FLAG_MMAP) ||
+    if (!filc_ptr_object(ptr))
+        object_for_deallocate_fail(ptr);
+    filc_object_flags flags = filc_object_get_flags(filc_ptr_object(ptr));
+    if (filc_object_flags_is_special(flags) ||
+        (flags & FILC_OBJECT_FLAG_GLOBAL) ||
+        (flags & FILC_OBJECT_FLAG_MMAP) ||
         filc_ptr_ptr(ptr) != filc_ptr_lower(ptr))
         object_for_deallocate_fail(ptr);
     return filc_ptr_object(ptr);
@@ -3497,6 +3804,18 @@ static PAS_ALWAYS_INLINE void free_with_checks(filc_ptr ptr)
 void filc_free_with_checks(filc_ptr ptr)
 {
     free_with_checks(ptr);
+}
+
+void filc_log_allocate(filc_thread* my_thread, const filc_origin* origin, size_t size,
+                       size_t alignment)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    pas_log("Allocating %zu bytes ", size);
+    if (alignment > 1)
+        pas_log("(%zu alignment) ", alignment);
+    pas_log("at ");
+    filc_origin_dump_self(origin, pas_log_stream);
+    pas_log("\n");
 }
 
 void filc_native_zgc_free(filc_thread* my_thread, filc_ptr ptr)
@@ -3723,6 +4042,18 @@ filc_ptr filc_native_zptr_contents_to_new_string(filc_thread* my_thread, filc_pt
     return result;
 }
 
+static const char* fix_ptr_name(const char* ptr_name)
+{
+    if (!ptr_name)
+        return "";
+    pas_allocation_config allocation_config;
+    bmalloc_initialize_allocation_config(&allocation_config);
+    pas_string_stream stream;
+    pas_string_stream_construct(&stream, &allocation_config);
+    pas_string_stream_printf(&stream, "%s ", ptr_name);
+    return pas_string_stream_take_string(&stream);
+}
+
 PAS_NEVER_INLINE PAS_NO_RETURN void filc_check_aligned_access_fail(
     filc_ptr ptr, size_t bytes, size_t alignment, filc_access_kind kind, const char* ptr_name)
 {
@@ -3730,16 +4061,7 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_check_aligned_access_fail(
 
     PAS_ASSERT(bytes);
 
-    if (!ptr_name)
-        ptr_name = "";
-    else {
-        pas_allocation_config allocation_config;
-        bmalloc_initialize_allocation_config(&allocation_config);
-        pas_string_stream stream;
-        pas_string_stream_construct(&stream, &allocation_config);
-        pas_string_stream_printf(&stream, "%s ", ptr_name);
-        ptr_name = pas_string_stream_take_string(&stream);
-    }
+    ptr_name = fix_ptr_name(ptr_name);
 
     FILC_CHECK(
         pas_is_aligned((uintptr_t)filc_ptr_ptr(ptr), alignment),
@@ -3811,7 +4133,7 @@ filc_panic_context* filc_start_panicking(void)
             break;
     }
 
-    filc_panic_context* result = bmalloc_allocate(sizeof(filc_panic_context));
+    filc_panic_context* result = (filc_panic_context*)bmalloc_allocate(sizeof(filc_panic_context));
     pas_allocation_config allocation_config;
     bmalloc_initialize_allocation_config(&allocation_config);
     pas_string_stream_construct(&result->stream, &allocation_config);
@@ -3869,11 +4191,16 @@ PAS_NO_RETURN void filc_finish_panicking(filc_panic_context* context, const char
         log_fd = PAS_LOG_DEFAULT_FD;
     
     if (filc_exit_on_panic) {
-        PAS_ASSERT(write_panic_context(log_fd, context));
-        pas_log("[%d] filc panic: %s\n", pas_getpid(), kind_string);
+        if (!filc_quiet_panic) {
+            PAS_ASSERT(write_panic_context(log_fd, context));
+            pas_log("[%d] filc panic: %s\n", pas_getpid(), kind_string);
+        }
         _exit(42);
         PAS_ASSERT(!"Should not be reached");
     }
+
+    if (filc_quiet_panic)
+        __builtin_trap();
 
     char my_path[PATH_MAX];
     ssize_t my_path_length = readlink("/proc/self/exe", my_path, sizeof(my_path) - 1);
@@ -3932,19 +4259,53 @@ PAS_NO_RETURN static void optimized_check_fail_impl(filc_panic_context* panic_co
     filc_finish_panicking(panic_context, "thwarted a futile attempt to violate memory safety.");
 }
 
+static const char* optimized_access_text(const filc_optimized_access_check_origin* check_origin)
+{
+    if (check_origin->size) {
+        if (check_origin->needs_write)
+            return "write";
+        return "read";
+    }
+    return "access";
+}
+
+static PAS_NO_RETURN void finish_optimized_access_check_fail(
+    filc_panic_context* panic_context, const filc_optimized_access_check_origin* check_origin)
+{
+    filc_panic_context_printf(panic_context, "\n");
+    filc_panic_context_printf(panic_context, "    expected");
+    if (check_origin->size) {
+        filc_panic_context_printf(panic_context, " %zu %sbytes",
+                                  (size_t)check_origin->size,
+                                  check_origin->needs_write ? "writable " : "");
+    } else if (check_origin->needs_write)
+        filc_panic_context_printf(panic_context, " writable capability");
+    else
+        filc_panic_context_printf(panic_context, " valid capability");
+    PAS_ASSERT(check_origin->alignment >= 1);
+    PAS_ASSERT(check_origin->alignment <= FILC_WORD_SIZE);
+    PAS_ASSERT(pas_is_power_of_2(check_origin->alignment));
+    PAS_ASSERT(check_origin->alignment_offset < check_origin->alignment);
+    if (check_origin->alignment > 1) {
+        filc_panic_context_printf(panic_context, " with ptr aligned to %zu bytes",
+                                  (size_t)check_origin->alignment);
+        if (check_origin->alignment_offset) {
+            filc_panic_context_printf(panic_context, " at offset %zu",
+                                      (size_t)check_origin->alignment_offset);
+        }
+    }
+    filc_panic_context_printf(panic_context, ".\n");
+    optimized_check_fail_impl(panic_context,
+                              check_origin->scheduled_origin,
+                              check_origin->semantic_origins);
+}
+
 PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_access_check_fail(
     filc_ptr ptr, const filc_optimized_access_check_origin* check_origin)
 {
     filc_panic_context* panic_context = filc_start_panicking();
     filc_panic_context_printf(panic_context, "filc safety error: ");
-    const char* access_text;
-    if (check_origin->size) {
-        if (check_origin->needs_write)
-            access_text = "write";
-        else
-            access_text = "read";
-    } else
-        access_text = "access";
+    const char* access_text = optimized_access_text(check_origin);
     if (!filc_ptr_object(ptr)) {
         filc_panic_context_printf(panic_context, "cannot %s pointer with null object.\n",
                                   access_text);
@@ -3975,41 +4336,21 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_access_check_fail(
         PAS_ASSERT(!"Should not be reached");
     filc_panic_context_printf(panic_context, "    pointer: ");
     filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
-    filc_panic_context_printf(panic_context, "\n");
-    filc_panic_context_printf(panic_context, "    expected");
-    if (check_origin->size) {
-        filc_panic_context_printf(panic_context, " %zu %sbytes",
-                                  (size_t)check_origin->size,
-                                  check_origin->needs_write ? "writable " : "");
-    } else if (check_origin->needs_write)
-        filc_panic_context_printf(panic_context, " writable capability");
-    else
-        filc_panic_context_printf(panic_context, " valid capability");
-    PAS_ASSERT(check_origin->alignment >= 1);
-    PAS_ASSERT(check_origin->alignment <= FILC_WORD_SIZE);
-    PAS_ASSERT(pas_is_power_of_2(check_origin->alignment));
-    PAS_ASSERT(check_origin->alignment_offset < check_origin->alignment);
-    if (check_origin->alignment > 1) {
-        filc_panic_context_printf(panic_context, " with ptr aligned to %zu bytes",
-                                  (size_t)check_origin->alignment);
-        if (check_origin->alignment_offset) {
-            filc_panic_context_printf(panic_context, " at offset %zu",
-                                      (size_t)check_origin->alignment_offset);
-        }
-    }
-    filc_panic_context_printf(panic_context, ".\n");
-    optimized_check_fail_impl(panic_context,
-                              check_origin->scheduled_origin,
-                              check_origin->semantic_origins);
+    finish_optimized_access_check_fail(panic_context, check_origin);
 }
 
-PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_alignment_contradiction(
-    filc_ptr ptr, const filc_optimized_alignment_contradiction_origin* contradiction_origin)
+static filc_panic_context* start_optimized_alignment_contradiction(void)
 {
     filc_panic_context* panic_context = filc_start_panicking();
     filc_panic_context_printf(panic_context, "filc safety error: alignment contradiction.\n");
     filc_panic_context_printf(panic_context, "    pointer: ");
-    filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
+    return panic_context;
+}
+
+static PAS_NO_RETURN void finish_optimized_alignment_contradiction(
+    filc_panic_context* panic_context,
+    const filc_optimized_alignment_contradiction_origin* contradiction_origin)
+{
     filc_panic_context_printf(panic_context, "\n");
     filc_panic_context_printf(panic_context, "required alignments:\n");
     /* Gotta have at least two alignments for there to have been a contradiction! */
@@ -4027,7 +4368,58 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_alignment_contradiction(
                               contradiction_origin->semantic_origins);
 }
 
-PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_alignment_contradiction(
+    filc_ptr ptr, const filc_optimized_alignment_contradiction_origin* contradiction_origin)
+{
+    filc_panic_context* panic_context = start_optimized_alignment_contradiction();
+    filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
+    finish_optimized_alignment_contradiction(panic_context, contradiction_origin);
+}
+
+static void stack_ptr_dump(pas_stream* stream, intptr_t offset, size_t size)
+{
+    pas_stream_printf(stream, "stack_optimized(offset=%ld,size=%zu)", (long)offset, size);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_stack_access_check_fail(
+    intptr_t offset, size_t size,
+    const filc_optimized_access_check_origin* check_origin)
+{
+    filc_panic_context* panic_context = filc_start_panicking();
+    filc_panic_context_printf(panic_context, "filc safety error: ");
+    const char* access_text = optimized_access_text(check_origin);
+    if (check_origin->size && offset < 0) {
+        filc_panic_context_printf(panic_context, "cannot %s pointer with ptr < lower.\n",
+                                  access_text);
+    } else if (check_origin->size && (size_t)offset >= size) {
+        filc_panic_context_printf(panic_context, "cannot %s pointer with ptr >= upper.\n",
+                                  access_text);
+    } else if (check_origin->size > size - (size_t)offset) {
+        filc_panic_context_printf(panic_context, "cannot %s %zu bytes when upper - ptr = %zu.\n",
+                                  access_text,
+                                  (size_t)check_origin->size,
+                                  (size_t)(size - (size_t)offset));
+    } else if (!pas_is_aligned((uintptr_t)offset + (uintptr_t)check_origin->alignment_offset,
+                               check_origin->alignment))
+        filc_panic_context_printf(panic_context, "alignment requirement of %u bytes not met.\n",
+                                  (unsigned)check_origin->alignment);
+    else
+        PAS_ASSERT(!"Should not be reached");
+    filc_panic_context_printf(panic_context, "    pointer: ");
+    stack_ptr_dump(filc_panic_context_stream(panic_context), offset, size);
+    finish_optimized_access_check_fail(panic_context, check_origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_stack_alignment_contradiction(
+    intptr_t offset, size_t size,
+    const filc_optimized_alignment_contradiction_origin* contradiction_origin)
+{
+    filc_panic_context* panic_context = start_optimized_alignment_contradiction();
+    stack_ptr_dump(filc_panic_context_stream(panic_context), offset, size);
+    finish_optimized_alignment_contradiction(panic_context, contradiction_origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN static void masked_access_check_fail_impl(
     filc_ptr ptr, uint64_t mask, size_t size, filc_access_kind access_kind, const filc_origin* origin)
 {
     filc_panic_context* panic_context = filc_start_panicking();
@@ -4042,11 +4434,65 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
     filc_panic_context_printf(panic_context, "    pointer: ");
     filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
     filc_panic_context_printf(panic_context, "\n");
-    filc_panic_context_printf(panic_context, "    mask: %lx\n", mask);
+    filc_panic_context_printf(panic_context, "    mask: 0x%lx\n", mask);
     filc_panic_context_printf(panic_context, "    vector size in bytes: %zu\n", size);
     filc_panic_context_printf(panic_context, "origin:\n");
     filc_thread_dump_stack(my_thread, filc_panic_context_stream(panic_context));
     filc_finish_panicking(panic_context, "thwarted a futile attempt to violate memory safety.");
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin)
+{
+    masked_access_check_fail_impl(ptr, mask, size, filc_write_access, origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin)
+{
+    masked_access_check_fail_impl(ptr, mask, size, filc_read_access, origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN static void compress_expand_access_check_fail_impl(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size,
+    filc_access_kind access_kind, const filc_origin* origin)
+{
+    filc_panic_context* panic_context = filc_start_panicking();
+    filc_thread* my_thread = filc_get_my_thread();
+    PAS_ASSERT(my_thread->top_frame);
+    if (origin)
+        my_thread->top_frame->origin = origin;
+    filc_panic_context_printf(
+        panic_context,
+        "filc safety error: %s not in bounds (even accounting for the mask).\n",
+        access_kind == filc_write_access ? "compress store" : "expand load");
+    filc_panic_context_printf(panic_context, "    pointer: ");
+    filc_ptr_dump(ptr, filc_panic_context_stream(panic_context));
+    filc_panic_context_printf(panic_context, "\n");
+    filc_panic_context_printf(panic_context, "    mask: 0x%lx (%u bits)\n",
+                              mask, (unsigned)__builtin_popcount(mask));
+    filc_panic_context_printf(panic_context, "    vector size in bytes: %zu\n", vector_size);
+    filc_panic_context_printf(panic_context, "    element size in bytes: %zu\n", element_size);
+    filc_panic_context_printf(panic_context, "    access size in bytes: %zu\n",
+                              element_size * (size_t)__builtin_popcount(mask));
+    
+    filc_panic_context_printf(panic_context, "origin:\n");
+    filc_thread_dump_stack(my_thread, filc_panic_context_stream(panic_context));
+    filc_finish_panicking(panic_context, "thwarted a futile attempt to violate memory safety.");
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_compress_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin)
+{
+    compress_expand_access_check_fail_impl(ptr, mask, element_size, vector_size, filc_write_access,
+                                           origin);
+}
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_expand_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin)
+{
+    compress_expand_access_check_fail_impl(ptr, mask, element_size, vector_size, filc_read_access,
+                                           origin);
 }
 
 void filc_check_function_call(filc_ptr ptr)
@@ -4060,10 +4506,16 @@ PAS_NO_RETURN void filc_check_function_call_fail(filc_ptr ptr)
     PAS_UNREACHABLE();
 }
 
+PAS_NO_RETURN void filc_comdat_link_fail(const char* name, uint64_t signature)
+{
+    filc_safety_panic(NULL, "linking comdat function %s with signature %llu failed.",
+                      name, (unsigned long long)signature);
+}
+
 static void check_closure(filc_object* object, const filc_origin* origin)
 {
     FILC_CHECK(
-        filc_object_get_flags(object) & FILC_OBJECT_FLAG_CLOSURE,
+        !(filc_object_get_flags(object) & FILC_OBJECT_FLAG_READONLY),
         origin,
         "object %s is not a closure.",
         filc_object_to_new_string(object));
@@ -4173,8 +4625,8 @@ PAS_NO_RETURN PAS_NEVER_INLINE static void memset_fail(
     FILC_DEFINE_FRAME("memset");
     filc_push_frame(my_thread, frame);
 
-    raw_ptr = filc_ptr_ptr(ptr);
-    
+    raw_ptr = (char*)filc_ptr_ptr(ptr);
+
     if (verbose)
         pas_log("count = %zu\n", count);
 
@@ -4211,7 +4663,7 @@ PAS_ALWAYS_INLINE static void memset_impl_specialized(filc_thread* my_thread, fi
 {
     PAS_TESTING_ASSERT(count);
 
-    char* raw_ptr = filc_ptr_ptr(ptr);
+    char* raw_ptr = (char*)filc_ptr_ptr(ptr);
     filc_object* object = filc_ptr_object(ptr);
 
     if (!object)
@@ -4515,7 +4967,8 @@ PAS_ALWAYS_INLINE static void memmove_aux_loop(
         PAS_TESTING_ASSERT(pas_is_aligned(current_dst_start_offset, FILC_WORD_SIZE));
         PAS_TESTING_ASSERT(pas_is_aligned(current_dst_end_offset, FILC_WORD_SIZE));
         PAS_TESTING_ASSERT(pas_is_aligned(current_src_start_offset, FILC_WORD_SIZE));
-        if (has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)) {
+        if (has_dst_aux && PAS_UNLIKELY(filc_current_marking_state)
+            && dst_memory_kind == filc_heap_memory) {
             bool do_barrier = true;
             memmove_aux_loop_body(my_thread, &dst_aux_ptr, src_aux_ptr,
                                   current_dst_start_offset, current_src_start_offset,
@@ -4969,8 +5422,8 @@ PAS_ALWAYS_INLINE static void memmove_size_specialized(
     PAS_TESTING_ASSERT(dst_object);
     PAS_TESTING_ASSERT(src_object);
 
-    char* dst_start = filc_ptr_ptr(dst);
-    char* src_start = filc_ptr_ptr(src);
+    char* dst_start = (char*)filc_ptr_ptr(dst);
+    char* src_start = (char*)filc_ptr_ptr(src);
 
     char* dst_lower = (char*)filc_object_lower(dst_object);
     char* src_lower = (char*)filc_object_lower(src_object);
@@ -5079,8 +5532,8 @@ static PAS_ALWAYS_INLINE void memmove_impl(filc_thread* my_thread, filc_ptr dst,
     if (!dst_object || !src_object)
         memmove_fail(dst, src, count, origin);
 
-    char* dst_start = filc_ptr_ptr(dst);
-    char* src_start = filc_ptr_ptr(src);
+    char* dst_start = (char*)filc_ptr_ptr(dst);
+    char* src_start = (char*)filc_ptr_ptr(src);
 
     char* dst_lower = (char*)filc_object_lower(dst_object);
     char* dst_upper = (char*)filc_object_upper(dst_object);
@@ -5257,7 +5710,7 @@ static PAS_ALWAYS_INLINE void copy_stack_to_heap_already_checked(
     const filc_origin* passed_origin)
 {
     filc_object* dst_object = filc_ptr_object_not_null(dst);
-    char* dst_start = filc_ptr_ptr(dst);
+    char* dst_start = (char*)filc_ptr_ptr(dst);
     char* dst_lower = (char*)filc_object_lower(dst_object);
 
     if (PAS_ENABLE_TESTING) {
@@ -5284,7 +5737,7 @@ static PAS_ALWAYS_INLINE void copy_stack_to_heap_already_checked(
         filc_memcpy_small_up(dst_start, src_payload, count);
 
     char* dst_aux_ptr = filc_object_aux_ptr(dst_object);
-    char* src_aux_ptr = src_word_alignment_mode ? src_aux
+    char* src_aux_ptr = src_word_alignment_mode ? (char*)src_aux
         : (char*)pas_round_down_to_power_of_2((uintptr_t)src_aux, FILC_WORD_SIZE);
     size_t dst_start_offset = dst_start - dst_lower;
     size_t src_start_offset = (char*)src_aux - src_aux_ptr;
@@ -5304,7 +5757,7 @@ static PAS_ALWAYS_INLINE void copy_heap_to_stack_already_checked(
     const filc_origin* passed_origin)
 {
     filc_object* src_object = filc_ptr_object_not_null(src);
-    char* src_start = filc_ptr_ptr(src);
+    char* src_start = (char*)filc_ptr_ptr(src);
     char* src_lower = (char*)filc_object_lower(src_object);
 
     if (PAS_ENABLE_TESTING) {
@@ -5331,7 +5784,7 @@ static PAS_ALWAYS_INLINE void copy_heap_to_stack_already_checked(
         filc_memcpy_small_up(dst_payload, src_start, count);
 
     char* src_aux_ptr = filc_object_aux_ptr(src_object);
-    char* dst_aux_ptr = dst_word_alignment_mode ? dst_aux
+    char* dst_aux_ptr = dst_word_alignment_mode ? (char*)dst_aux
         : (char*)pas_round_down_to_power_of_2((uintptr_t)dst_aux, FILC_WORD_SIZE);
     size_t src_start_offset = src_start - src_lower;
     size_t dst_start_offset = (char*)dst_aux - dst_aux_ptr;
@@ -5340,6 +5793,256 @@ static PAS_ALWAYS_INLINE void copy_heap_to_stack_already_checked(
                           dst_end_offset, NULL, src_object, filc_small_size, dst_word_alignment_mode,
                           src_word_alignment_mode, count_word_alignment_mode, filc_stack_memory,
                           filc_heap_memory, exit_allowed, passed_origin);
+}
+
+static PAS_ALWAYS_INLINE void copy_stack_to_stack_already_checked(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, void* src_payload, void* src_aux,
+    size_t count, filc_word_alignment_mode dst_word_alignment_mode,
+    filc_word_alignment_mode src_word_alignment_mode,
+    filc_word_alignment_mode count_word_alignment_mode,
+    filc_exit_allowed_mode exit_allowed,
+    const filc_origin* passed_origin)
+{
+    if (count_word_alignment_mode)
+        filc_memmove_small_word(dst_payload, src_payload, count);
+    else
+        filc_memmove_small(dst_payload, src_payload, count);
+
+    char* src_aux_ptr = src_word_alignment_mode ? (char*)src_aux
+        : (char*)pas_round_down_to_power_of_2((uintptr_t)src_aux, FILC_WORD_SIZE);
+    char* dst_aux_ptr = dst_word_alignment_mode ? (char*)dst_aux
+        : (char*)pas_round_down_to_power_of_2((uintptr_t)dst_aux, FILC_WORD_SIZE);
+    size_t src_start_offset = (char*)src_aux - src_aux_ptr;
+    size_t dst_start_offset = (char*)dst_aux - dst_aux_ptr;
+    size_t dst_end_offset = dst_start_offset + count;
+    memmove_aux_with_ptrs(my_thread, dst_aux_ptr, src_aux_ptr, dst_start_offset, src_start_offset,
+                          dst_end_offset, NULL, NULL, filc_small_size, dst_word_alignment_mode,
+                          src_word_alignment_mode, count_word_alignment_mode, filc_stack_memory,
+                          filc_stack_memory, exit_allowed, passed_origin);
+}
+
+void filc_memmove_already_checked_stack_to_heap(
+    filc_thread* my_thread, filc_ptr dst, void* src_payload, void* src_aux, size_t size,
+    const filc_origin* origin)
+{
+    copy_stack_to_heap_already_checked(
+        my_thread, dst, src_payload, src_aux, size, filc_not_word_aligned, filc_not_word_aligned,
+        filc_not_word_aligned, filc_exit_allowed, origin);
+}
+
+static inline void* stack_ptr_lower(void* payload, void* aux, filc_stack_aux* stack_aux)
+{
+    uintptr_t offset = (char*)aux - (char*)stack_aux->lowers;
+    return (char*)payload - offset;
+}
+
+static inline void* stack_ptr_upper(void* payload, void* aux, filc_stack_aux* stack_aux)
+{
+    return (char*)stack_ptr_lower(payload, aux, stack_aux) + FILC_WORD_SIZE * stack_aux->num_lowers;
+}
+
+static char* explicit_stack_ptr_to_new_str(void* payload, void* aux, filc_stack_aux* stack_aux)
+{
+    pas_allocation_config allocation_config;
+    pas_string_stream stream;
+    bmalloc_initialize_allocation_config(&allocation_config);
+    pas_string_stream_construct(&stream, &allocation_config);
+    pas_string_stream_printf(
+        &stream, "%p,%p,%p,aux=%p,stack", payload, stack_ptr_lower(payload, aux, stack_aux),
+        stack_ptr_upper(payload, aux, stack_aux), stack_aux->lowers);
+    return pas_string_stream_take_string(&stream);
+}
+
+static void check_stack_access_with_name(
+    void* payload, void* aux, filc_stack_aux* stack_aux, size_t size, filc_access_kind access_kind,
+    const char* name)
+{
+    FILC_CHECK(
+        payload >= stack_ptr_lower(payload, aux, stack_aux),
+        NULL,
+        "cannot %s %spointer with ptr < lower (%sptr = %s)",
+        filc_access_kind_get_string(access_kind), fix_ptr_name(name), fix_ptr_name(name),
+        explicit_stack_ptr_to_new_str(payload, aux, stack_aux));
+    FILC_CHECK(
+        payload < stack_ptr_upper(payload, aux, stack_aux),
+        NULL,
+        "cannot %s %spointer with ptr >= upper (%sptr = %s)",
+        filc_access_kind_get_string(access_kind), fix_ptr_name(name), fix_ptr_name(name),
+        explicit_stack_ptr_to_new_str(payload, aux, stack_aux));
+    FILC_CHECK(
+        size <= (uintptr_t)((char*)stack_ptr_upper(payload, aux, stack_aux) - (char*)payload),
+        NULL,
+        "cannot %s %zu bytes when upper - ptr = %zu (%sptr = %s)",
+        filc_access_kind_get_string(access_kind), size,
+        (size_t)((char*)stack_ptr_upper(payload, aux, stack_aux) - (char*)payload),
+        fix_ptr_name(name), explicit_stack_ptr_to_new_str(payload, aux, stack_aux));
+}
+
+static PAS_NEVER_INLINE void memmove_stack_to_heap_fail(filc_ptr dst, void* src_payload, void* src_aux,
+                                                        filc_stack_aux* src_stack_aux, size_t size,
+                                                        const filc_origin* passed_origin)
+{
+    filc_thread* my_thread = filc_get_my_thread();
+
+    fix_origin(passed_origin);
+
+    FILC_DEFINE_FRAME("memmove");
+    filc_push_frame(my_thread, frame);
+
+    filc_check_access_with_name(dst, size, filc_write_access, "destination");
+    check_stack_access_with_name(
+        src_payload, src_aux, src_stack_aux, size, filc_read_access, "source");
+
+    PAS_UNREACHABLE();
+}
+
+#define CHECK_STACK_BOUNDS_FAST(payload, aux, stack_aux, size, fail) do { \
+        void* my_aux = (aux); \
+        filc_stack_aux* my_stack_aux = (stack_aux); \
+        if (my_aux < (void*)my_stack_aux->lowers || \
+            my_aux >= (void*)(my_stack_aux->lowers + my_stack_aux->num_lowers) || \
+            (size) > (size_t)((char*)(my_stack_aux->lowers + my_stack_aux->num_lowers) - \
+                              (char*)my_aux)) \
+            fail; \
+    } while (false)
+
+void filc_memmove_stack_to_heap(
+    filc_thread* my_thread, filc_ptr dst, void* src_payload, void* src_aux,
+    filc_stack_aux* src_stack_aux, size_t size, const filc_origin* origin)
+{
+    if (!size)
+        return;
+    
+    filc_object* dst_object = filc_ptr_object(dst);
+
+    if (!dst_object)
+        memmove_stack_to_heap_fail(dst, src_payload, src_aux, src_stack_aux, size, origin);
+
+    char* dst_start = (char*)filc_ptr_ptr(dst);
+
+    char* dst_lower = (char*)filc_object_lower(dst_object);
+    char* dst_upper = (char*)filc_object_upper(dst_object);
+
+    CHECK_BOUNDS_FAST(
+        dst_start, dst_lower, dst_upper, size,
+        memmove_stack_to_heap_fail(dst, src_payload, src_aux, src_stack_aux, size, origin));
+    CHECK_STACK_BOUNDS_FAST(
+        src_payload, src_aux, src_stack_aux, size,
+        memmove_stack_to_heap_fail(dst, src_payload, src_aux, src_stack_aux, size, origin));
+    CHECK_WRITE_FAST(
+        dst_object,
+        memmove_stack_to_heap_fail(dst, src_payload, src_aux, src_stack_aux, size, origin));
+
+    copy_stack_to_heap_already_checked(
+        my_thread, dst, src_payload, src_aux, size, filc_not_word_aligned, filc_not_word_aligned,
+        filc_not_word_aligned, filc_exit_allowed, origin);
+}
+
+void filc_memmove_already_checked_heap_to_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_ptr src, size_t size)
+{
+    copy_heap_to_stack_already_checked(
+        my_thread, dst_payload, dst_aux, src, size, filc_not_word_aligned, filc_not_word_aligned,
+        filc_not_word_aligned, filc_exit_not_allowed, NULL);
+}
+
+static PAS_NEVER_INLINE void memmove_heap_to_stack_fail(void* dst_payload, void* dst_aux,
+                                                        filc_stack_aux* dst_stack_aux, filc_ptr src,
+                                                        size_t size, const filc_origin* passed_origin)
+{
+    filc_thread* my_thread = filc_get_my_thread();
+
+    fix_origin(passed_origin);
+
+    FILC_DEFINE_FRAME("memmove");
+    filc_push_frame(my_thread, frame);
+
+    check_stack_access_with_name(
+        dst_payload, dst_aux, dst_stack_aux, size, filc_write_access, "destination");
+    filc_check_access_with_name(src, size, filc_read_access, "source");
+
+    PAS_UNREACHABLE();
+}
+
+void filc_memmove_heap_to_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_stack_aux* dst_stack_aux,
+    filc_ptr src, size_t size, const filc_origin* origin)
+{
+    if (!size)
+        return;
+    
+    filc_object* src_object = filc_ptr_object(src);
+
+    if (!src_object)
+        memmove_heap_to_stack_fail(dst_payload, dst_aux, dst_stack_aux, src, size, origin);
+
+    char* src_start = (char*)filc_ptr_ptr(src);
+
+    char* src_lower = (char*)filc_object_lower(src_object);
+    char* src_upper = (char*)filc_object_upper(src_object);
+
+    CHECK_BOUNDS_FAST(
+        src_start, src_lower, src_upper, size,
+        memmove_heap_to_stack_fail(dst_payload, dst_aux, dst_stack_aux, src, size, origin));
+    CHECK_STACK_BOUNDS_FAST(
+        dst_payload, dst_aux, dst_stack_aux, size,
+        memmove_heap_to_stack_fail(dst_payload, dst_aux, dst_stack_aux, src, size, origin));
+
+    copy_heap_to_stack_already_checked(
+        my_thread, dst_payload, dst_aux, src, size, filc_not_word_aligned, filc_not_word_aligned,
+        filc_not_word_aligned, filc_exit_not_allowed, NULL);
+}
+
+void filc_memmove_already_checked_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, void* src_payload, void* src_aux,
+    size_t size)
+{
+    copy_stack_to_stack_already_checked(
+        my_thread, dst_payload, dst_aux, src_payload, src_aux, size, filc_not_word_aligned,
+        filc_not_word_aligned, filc_not_word_aligned, filc_exit_not_allowed, NULL);
+}
+
+static PAS_NEVER_INLINE void memmove_stack_fail(void* dst_payload, void* dst_aux,
+                                                filc_stack_aux* dst_stack_aux,
+                                                void* src_payload, void* src_aux,
+                                                filc_stack_aux* src_stack_aux,
+                                                size_t size, const filc_origin* passed_origin)
+{
+    filc_thread* my_thread = filc_get_my_thread();
+
+    fix_origin(passed_origin);
+
+    FILC_DEFINE_FRAME("memmove");
+    filc_push_frame(my_thread, frame);
+
+    check_stack_access_with_name(
+        dst_payload, dst_aux, dst_stack_aux, size, filc_write_access, "destination");
+    check_stack_access_with_name(
+        src_payload, src_aux, src_stack_aux, size, filc_read_access, "source");
+
+    PAS_UNREACHABLE();
+}
+
+void filc_memmove_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_stack_aux* dst_stack_aux,
+    void* src_payload, void* src_aux, filc_stack_aux* src_stack_aux, size_t size,
+    const filc_origin* origin)
+{
+    if (!size)
+        return;
+
+    CHECK_STACK_BOUNDS_FAST(
+        dst_payload, dst_aux, dst_stack_aux, size,
+        memmove_stack_fail(dst_payload, dst_aux, dst_stack_aux, src_payload, src_aux, src_stack_aux,
+                           size, origin));
+    CHECK_STACK_BOUNDS_FAST(
+        src_payload, src_aux, src_stack_aux, size,
+        memmove_stack_fail(dst_payload, dst_aux, dst_stack_aux, src_payload, src_aux, src_stack_aux,
+                           size, origin));
+
+    copy_stack_to_stack_already_checked(
+        my_thread, dst_payload, dst_aux, src_payload, src_aux, size, filc_not_word_aligned,
+        filc_not_word_aligned, filc_not_word_aligned, filc_exit_not_allowed, NULL);
 }
 
 filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
@@ -5352,6 +6055,24 @@ filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
 
     filc_ptr result = filc_ptr_create_with_object_and_manual_tracking(
         allocate_impl(my_thread, size, 0, filc_exit_not_allowed));
+
+    copy_stack_to_heap_already_checked(
+        my_thread, result, payload, aux, size, filc_word_aligned, filc_word_aligned,
+        filc_word_aligned, filc_exit_not_allowed, NULL);
+
+    return result;
+}
+
+filc_ptr filc_promote_already_checked_stack_to_heap_with_alignment_without_exiting(
+    filc_thread* my_thread, void* payload, void* aux, size_t size, size_t alignment)
+{
+    if (!size)
+        return filc_ptr_forge_null();
+    
+    PAS_TESTING_ASSERT(pas_is_aligned(size, FILC_WORD_SIZE));
+
+    filc_ptr result = filc_ptr_create_with_object_and_manual_tracking(
+        allocate_aligned_impl(my_thread, size, alignment, 0, filc_exit_not_allowed, NULL));
 
     copy_stack_to_heap_already_checked(
         my_thread, result, payload, aux, size, filc_word_aligned, filc_word_aligned,
@@ -5517,7 +6238,7 @@ filc_ptr filc_native_zcall(filc_thread* my_thread, filc_ptr callee_ptr, filc_ptr
 
     filc_lock_top_native_frame(my_thread);
     pizlonated_return_value result =
-        ((pizlonated_function)filc_ptr_ptr(callee_ptr))(
+        ((pizlonated_function)((filc_function*)filc_ptr_ptr(callee_ptr))->generic_entrypoint)(
             my_thread, filc_ptr_lower(callee_ptr), arg_size);
     PAS_ASSERT(!result.has_exception);
     filc_unlock_top_native_frame(my_thread);
@@ -5576,7 +6297,7 @@ void filc_native_zsetcap(filc_thread* my_thread, filc_ptr dst_ptr, filc_ptr obje
 
 static char* finish_check_and_get_new_str(char* base, size_t length)
 {
-    char* result = bmalloc_allocate(length + 1);
+    char* result = (char*)bmalloc_allocate(length + 1);
     memcpy(result, base, length + 1);
     FILC_ASSERT(!result[length], NULL);
     return result;
@@ -5717,6 +6438,9 @@ bool filc_global_initialization_start(filc_thread* my_thread, const filc_origin*
     filc_testing_validate_object(object, NULL);
     PAS_ASSERT(filc_object_get_flags(object) & FILC_OBJECT_FLAG_GLOBAL);
 
+    pas_allocation_config allocation_config;
+    filc_global_initialization_work_item_hash_map_add_result add_result;
+    
     filc_ptr gptr_value = filc_flight_ptr_load_atomic_unfenced_with_manual_tracking(pizlonated_gptr);
     if (filc_ptr_ptr(gptr_value)) {
         PAS_ASSERT(filc_ptr_object(gptr_value));
@@ -5740,13 +6464,9 @@ bool filc_global_initialization_start(filc_thread* my_thread, const filc_origin*
     
     PAS_ASSERT(!filc_ptr_object(gptr_value));
 
-    if (verbose)
-        pas_log("object = %s\n", filc_object_to_new_string(object));
-    
-    pas_allocation_config allocation_config;
     bmalloc_initialize_allocation_config(&allocation_config);
 
-    filc_global_initialization_work_item_hash_map_add_result add_result =
+    add_result =
         filc_global_initialization_work_item_hash_map_add(
             &filc_global_initialization_map, pizlonated_gptr, NULL, &allocation_config);
     if (!add_result.is_new_entry) {
@@ -5904,6 +6624,7 @@ filc_ptr filc_call_ifunc(filc_thread* my_thread, const filc_origin* passed_origi
     filc_push_native_frame(my_thread, &native_frame);
 
     filc_ptr result = filc_call_user_ptr_void(my_thread, ifunc);
+    filc_store_barrier(my_thread, filc_ptr_object(result));
     filc_global_variable_roots_lock_lock();
     filc_object_array_push(&filc_global_variable_root_ptrs, filc_ptr_object(result));
     filc_global_variable_roots_lock_unlock();
@@ -5987,9 +6708,14 @@ void filc_execute_constant_relocations(
 }
 
 void filc_set_user_environment(filc_thread* my_thread,
-                               int argc, filc_ptr argv, filc_ptr environ, filc_ptr auxv)
+                               int argc, char** native_argv,
+                               filc_ptr argv, filc_ptr environ, filc_ptr auxv)
 {
     PAS_ASSERT(!user_environment_is_set);
+
+    /* This is needed to support setproctitle. */
+    filc_setproctitle_initialize(argc, native_argv);
+    
     user_argc = argc;
     filc_flight_ptr_store(my_thread, &user_argv, argv);
     filc_flight_ptr_store(my_thread, &user_environ, environ);
@@ -6036,6 +6762,14 @@ filc_ptr_array filc_deferred_global_ctors = FILC_PTR_ARRAY_INITIALIZER;
 
 static void run_global_ctor(filc_thread* my_thread, filc_ptr global_ctor)
 {
+    static const bool verbose = false;
+
+    if (verbose) {
+        pas_log("Running global ctor ");
+        filc_ptr_dump(global_ctor, pas_log_stream);
+        pas_log("\n");
+    }
+    
     if (!filc_run_global_ctors) {
         /* NOTE: This is an internal flag that is only useful for debugging, and it's quite dangerous
            in the sense that it's likely to put whatever program you're running into a weird (but
@@ -6259,6 +6993,13 @@ void filc_native_zerror(filc_thread* my_thread, filc_ptr ptr)
     filc_user_panic(NULL, "%s", str);
 }
 
+void filc_native_zsafety_error(filc_thread* my_thread, filc_ptr ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    char* str = filc_check_and_get_new_str(ptr);
+    filc_safety_panic(NULL, "%s", str);
+}
+
 size_t filc_native_zstrlen(filc_thread* my_thread, filc_ptr ptr)
 {
     return strlen(filc_check_and_get_tmp_str(my_thread, ptr));
@@ -6352,6 +7093,32 @@ void filc_native_zscavenger_suspend(filc_thread* my_thread)
 void filc_native_zscavenger_resume(filc_thread* my_thread)
 {
     filc_exit(my_thread);
+    pas_scavenger_resume();
+    filc_enter(my_thread);
+}
+
+void filc_native_zlock_runtime_threads(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    pas_scavenger_lock_thread();
+    fugc_lock_threads();
+    filc_enter(my_thread);
+}
+
+void filc_native_zdump_pas_status(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    pas_status_reporter_print_everything();
+    filc_enter(my_thread);
+}
+
+void filc_native_zset_scavenger_periods_to_1ms(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    pas_scavenger_suspend();
+    pas_scavenger_deep_sleep_timeout_in_milliseconds = 1.;
+    pas_scavenger_period_in_milliseconds = 1.;
+    pas_scavenger_max_epoch_delta = 1000ll * 1000ll;
     pas_scavenger_resume();
     filc_enter(my_thread);
 }
@@ -6495,7 +7262,7 @@ typedef unsigned long long unwind_exception_class;
 
 struct unwind_exception {
     unwind_exception_class exception_class;
-    pizlonated_function exception_cleanup;
+    filc_function* exception_cleanup;
 };
 
 typedef struct unwind_exception unwind_exception;
@@ -6631,9 +7398,9 @@ static void forced_unwind(filc_thread* my_thread, filc_ptr context_ptr, filc_ptr
         unwind_exception* exception_object = (unwind_exception*)filc_ptr_ptr(exception_object_ptr);
         unwind_exception_class exception_class = exception_object->exception_class;
 
-        unwind_action actions = unwind_action_force_unwind | unwind_action_cleanup_phase;
+        unwind_action actions = (unwind_action)(unwind_action_force_unwind | unwind_action_cleanup_phase);
         if (!current_frame)
-            actions |= unwind_action_end_of_stack;
+            actions = (unwind_action)(actions | unwind_action_end_of_stack);
         
         unwind_reason_code stop_result = (unwind_reason_code)filc_call_user_eh_stop_fn(
             my_thread, filc_flight_ptr_load(my_thread, &my_thread->force_stop_callback), EH_VERSION,
@@ -6865,6 +7632,66 @@ void filc_resume_unwind(filc_thread* my_thread, const filc_origin *passed_origin
     filc_pop_frame(my_thread, frame);
 }
 
+void __cpu_indicator_init(void);
+
+struct __processor_model {
+    unsigned __cpu_vendor;
+    unsigned __cpu_type;
+    unsigned __cpu_subtype;
+    unsigned __cpu_features;
+};
+
+extern struct __processor_model __cpu_model;
+extern unsigned __cpu_features2;
+
+static struct {
+    filc_object object;
+    struct __processor_model payload;
+} cpu_model_global_object;
+
+static struct {
+    filc_object object;
+    unsigned payload;
+    unsigned padding;
+} cpu_features2_global_object;
+
+static void add_cpu_indicator_globals(void)
+{
+    PAS_ASSERT(pas_is_aligned(sizeof(cpu_model_global_object), FILC_WORD_SIZE));
+    pas_zero_memory(&cpu_model_global_object, sizeof(cpu_model_global_object));
+    cpu_model_global_object.object.upper = &cpu_model_global_object + 1;
+    cpu_model_global_object.object.aux = filc_aux_create(FILC_OBJECT_FLAG_GLOBAL, NULL);
+    filc_object_array_push(&filc_global_variable_roots, &cpu_model_global_object.object);
+
+    PAS_ASSERT(pas_is_aligned(sizeof(cpu_features2_global_object), FILC_WORD_SIZE));
+    pas_zero_memory(&cpu_features2_global_object, sizeof(cpu_features2_global_object));
+    cpu_features2_global_object.object.upper = &cpu_features2_global_object + 1;
+    cpu_features2_global_object.object.aux = filc_aux_create(FILC_OBJECT_FLAG_GLOBAL, NULL);
+    filc_object_array_push(&filc_global_variable_roots, &cpu_features2_global_object.object);
+}
+
+void filc_native___cpu_indicator_init(filc_thread* my_thread)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    __cpu_indicator_init();
+    cpu_model_global_object.payload = __cpu_model;
+    cpu_features2_global_object.payload = __cpu_features2;
+}
+
+filc_ptr pizlonated___cpu_model(filc_thread* my_thread, const filc_origin* passed_origin)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(passed_origin);
+    return filc_ptr_create_with_object_and_manual_tracking(&cpu_model_global_object.object);
+}
+
+filc_ptr pizlonated___cpu_features2(filc_thread* my_thread, const filc_origin* passed_origin)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(passed_origin);
+    return filc_ptr_create_with_object_and_manual_tracking(&cpu_features2_global_object.object);
+}
+
 static bool setjmp_saves_sigmask = false;
 
 filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind, int value)
@@ -6880,6 +7707,9 @@ filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind
     const filc_function_origin* function_origin = filc_origin_get_function_origin(frame->origin);
     PAS_ASSERT(function_origin);
     PAS_ASSERT(function_origin->base.num_lowers_ish < UINT_MAX);
+    PAS_ASSERT(!function_origin->num_stack_auxes); /* We currently don't support the nonescaping
+                                                      alloca optimization for functions that do
+                                                      setjmp, yet. */
     
     filc_jmp_buf* result = (filc_jmp_buf*)filc_object_special_payload_with_manual_tracking(
         filc_allocate_special(my_thread,
@@ -7014,40 +7844,419 @@ void filc_native_zmake_setjmp_save_sigmask(filc_thread* my_thread, bool save_sig
     setjmp_saves_sigmask = save_sigmask;
 }
 
+#if FILC_HAS_FIBER_CONTEXT
+filc_ptr filc_native_zfiber_context_new(filc_thread* my_thread)
+{
+    filc_fiber_context* result = (filc_fiber_context*)
+        filc_object_special_payload_with_manual_tracking(
+            filc_allocate_special(my_thread,
+                                  sizeof(filc_fiber_context),
+                                  1,
+                                  FILC_SPECIAL_TYPE_FIBER_CONTEXT));
+
+    pas_lock_construct(&result->lock);
+    result->state = filc_fiber_context_uninitialized;
+    filc_store_barrier(my_thread, filc_object_for_special_payload(my_thread));
+    result->owning_thread = my_thread;
+    filc_raw_ptr_array_construct(&result->allocation_roots);
+
+    return filc_ptr_for_special_payload_with_manual_tracking(result);
+}
+
+void filc_fiber_context_destruct(filc_fiber_context* fiber_context)
+{
+    filc_native_frame* native_frame;
+    for (native_frame = fiber_context->top_native_frame;
+         native_frame;
+         native_frame = native_frame->parent)
+        filc_native_frame_destruct(native_frame);
+
+    filc_raw_ptr_array_destruct(&fiber_context->allocation_roots);
+
+    bmalloc_deallocate(fiber_context->stack);
+}
+
+void fiber_context_send_sigset_to_user(filc_fiber_context* fiber_context)
+{
+    filc_ptr sigset_ptr = filc_flight_ptr_load_with_manual_tracking(&fiber_context->bound_sigset_ptr);
+    if (!filc_ptr_ptr(sigset_ptr))
+        return;
+    filc_check_user_sigset(sigset_ptr, filc_write_access);
+    filc_to_user_sigset(&fiber_context->context.uc_sigmask, (sigset_t*)filc_ptr_ptr(sigset_ptr));
+}
+
+void fiber_context_receive_sigset_from_user(filc_fiber_context* fiber_context)
+{
+    filc_ptr sigset_ptr = filc_flight_ptr_load_with_manual_tracking(&fiber_context->bound_sigset_ptr);
+    if (!filc_ptr_ptr(sigset_ptr))
+        return;
+    filc_check_user_sigset(sigset_ptr, filc_read_access);
+    filc_from_user_sigset((sigset_t*)filc_ptr_ptr(sigset_ptr), &fiber_context->context.uc_sigmask);
+}
+
+void filc_native_zfiber_context_bind_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
+                                            filc_ptr sigset_ptr)
+{
+    filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
+
+    filc_fiber_context* fiber_context = (filc_fiber_context*)filc_ptr_ptr(fiber_context_ptr);
+    pas_lock_lock(&fiber_context->lock);
+    filc_flight_ptr_store(my_thread, &fiber_context->bound_sigset_ptr, sigset_ptr);
+    fiber_context_receive_sigset_from_user(fiber_context);
+    pas_lock_unlock(&fiber_context->lock);
+}
+
+static void check_context_ownership(filc_thread* my_thread, filc_fiber_context* fiber_context)
+{
+    FILC_CHECK(
+        fiber_context->owning_thread == my_thread,
+        NULL,
+        "cannot use a context that belongs to a different thread "
+        "(to fiber context = %s, owning thread = %s, this thread = %s).",
+        filc_object_to_new_string(filc_object_for_special_payload(fiber_context)),
+        filc_object_to_new_string(filc_object_for_special_payload(fiber_context->owning_thread)),
+        filc_object_to_new_string(filc_object_for_special_payload(my_thread)));
+}
+
+void filc_native_zfiber_context_getcontext(filc_thread* my_thread, filc_ptr fiber_context_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    
+    filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
+
+    filc_fiber_context* fiber_context = (filc_fiber_context*)filc_ptr_ptr(fiber_context_ptr);
+    pas_lock_lock(&fiber_context->lock);
+    FILC_CHECK(
+        fiber_context->state == filc_fiber_context_uninitialized,
+        NULL,
+        "cannot call getcontext more than once on the same context "
+        "(fiber context ptr = %s, state = %s).",
+        filc_ptr_to_new_string(fiber_context_ptr),
+        filc_fiber_context_state_get_string(fiber_context->state));
+    check_context_ownership(my_thread, fiber_context);
+    PAS_ASSERT(!getcontext(&fiber_context->context));
+    fiber_context->state = filc_fiber_context_after_getcontext;
+    fiber_context_send_sigset_to_user(fiber_context);
+    pas_lock_unlock(&fiber_context->lock);
+}
+
+static void check_target_context(filc_thread* my_thread, filc_fiber_context* fiber_context)
+{
+    FILC_CHECK(
+        fiber_context->state == filc_fiber_context_runnable,
+        NULL,
+        "cannot switch to a context unless it's runnable "
+        "(to fiber context = %s, state = %s).",
+        filc_object_to_new_string(filc_object_for_special_payload(fiber_context)),
+        filc_fiber_context_state_get_string(fiber_context->state));
+
+    /* This guards against two issues.
+
+       First, we are threading my_thread through the ABI. Hence, switching to a context that thought
+       it was on one thread from another thread screws up the ABI. We'd have to change the ABI to be
+       fiber-centric for cross-thread context swaps to work at all.
+
+       Second, we cannot allow switching to a context whose stack belongs to another thread. The
+       problem with switching to a context whose stack belongs to another thread is that the
+       thread in question could exit and delete its stack at any time.
+       
+       Interestingly, pthread_exit will not work in glibc in this case. But zthread_exit will work
+       just fine.*/
+    check_context_ownership(my_thread, fiber_context);
+}
+
+void filc_native_zfiber_context_setcontext(filc_thread* my_thread, filc_ptr fiber_context_ptr)
+{
+    filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
+
+    filc_fiber_context* fiber_context = (filc_fiber_context*)filc_ptr_ptr(fiber_context_ptr);
+    pas_lock_lock(&fiber_context->lock);
+    check_target_context(my_thread, fiber_context);
+    /* We current leave the current context in a running state, which prevents it from ever being
+       switched to. I think that's right. */
+    my_thread->current_fiber_context = NULL;
+    my_thread->switching_to_fiber_context = fiber_context;
+    fiber_context_receive_sigset_from_user(fiber_context);
+    setcontext(&fiber_context->context);
+    PAS_ASSERT(!"Should not be reached");
+}
+
+static filc_thread* finish_switch_to_fiber_context(void)
+{
+    filc_thread* my_thread = filc_get_my_thread();
+    PAS_ASSERT(filc_thread_is_entered(my_thread));
+
+    filc_fiber_context* fiber_context = my_thread->switching_to_fiber_context;
+    PAS_ASSERT(fiber_context);
+    my_thread->switching_to_fiber_context = NULL;
+    
+    PAS_ASSERT(fiber_context->state == filc_fiber_context_runnable);
+    fiber_context->state = filc_fiber_context_running;
+    my_thread->top_frame = fiber_context->top_frame;
+    fiber_context->top_frame = NULL;
+    my_thread->top_native_frame = fiber_context->top_native_frame;
+    fiber_context->top_native_frame = NULL;
+    filc_raw_ptr_array_destruct(&my_thread->allocation_roots);
+    my_thread->allocation_roots = fiber_context->allocation_roots;
+    filc_raw_ptr_array_construct(&fiber_context->allocation_roots);
+    my_thread->special_signal_deferral_depth = fiber_context->special_signal_deferral_depth;
+    fiber_context->special_signal_deferral_depth = 0;
+    my_thread->stack_limit = fiber_context->stack_limit.stack_limit;
+    my_thread->stack_top = fiber_context->stack_limit.stack_top;
+    if (my_thread->current_fiber_context) {
+        fiber_context_send_sigset_to_user(my_thread->current_fiber_context);
+        pas_lock_unlock(&my_thread->current_fiber_context->lock);
+    }
+    my_thread->current_fiber_context = fiber_context;
+    pas_lock_unlock(&fiber_context->lock);
+
+    return my_thread;
+}
+
+static void start_fiber_context(void)
+{
+    filc_thread* my_thread = finish_switch_to_fiber_context();
+
+    PAS_ASSERT(!my_thread->top_frame);
+    PAS_ASSERT(!my_thread->top_native_frame);
+    PAS_ASSERT(my_thread->current_fiber_context);
+    filc_fiber_context* fiber_context = my_thread->current_fiber_context;
+
+    FILC_DEFINE_CATCHING_FRAME("start_fiber_context");
+    filc_push_frame(my_thread, frame);
+
+    filc_native_frame native_frame;
+    filc_push_native_frame(my_thread, &native_frame);
+
+    filc_ptr closure_ptr = filc_flight_ptr_load(my_thread, &fiber_context->closure_ptr);
+    filc_flight_ptr_store(my_thread, &fiber_context->closure_ptr, filc_ptr_forge_null());
+
+    filc_exception_and_void result = filc_call_user_fiber_context_main(my_thread, closure_ptr);
+    if (result.has_exception)
+        filc_user_panic(NULL, "unexpected exception thrown from fiber context main.");
+
+    filc_user_panic(NULL, "unexpected return from fiber context main.");
+}
+
+void filc_native_zfiber_context_makecontext(filc_thread* my_thread, filc_ptr fiber_context_ptr,
+                                            size_t passed_stack_size, filc_ptr closure_ptr)
+{
+    filc_check_access_special(fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
+
+    filc_fiber_context* fiber_context = (filc_fiber_context*)filc_ptr_ptr(fiber_context_ptr);
+    pas_lock_lock(&fiber_context->lock);
+    FILC_CHECK(
+        fiber_context->state == filc_fiber_context_after_getcontext,
+        NULL,
+        "cannot call makecontext except right after getcontext on the same context "
+        "(fiber context ptr = %s, state = %s).",
+        filc_ptr_to_new_string(fiber_context_ptr),
+        filc_fiber_context_state_get_string(fiber_context->state));
+    check_context_ownership(my_thread, fiber_context);
+    size_t stack_size = passed_stack_size + stack_slack;
+    FILC_CHECK(
+        stack_size > stack_slack,
+        NULL,
+        "invalid stack_size in call to makecontext (passed stack_size = %zu).",
+        passed_stack_size);
+    fiber_context->stack = bmalloc_allocate(stack_size);
+    fiber_context->stack_limit = compute_stack_limit_for_stack_and_size(fiber_context->stack,
+                                                                        stack_size);
+    fiber_context->context.uc_stack.ss_sp = fiber_context->stack;
+    fiber_context->context.uc_stack.ss_size = stack_size;
+    /* I don't know if makecontext uses or sets the sigset, but let's just pretend that it does to
+       be sure. */
+    fiber_context_receive_sigset_from_user(fiber_context);
+    makecontext(&fiber_context->context, start_fiber_context, 0);
+    fiber_context_send_sigset_to_user(fiber_context);
+    filc_flight_ptr_store(my_thread, &fiber_context->closure_ptr, closure_ptr);
+    fiber_context->state = filc_fiber_context_runnable;
+    pas_lock_unlock(&fiber_context->lock);
+}
+
+void filc_native_zfiber_context_swapcontext(filc_thread* my_thread, filc_ptr from_fiber_context_ptr,
+                                            filc_ptr to_fiber_context_ptr)
+{
+    filc_check_access_special(from_fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
+    filc_check_access_special(to_fiber_context_ptr, FILC_SPECIAL_TYPE_FIBER_CONTEXT);
+
+    filc_fiber_context* from_fiber_context =
+        (filc_fiber_context*)filc_ptr_ptr(from_fiber_context_ptr);
+    filc_fiber_context* to_fiber_context =
+        (filc_fiber_context*)filc_ptr_ptr(to_fiber_context_ptr);
+
+    /* In glibc, swapcontext with from==to is almost a no-op, except stuff happens with the signal
+       mask.
+
+       This behavior is not guaranteed by POSIX.
+
+       I think it's safest to just reject programs that do this, even though it would not be that
+       hard to support it. */
+    FILC_CHECK(
+        from_fiber_context != to_fiber_context,
+        NULL,
+        "cannot call swapcontext with from == to (from/to fiber context = %s).",
+        filc_ptr_to_new_string(from_fiber_context_ptr));
+    
+    if (from_fiber_context < to_fiber_context) {
+        pas_lock_lock(&from_fiber_context->lock);
+        pas_lock_lock(&to_fiber_context->lock);
+    } else {
+        pas_lock_lock(&to_fiber_context->lock);
+        pas_lock_lock(&from_fiber_context->lock);
+    }
+
+    check_target_context(my_thread, to_fiber_context);
+    
+    FILC_CHECK(
+        from_fiber_context->state == filc_fiber_context_running ||
+        from_fiber_context->state == filc_fiber_context_uninitialized ||
+        from_fiber_context->state == filc_fiber_context_after_getcontext,
+        NULL,
+        "cannot call swapcontext to switch from a context unless it's running or makecontext hasn't "
+        "been called yet "
+        "(from fiber context ptr = %s, state = %s).",
+        filc_ptr_to_new_string(from_fiber_context_ptr),
+        filc_fiber_context_state_get_string(from_fiber_context->state));
+    check_context_ownership(my_thread, from_fiber_context);
+
+    if (from_fiber_context->state == filc_fiber_context_running) {
+        FILC_CHECK(
+            my_thread->current_fiber_context == from_fiber_context,
+            NULL,
+            "cannot call swapcontext to switch from a running context unless it's the context that "
+            "this thread is running "
+            "(from fiber context ptr = %s, current fiber context = %s).",
+            filc_ptr_to_new_string(from_fiber_context_ptr),
+            filc_object_to_new_string(
+                filc_object_for_special_payload(my_thread->current_fiber_context)));
+        PAS_ASSERT(my_thread->stack_limit == from_fiber_context->stack_limit.stack_limit);
+        PAS_ASSERT(my_thread->stack_top == from_fiber_context->stack_limit.stack_top);
+    } else {
+        PAS_ASSERT(from_fiber_context->state == filc_fiber_context_uninitialized ||
+                   from_fiber_context->state == filc_fiber_context_after_getcontext);
+        if (my_thread->current_fiber_context) {
+            filc_store_barrier(
+                my_thread, filc_object_for_special_payload(my_thread->current_fiber_context));
+            from_fiber_context->stack_owner = my_thread->current_fiber_context;
+        }
+        from_fiber_context->stack_limit.stack_limit = my_thread->stack_limit;
+        from_fiber_context->stack_limit.stack_top = my_thread->stack_top;
+        filc_store_barrier(my_thread, filc_object_for_special_payload(from_fiber_context));
+        my_thread->current_fiber_context = from_fiber_context;
+    }
+
+    if (filc_current_marking_state && !from_fiber_context->is_grey) {
+        filc_raw_ptr_array_add(&my_thread->grey_fibers, from_fiber_context);
+        from_fiber_context->is_grey = true;
+    }
+    from_fiber_context->state = filc_fiber_context_runnable;
+
+    from_fiber_context->top_frame = my_thread->top_frame;
+    my_thread->top_frame = NULL;
+    from_fiber_context->top_native_frame = my_thread->top_native_frame;
+    my_thread->top_native_frame = NULL;
+    filc_raw_ptr_array_destruct(&from_fiber_context->allocation_roots);
+    from_fiber_context->allocation_roots = my_thread->allocation_roots;
+    filc_raw_ptr_array_construct(&my_thread->allocation_roots);
+    from_fiber_context->special_signal_deferral_depth = my_thread->special_signal_deferral_depth;
+    my_thread->special_signal_deferral_depth = 0;
+
+    PAS_ASSERT(my_thread->current_fiber_context == from_fiber_context);
+    my_thread->switching_to_fiber_context = to_fiber_context;
+    fiber_context_receive_sigset_from_user(to_fiber_context);
+    PAS_ASSERT(!swapcontext(&from_fiber_context->context, &to_fiber_context->context));
+
+    filc_thread* hopefully_my_thread = finish_switch_to_fiber_context();
+
+    PAS_ASSERT(hopefully_my_thread == my_thread);
+    PAS_ASSERT(my_thread->current_fiber_context == from_fiber_context);
+    PAS_ASSERT(from_fiber_context->state == filc_fiber_context_running);
+}
+#else /* FILC_HAS_FIBER_CONTEXT -> so !FILC_HAS_FIBER_CONTEXT */
+filc_ptr filc_native_zfiber_context_new(filc_thread* my_thread)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    filc_internal_panic(NULL, "zfiber_context_new not supported.");
+}
+
+void filc_native_zfiber_context_bind_sigset(filc_thread* my_thread, filc_ptr fiber_context_ptr,
+                                            filc_ptr sigset_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fiber_context_ptr);
+    PAS_UNUSED_PARAM(sigset_ptr);
+    filc_internal_panic(NULL, "zfiber_context_bind_sigset not supported.");
+}
+
+void filc_native_zfiber_context_getcontext(filc_thread* my_thread, filc_ptr fiber_context_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fiber_context_ptr);
+    filc_internal_panic(NULL, "zfiber_context_getcontext not supported.");
+}
+
+void filc_native_zfiber_context_setcontext(filc_thread* my_thread, filc_ptr fiber_context_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fiber_context_ptr);
+    filc_internal_panic(NULL, "zfiber_context_setcontext not supported.");
+}
+
+void filc_native_zfiber_context_makecontext(filc_thread* my_thread, filc_ptr fiber_context_ptr,
+                                            size_t stack_size, filc_ptr closure_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(fiber_context_ptr);
+    PAS_UNUSED_PARAM(stack_size);
+    PAS_UNUSED_PARAM(closure_ptr);
+    filc_internal_panic(NULL, "zfiber_context_makecontext not supported.");
+}
+
+void filc_native_zfiber_context_swapcontext(filc_thread* my_thread, filc_ptr from_fiber_context_ptr,
+                                            filc_ptr to_fiber_context_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(from_fiber_context_ptr);
+    PAS_UNUSED_PARAM(to_fiber_context_ptr);
+    filc_internal_panic(NULL, "zfiber_context_swapcontext not supported.");
+}
+#endif /* FILC_HAS_FIBER_CONTEXT -> so end of !FILC_HAS_FIBER_CONTEXT */
+
 filc_ptr filc_native_zclosure_new(filc_thread* my_thread, filc_ptr function_ptr, filc_ptr data_ptr)
 {
     filc_check_function_call(function_ptr);
-    filc_object* object = (filc_object*)filc_thread_allocate(
-        my_thread, sizeof(filc_object) + sizeof(filc_closure));
-    object->upper = filc_object_lower_not_null(object);
-    object->aux = filc_aux_create(
-        filc_object_flags_create(FILC_OBJECT_FLAG_CLOSURE | FILC_OBJECT_FLAG_READONLY,
-                                 FILC_SPECIAL_TYPE_FUNCTION,
-                                 0),
-        filc_ptr_ptr(function_ptr));
-    filc_closure* closure = (filc_closure*)filc_object_special_payload_with_manual_tracking(object);
-    filc_flight_ptr_store(my_thread, &closure->data_ptr, data_ptr);
-    return filc_ptr_create_with_object_and_ptr_and_manual_tracking(
-        object, filc_ptr_ptr(function_ptr));
+    filc_function* old_function = (filc_function*)filc_ptr_ptr(function_ptr);
+    filc_object* new_object = (filc_object*)filc_thread_allocate(
+        my_thread, sizeof(filc_object) + sizeof(filc_closure)).begin;
+    new_object->upper = filc_object_lower_not_null(new_object);
+    new_object->aux = filc_aux_create(
+        filc_object_flags_create(0, FILC_SPECIAL_TYPE_FUNCTION, 0),
+        filc_object_lower_not_null(new_object));
+    filc_closure* new_function = (filc_closure*)
+        filc_object_special_payload_with_manual_tracking(new_object);
+    new_function->base = *old_function;
+    filc_flight_ptr_store(my_thread, &new_function->data_ptr, data_ptr);
+    return filc_ptr_create_with_object_and_ptr_and_manual_tracking(new_object, new_function);
 }
 
-filc_ptr filc_native_zclosure_get_data(filc_thread* my_thread, filc_ptr closure_ptr)
+filc_ptr filc_native_zclosure_get_data(filc_thread* my_thread, filc_ptr function_ptr)
 {
     PAS_UNUSED_PARAM(my_thread);
-    filc_check_function_call(closure_ptr);
-    check_closure(filc_ptr_object(closure_ptr), NULL);
-    filc_closure* closure = (filc_closure*)
-        filc_object_special_payload_with_manual_tracking(filc_ptr_object(closure_ptr));
-    return filc_flight_ptr_load_with_manual_tracking(&closure->data_ptr);
+    filc_check_function_call(function_ptr);
+    check_closure(filc_ptr_object(function_ptr), NULL);
+    filc_closure* function = (filc_closure*)
+        filc_object_special_payload_with_manual_tracking(filc_ptr_object(function_ptr));
+    return filc_flight_ptr_load_with_manual_tracking(&function->data_ptr);
 }
 
-void filc_native_zclosure_set_data(filc_thread* my_thread, filc_ptr closure_ptr, filc_ptr data_ptr)
+void filc_native_zclosure_set_data(filc_thread* my_thread, filc_ptr function_ptr, filc_ptr data_ptr)
 {
-    filc_check_function_call(closure_ptr);
-    check_closure(filc_ptr_object(closure_ptr), NULL);
-    filc_closure* closure = (filc_closure*)
-        filc_object_special_payload_with_manual_tracking(filc_ptr_object(closure_ptr));
-    filc_flight_ptr_store(my_thread, &closure->data_ptr, data_ptr);
+    filc_check_function_call(function_ptr);
+    check_closure(filc_ptr_object(function_ptr), NULL);
+    filc_closure* function = (filc_closure*)
+        filc_object_special_payload_with_manual_tracking(filc_ptr_object(function_ptr));
+    filc_flight_ptr_store(my_thread, &function->data_ptr, data_ptr);
 }
 
 static void cpuid_impl(unsigned leaf, unsigned count, filc_ptr eax_ptr, filc_ptr ebx_ptr,
@@ -7142,7 +8351,6 @@ void filc_native_zset_errno(filc_thread* my_thread, int errno_value)
 
 void filc_set_dlerror(const char* error, const char* context)
 {
-    PAS_ASSERT(error);
     filc_thread* my_thread = filc_get_my_thread();
     if (filc_dump_errnos) {
         pas_log("[%d] Setting dlerror! message = %s, context = %s\n",
@@ -7183,7 +8391,7 @@ struct iovec* filc_prepare_iovec(filc_thread* my_thread, filc_ptr user_iov, size
 {
     struct iovec* iov;
     size_t index;
-    iov = filc_bmalloc_allocate_tmp(
+    iov = (struct iovec*)filc_bmalloc_allocate_tmp(
         my_thread, filc_mul_size(sizeof(struct iovec), iovcnt));
     for (index = 0; index < (size_t)iovcnt; ++index) {
         filc_prepare_iovec_entry(
@@ -7279,6 +8487,7 @@ void filc_native_zsys_exit_soft(filc_thread* my_thread, int return_code)
         pas_log("%d: Soft exiting!\n", getpid());
         filc_thread_dump_stack(my_thread, pas_log_stream);
     }
+    filc_sampling_profiler_report();
     filc_exit(my_thread);
     exit(return_code);
     PAS_ASSERT(!"Should not be reached");
@@ -7291,6 +8500,7 @@ void filc_native_zsys_exit_hard(filc_thread* my_thread, int return_code)
         pas_log("%d: Hard exiting!\n", getpid());
         filc_thread_dump_stack(my_thread, pas_log_stream);
     }
+    filc_sampling_profiler_report();
     filc_exit(my_thread);
     _Exit(return_code);
     PAS_ASSERT(!"Should not be reached");
@@ -7396,34 +8606,10 @@ static int to_user_sa_flags(int sa_flags)
     return sa_flags;
 }
 
-static bool is_unsafe_signal_for_kill(int signum)
-{
-    unsigned index;
-    for (index = num_libc_internal_signals; index--;) {
-        if (signum == libc_internal_signals[index])
-            return true;
-    }
-    return false;
-}
-
 bool filc_native_zis_unsafe_signal_for_kill(filc_thread* my_thread, int signo)
 {
     PAS_UNUSED_PARAM(my_thread);
     return is_unsafe_signal_for_kill(signo);
-}
-
-static bool is_unsafe_signal_for_handlers(int signum)
-{
-    switch (signum) {
-    case SIGILL:
-    case SIGTRAP:
-    case SIGBUS:
-    case SIGSEGV:
-    case SIGFPE:
-        return true;
-    default:
-        return is_unsafe_signal_for_kill(signum);
-    }
 }
 
 bool filc_native_zis_unsafe_signal_for_handlers(filc_thread* my_thread, int signo)
@@ -7435,17 +8621,6 @@ bool filc_native_zis_unsafe_signal_for_handlers(filc_thread* my_thread, int sign
 static bool is_special_signal_handler(void* handler)
 {
     return handler == SIG_DFL || handler == SIG_IGN;
-}
-
-static bool is_user_special_signal_handler(void* handler)
-{
-    return is_special_signal_handler(handler);
-}
-
-static void* from_user_special_signal_handler(void* handler)
-{
-    PAS_ASSERT(is_user_special_signal_handler(handler));
-    return handler;
 }
 
 static filc_ptr to_user_special_signal_handler(void* handler)
@@ -7462,13 +8637,7 @@ int filc_native_zsys_sigaction(
     if (verbose)
         pas_log("[%d] sigaction on signum = %d\n", getpid(), signum);
     
-    if (is_unsafe_signal_for_handlers(signum) && filc_ptr_ptr(act_ptr)) {
-        if (verbose)
-            pas_log("invalid signum and act is non-null.\n");
-        filc_set_errno(ENOSYS);
-        return -1;
-    }
-    if (signum > FILC_MAX_USER_SIGNUM) {
+    if (signum < 0 || signum > FILC_MAX_USER_SIGNUM) {
         if (verbose)
             pas_log("bogus signum.\n");
         filc_set_errno(EINVAL);
@@ -7492,21 +8661,32 @@ int filc_native_zsys_sigaction(
         if (verbose)
             pas_log("restart = %s\n", (act.sa_flags & SA_RESTART) ? "yes" : "no");
         filc_ptr user_handler = filc_load_ptr_at(my_thread, act_ptr, &user_act->sa_handler);
-        if (is_user_special_signal_handler(filc_ptr_ptr(user_handler))) {
+        if (is_unsafe_signal_for_handlers(signum) && filc_ptr_ptr(act_ptr) != SIG_DFL) {
+            if (verbose)
+                pas_log("invalid signum and act's handler is not SIG_DFL.\n");
+            filc_set_errno(ENOSYS);
+            return -1;
+        }
+        if (is_special_signal_handler(filc_ptr_ptr(user_handler))) {
             if (verbose)
                 pas_log("setting special handler %p\n", filc_ptr_ptr(user_handler));
-            act.sa_handler = from_user_special_signal_handler(filc_ptr_ptr(user_handler));
+            act.sa_handler = (void(*)(int))filc_ptr_ptr(user_handler);
         } else {
+            PAS_ASSERT(!is_unsafe_signal_for_handlers(signum));
             if (verbose)
                 pas_log("setting user handler %p\n", filc_ptr_ptr(user_handler));
             filc_check_function_call(user_handler);
-            new_handler = filc_object_special_payload(
+            new_handler = (filc_signal_handler*)filc_object_special_payload(
                 my_thread, filc_allocate_special(
                     my_thread, sizeof(filc_signal_handler), 1, FILC_SPECIAL_TYPE_SIGNAL_HANDLER));
             filc_flight_ptr_store(my_thread, &new_handler->function_ptr, user_handler);
             new_handler->mask = act.sa_mask;
             new_handler->user_signum = signum;
             new_handler->flags = act.sa_flags;
+            new_handler->dump_heap =
+                filc_dump_heap_on_signal && filc_dump_heap_on_signal == (unsigned)signum;
+            new_handler->dump_stacks =
+                filc_dump_stacks_on_signal && filc_dump_stacks_on_signal == (unsigned)signum;
             pas_store_store_fence();
             PAS_ASSERT((unsigned)signum <= FILC_MAX_USER_SIGNUM);
             act.sa_sigaction = signal_pizlonator;
@@ -7532,12 +8712,19 @@ int filc_native_zsys_sigaction(
     }
     if (user_oact) {
         check_user_sigaction(oact_ptr, filc_write_access);
-        if (is_unsafe_signal_for_handlers(signum))
-            PAS_ASSERT(oact.sa_handler == SIG_DFL);
+        if (is_unsafe_signal_for_handlers(signum)) {
+            if (oact.sa_handler != SIG_DFL &&
+                oact.sa_handler != SIG_IGN) {
+                pas_log("Unexpected value of oact.sa_handler for signal %d: %p\n",
+                        signum, oact.sa_handler);
+            }
+            PAS_ASSERT(oact.sa_handler == SIG_DFL ||
+                       oact.sa_handler == SIG_IGN);
+        }
         filc_signal_handler* old_handler = filc_signal_table[signum];
-        if (is_special_signal_handler(oact.sa_handler)) {
+        if (is_special_signal_handler((void*)oact.sa_handler)) {
             filc_store_ptr_at(my_thread, oact_ptr, &user_oact->sa_handler,
-                              to_user_special_signal_handler(oact.sa_handler));
+                              to_user_special_signal_handler((void*)oact.sa_handler));
         } else {
             PAS_ASSERT(old_handler);
             PAS_ASSERT(oact.sa_sigaction == signal_pizlonator);
@@ -7762,12 +8949,12 @@ int filc_native_zsys_sigprocmask(filc_thread* my_thread, int user_how, filc_ptr 
     sigset_t* oldset;
     if (filc_ptr_ptr(user_set_ptr)) {
         filc_check_user_sigset(user_set_ptr, filc_read_access);
-        set = alloca(sizeof(sigset_t));
+        set = (sigset_t*)alloca(sizeof(sigset_t));
         filc_from_user_sigset((sigset_t*)filc_ptr_ptr(user_set_ptr), set);
     } else
         set = NULL;
     if (filc_ptr_ptr(user_oldset_ptr)) {
-        oldset = alloca(sizeof(sigset_t));
+        oldset = (sigset_t*)alloca(sizeof(sigset_t));
         pas_zero_memory(oldset, sizeof(sigset_t));
     } else
         oldset = NULL;
@@ -7805,16 +8992,42 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
     static const bool verbose = false;
     filc_exit(my_thread);
     if (verbose)
+        pas_log("blocking signals in fork\n");
+    sigset_t fullset;
+    sigset_t oldset;
+    pas_reasonably_fill_sigset(&fullset);
+    PAS_ASSERT(!pthread_sigmask(SIG_BLOCK, &fullset, &oldset));
+    if (verbose)
         pas_log("suspending scavenger\n");
     pas_scavenger_suspend();
     if (verbose)
         pas_log("suspending GC\n");
+    /* Why can't we stop the world before suspending?
+     
+       It's tempting. Like it seems that if we could STW before suspending the GC then it removes the
+       risk of a confusing panic if someone uses fugc_lock_threads() and fugc_handshake() while
+       another thread is forking. That said, those calls shouldn't be used in multithreaded processes
+       that fork, since they have to do with installing seccomp filters. The right way to install
+       seccomp filters is early during startup before you have any threads.
+    
+       Here's why that thinking is wrong: if we stop the world, then exited threads keep running. So,
+       stopping the world does not ensure that we won't have concurrent calls to things like
+       fugc_lock_threads(), fugc_handshake(), filc_soft_handshake(), etc.
+    
+       The only thing right about this style of thinking is that we don't *yet* have mutator threads
+       using soft handshake APIs. */
     fugc_suspend();
     if (verbose)
         pas_log("stopping world\n");
     filc_stop_the_world();
-    /* NOTE: We don't have to lock the soft handshake lock, since now that the world is stopped and the
-       FUGC is suspended, nobody could be using it. */
+    if (verbose)
+        pas_log("telling sampling profiler about fork\n");
+    filc_sampling_profiler_before_fork();
+    if (verbose)
+        pas_log("locking the handshake lock\n");
+    /* Eventually, we'll have exited threads using handshake APIs. Even with the world stopped, they
+       might go ahead and do that now. Let's make sure they don't. */
+    filc_handshake_lock_lock();
     if (verbose)
         pas_log("locking thread list\n");
     filc_thread_list_lock_lock();
@@ -7867,10 +9080,18 @@ int filc_native_zsys_fork_impl(filc_thread* my_thread)
         for (thread = filc_first_thread; thread; thread = thread->next_thread)
             pas_system_mutex_unlock(&thread->lock);
     }
+    filc_handshake_lock_unlock();
     filc_thread_list_lock_unlock();
+    if (!result)
+        filc_sampling_profiler_after_fork_in_child();
+    else
+        filc_sampling_profiler_after_fork_in_parent();
     filc_resume_the_world();
     fugc_resume();
     pas_scavenger_resume();
+    if (verbose)
+        pas_log("unblocking signals in fork\n");
+    PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &oldset, NULL));
     filc_enter(my_thread);
     if (result < 0)
         filc_set_errno(my_errno);
@@ -8519,8 +9740,12 @@ int filc_native_zsys_getsid(filc_thread* my_thread, int pid)
 static int mlock_impl(filc_thread* my_thread, filc_ptr addr_ptr, size_t len,
                       int (*actual_mlock)(const void*, size_t))
 {
-    filc_check_access(addr_ptr, len, filc_read_access);
-    check_mmap(addr_ptr);
+    /* Only check the pointer if len is not zero. If len is zero, still make the syscall, because I am
+       guessing someone might do this to check capabilities. */
+    if (len) {
+        filc_check_access(addr_ptr, len, filc_read_access);
+        check_mmap(addr_ptr);
+    }
     return FILC_SYSCALL(my_thread, actual_mlock(filc_ptr_ptr(addr_ptr), len));
 }
 
@@ -8799,7 +10024,7 @@ static bool handle_returned_addr(filc_thread* my_thread, filc_ptr addr_ptr, filc
                                  unsigned** addrlen)
 {
     if (filc_ptr_ptr(addrlen_ptr)) {
-        *addrlen = filc_bmalloc_allocate_tmp(my_thread, sizeof(unsigned));
+        *addrlen = (unsigned int*)filc_bmalloc_allocate_tmp(my_thread, sizeof(unsigned));
         filc_check_write(addrlen_ptr, sizeof(unsigned));
         **addrlen = *(unsigned*)filc_ptr_ptr(addrlen_ptr);
         filc_check_write(addr_ptr, **addrlen);
@@ -9022,7 +10247,7 @@ int filc_native_zsys_sendmmsg(filc_thread* my_thread, int sockfd, filc_ptr msgve
 
     filc_check_write(msgvec_ptr, filc_mul_size(sizeof(struct mmsghdr), vlen));
     struct mmsghdr* user_msgvec = (struct mmsghdr*)filc_ptr_ptr(msgvec_ptr);
-    struct mmsghdr* msgvec = alloca(filc_mul_size(sizeof(struct mmsghdr), vlen));
+    struct mmsghdr* msgvec = (struct mmsghdr*)alloca(filc_mul_size(sizeof(struct mmsghdr), vlen));
     unsigned index;
     for (index = vlen; index--;) {
         from_user_msghdr_for_send(
@@ -9060,7 +10285,7 @@ int filc_native_zsys_recvmmsg(filc_thread* my_thread, int sockfd, filc_ptr msgve
 
     filc_check_write(msgvec_ptr, filc_mul_size(sizeof(struct mmsghdr), vlen));
     struct mmsghdr* user_msgvec = (struct mmsghdr*)filc_ptr_ptr(msgvec_ptr);
-    struct mmsghdr* msgvec = alloca(filc_mul_size(sizeof(struct mmsghdr), vlen));
+    struct mmsghdr* msgvec = (struct mmsghdr*)alloca(filc_mul_size(sizeof(struct mmsghdr), vlen));
     unsigned index;
     for (index = vlen; index--;) {
         from_user_msghdr_for_recv(
@@ -9625,6 +10850,7 @@ filc_ptr filc_native_zsys_shmat(filc_thread* my_thread, int shmid, filc_ptr addr
     if (dummy == (void*)(intptr_t)-1)
         return mmap_error_result();
 
+    void* raw_result;
     struct shmid_ds stat;
     if (FILC_SYSCALL(my_thread, shmctl(shmid, IPC_STAT, &stat)) < 0)
         goto done;
@@ -9639,7 +10865,7 @@ filc_ptr filc_native_zsys_shmat(filc_thread* my_thread, int shmid, filc_ptr addr
             my_thread, length, pas_page_malloc_alignment(),
             FILC_OBJECT_FLAG_MMAP, filc_exit_allowed, NULL));
 
-    void* raw_result = FILC_SYSCALL(
+    raw_result = FILC_SYSCALL(
         my_thread, shmat(shmid, filc_ptr_ptr(addr_ptr), flag | SHM_REMAP));
 
     PAS_ASSERT(raw_result == (void*)(intptr_t)-1 || raw_result == filc_ptr_ptr(addr_ptr));
@@ -9947,7 +11173,7 @@ int filc_native_zsys_getdents(filc_thread* my_thread, int fd, filc_ptr dirent_pt
 #endif
 #define getdents getdents64
 #endif
-    return FILC_SYSCALL(my_thread, getdents(fd, filc_ptr_ptr(dirent_ptr), size));
+    return FILC_SYSCALL(my_thread, getdents(fd, (struct dirent*)filc_ptr_ptr(dirent_ptr), size));
 }
 
 long filc_native_zsys_getrandom(filc_thread* my_thread, filc_ptr buf_ptr, size_t buflen,
@@ -9971,7 +11197,7 @@ static struct epoll_event* from_user_epoll_event(filc_thread* my_thread, filc_pt
 {
     if (!filc_ptr_ptr(ev_ptr))
         return NULL;
-    struct epoll_event* ev = filc_bmalloc_allocate_tmp(my_thread, sizeof(struct epoll_event));
+    struct epoll_event* ev = (struct epoll_event*)filc_bmalloc_allocate_tmp(my_thread, sizeof(struct epoll_event));
     filc_check_read(ev_ptr, sizeof(struct user_epoll_event));
     struct user_epoll_event* user_ev = (struct user_epoll_event*)filc_ptr_ptr(ev_ptr);
     ev->events = user_ev->events;
@@ -9981,7 +11207,7 @@ static struct epoll_event* from_user_epoll_event(filc_thread* my_thread, filc_pt
 
 static struct epoll_event* make_epoll_events(filc_thread* my_thread, int maxevents)
 {
-    return filc_bmalloc_allocate_tmp(my_thread, filc_mul_size(maxevents, sizeof(struct epoll_event)));
+    return (struct epoll_event*)filc_bmalloc_allocate_tmp(my_thread, filc_mul_size(maxevents, sizeof(struct epoll_event)));
 }
 
 static int to_user_epoll_events(int result, struct epoll_event* evs, filc_ptr evs_ptr)
@@ -10024,7 +11250,7 @@ int filc_native_zsys_epoll_pwait_impl(filc_thread* my_thread, int epfd, filc_ptr
     sigset_t* sigmask = NULL;
     if (filc_ptr_ptr(sigmask_ptr)) {
         filc_check_user_sigset(sigmask_ptr, filc_read_access);
-        sigmask = alloca(sizeof(sigset_t));
+        sigmask = (sigset_t*)alloca(sizeof(sigset_t));
         filc_from_user_sigset((sigset_t*)filc_ptr_ptr(sigmask_ptr), sigmask);
     }
     struct epoll_event* evs = make_epoll_events(my_thread, maxevents);
@@ -10041,7 +11267,7 @@ int filc_native_zsys_epoll_pwait2_impl(filc_thread* my_thread, int epfd, filc_pt
     sigset_t* sigmask = NULL;
     if (filc_ptr_ptr(sigmask_ptr)) {
         filc_check_user_sigset(sigmask_ptr, filc_read_access);
-        sigmask = alloca(sizeof(sigset_t));
+        sigmask = (sigset_t*)alloca(sizeof(sigset_t));
         filc_from_user_sigset((sigset_t*)filc_ptr_ptr(sigmask_ptr), sigmask);
     }
     struct epoll_event* evs = make_epoll_events(my_thread, maxevents);
@@ -10077,10 +11303,54 @@ int filc_native_zsys_sched_setaffinity(filc_thread* my_thread, int tid, size_t s
         my_thread, sched_setaffinity(tid, size, (const cpu_set_t*)filc_ptr_ptr(set_ptr)));
 }
 
+int filc_native_zsys_raw_sched_getaffinity(filc_thread* my_thread, int tid, size_t size, filc_ptr set_ptr)
+{
+    filc_check_write(set_ptr, size);
+    return FILC_SYSCALL(my_thread,
+                        syscall(SYS_sched_getaffinity, tid, size,
+                                (unsigned long *)filc_ptr_ptr(set_ptr)));
+}
+
 int filc_native_zsys_sched_getaffinity(filc_thread* my_thread, int tid, size_t size, filc_ptr set_ptr)
 {
     filc_check_write(set_ptr, size);
     return FILC_SYSCALL(my_thread, sched_getaffinity(tid, size, (cpu_set_t*)filc_ptr_ptr(set_ptr)));
+}
+
+long filc_native_zsys_get_mempolicy(filc_thread* my_thread, filc_ptr mode, filc_ptr nodemask,
+                                    unsigned long maxnode, filc_ptr addr, unsigned long flags)
+{
+    if (filc_ptr_ptr(mode))
+        filc_check_write(mode, sizeof(int));
+    if (filc_ptr_ptr(nodemask)) {
+        filc_check_write(
+            nodemask,
+            filc_mul_size(sizeof(unsigned long),
+                          filc_add_size(maxnode, 8 * sizeof(unsigned long) - 1) /
+                              (8 * sizeof(unsigned long))));
+    }
+    if (filc_ptr_ptr(addr))
+        filc_check_read(addr, 1);
+    return FILC_SYSCALL(my_thread,
+                        syscall(SYS_get_mempolicy, (int *)filc_ptr_ptr(mode),
+                                (unsigned long *)filc_ptr_ptr(nodemask),
+                                maxnode, filc_ptr_ptr(addr), flags));
+}
+
+long filc_native_zsys_set_mempolicy(filc_thread* my_thread, int mode, filc_ptr nodemask,
+                                    unsigned long maxnode)
+{
+    if (filc_ptr_ptr(nodemask)) {
+        filc_check_read(
+            nodemask,
+            filc_mul_size(sizeof(unsigned long),
+                          filc_add_size(maxnode, 8 * sizeof(unsigned long) - 1) /
+                              (8 * sizeof(unsigned long))));
+    }
+    return FILC_SYSCALL(my_thread,
+                        syscall(SYS_set_mempolicy, mode,
+                                (const unsigned long *)filc_ptr_ptr(nodemask),
+                                maxnode));
 }
 
 int filc_native_zsys_posix_fadvise(filc_thread* my_thread, int fd, long base, long len, int advice)
@@ -10098,7 +11368,7 @@ int filc_native_zsys_ppoll(filc_thread* my_thread, filc_ptr fds_ptr, unsigned lo
     sigset_t* sigmask = NULL;
     if (filc_ptr_ptr(mask_ptr)) {
         filc_check_user_sigset(mask_ptr, filc_read_access);
-        sigmask = alloca(sizeof(sigset_t));
+        sigmask = (sigset_t*)alloca(sizeof(sigset_t));
         filc_from_user_sigset((sigset_t*)filc_ptr_ptr(mask_ptr), sigmask);
     }
     return FILC_SYSCALL(my_thread, ppoll((struct pollfd*)filc_ptr_ptr(fds_ptr), nfds,
@@ -10124,15 +11394,87 @@ int filc_native_zsys_sigsuspend(filc_thread* my_thread, filc_ptr mask_ptr)
     return FILC_SYSCALL(my_thread, sigsuspend(&mask));
 }
 
+typedef struct {
+    unsigned long value;
+    int the_errno;
+} no_new_privs_data;
+
+static void no_new_privs_handshake_callback(void* arg)
+{
+    no_new_privs_data* data = (no_new_privs_data*)arg;
+    if (data->the_errno)
+        return;
+    int result = prctl(PR_SET_NO_NEW_PRIVS, data->value, 0, 0, 0);
+    PAS_ASSERT(!result || result == -1);
+    if (result < 0)
+        data->the_errno = errno;
+}
+
+typedef struct {
+    struct sock_fprog* fprog;
+    int the_errno;
+} set_seccomp_data;
+
+static void set_seccomp_handshake_callback(void* arg)
+{
+    set_seccomp_data* data = (set_seccomp_data*)arg;
+    if (data->the_errno)
+        return;
+    int result = prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, data->fprog, 0, 0);
+    PAS_ASSERT(!result || result == -1);
+    if (result < 0)
+        data->the_errno = errno;
+}
+
 int filc_native_zsys_prctl(filc_thread* my_thread, int option, filc_cc_cursor* args)
 {
     switch (option) {
-    case PR_SET_DUMPABLE: {
+    case PR_SET_DUMPABLE:
+    case PR_SET_CHILD_SUBREAPER:
+    case PR_SET_FPEMU:
+    case PR_SET_KEEPCAPS:
+    case PR_SET_SECUREBITS:
+    case PR_SVE_SET_VL:
+    case PR_SET_THP_DISABLE:
+    case PR_SET_TIMING:
+    case PR_SET_TSC: {
         unsigned long value = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
-        return FILC_SYSCALL(my_thread, prctl(PR_SET_DUMPABLE, value));
+        return FILC_SYSCALL(my_thread, prctl(option, value, 0, 0, 0));
+    }
+
+    case PR_SET_PDEATHSIG: {
+        unsigned long value = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
+        FILC_CHECK(
+            !is_unsafe_signal_for_kill(value),
+            NULL,
+            "cannot set signal %lu as PTHREADSIG.", value);
+        return FILC_SYSCALL(my_thread, prctl(PR_SET_PDEATHSIG, value, 0, 0, 0));
     }
 
     case PR_SET_NO_NEW_PRIVS: {
+        unsigned long value = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
+        size_t num_threads = filc_count_threads();
+        FILC_CHECK(
+            num_threads == 1,
+            NULL,
+            "cannot be multithreaded while doing PR_SET_NO_NEW_PRIVS (currently have %zu threads).",
+            num_threads);
+        filc_exit(my_thread);
+        no_new_privs_data data;
+        data.value = value;
+        data.the_errno = 0;
+        filc_runtime_threads_handshake(no_new_privs_handshake_callback, &data);
+        no_new_privs_handshake_callback(&data);
+        filc_enter(my_thread);
+        if (data.the_errno) {
+            filc_set_errno(data.the_errno);
+            return -1;
+        }
+        return 0;
+    }
+        
+    case PR_GET_SPECULATION_CTRL:
+    case PR_SET_SPECULATION_CTRL: {
         unsigned long value1 = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
         unsigned long value2 = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
         unsigned long value3 = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
@@ -10140,11 +11482,105 @@ int filc_native_zsys_prctl(filc_thread* my_thread, int option, filc_cc_cursor* a
         return FILC_SYSCALL(my_thread, prctl(PR_SET_NO_NEW_PRIVS, value1, value2, value3, value4));
     }
 
-    case PR_SET_PDEATHSIG: {
-        unsigned long value = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
-        return FILC_SYSCALL(my_thread, prctl(PR_SET_PDEATHSIG, value));
+    case PR_SET_SECCOMP: {
+        unsigned long mode = filc_cc_cursor_get_next_unsigned_long(my_thread, args);
+
+        if (mode == SECCOMP_MODE_STRICT) {
+            filc_internal_panic(
+                NULL, "cannot PR_SET_SECCOMP SECCOMP_MODE_STRICT; that's currently too restrictive "
+                "for the Fil-C runtime.");
+        }
+
+        if (mode == SECCOMP_MODE_FILTER) {
+            size_t num_threads = filc_count_threads();
+            FILC_CHECK(
+                num_threads == 1,
+                NULL,
+                "cannot be multithreaded while doing PR_SET_SECCOMP (currently have %zu threads).",
+                num_threads);
+            
+            filc_ptr fprog_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+
+            /* Validate the sock_fprog structure is readable */
+            filc_check_read(fprog_ptr, sizeof(struct sock_fprog));
+            struct sock_fprog* fprog = (struct sock_fprog*)filc_ptr_ptr(fprog_ptr);
+
+            /* Load the filter pointer from the struct */
+            filc_ptr filter_ptr = filc_load_ptr_at(my_thread, fprog_ptr, &fprog->filter);
+
+            /* Validate the filter array is readable */
+            if (fprog->len && filc_ptr_ptr(filter_ptr))
+                filc_check_read(filter_ptr, filc_mul_size(sizeof(struct sock_filter), fprog->len));
+
+            /* Now create a native sock_fprog pointing to the validated filter */
+            struct sock_fprog native_fprog;
+            native_fprog.len = fprog->len;
+            native_fprog.filter = (struct sock_filter*)filc_ptr_ptr(filter_ptr);
+            
+            filc_exit(my_thread);
+            set_seccomp_data data;
+            data.fprog = &native_fprog;
+            data.the_errno = 0;
+            filc_runtime_threads_handshake(set_seccomp_handshake_callback, &data);
+            set_seccomp_handshake_callback(&data);
+            filc_enter(my_thread);
+            if (data.the_errno) {
+                filc_set_errno(data.the_errno);
+                return -1;
+            }
+            return 0;
+        }
+
+        /* Unknown or unsupported mode */
+        filc_set_errno(ENOSYS);
+        return -1;
     }
-    
+
+    case PR_SET_NAME: {
+        filc_ptr name_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        char* name = filc_check_and_get_tmp_str(my_thread, name_ptr);
+        return FILC_SYSCALL(my_thread, prctl(PR_SET_NAME, name, 0, 0, 0));
+    }
+
+    case PR_GET_NAME: {
+        filc_ptr buf_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        /* From TFM: "The buffer should allow space for up to 16 bytes; the returned string will be
+           null-terminated." */
+        filc_check_write(buf_ptr, 16);
+        return FILC_SYSCALL(my_thread, prctl(PR_GET_NAME, (char*)filc_ptr_ptr(buf_ptr), 0, 0, 0));
+    }
+
+    case PR_GET_DUMPABLE:
+    case PR_GET_NO_NEW_PRIVS:
+    case PR_GET_SECCOMP:
+    case PR_GET_TIMERSLACK:
+    case PR_GET_FP_MODE:
+    case PR_GET_IO_FLUSHER:
+    case PR_GET_KEEPCAPS:
+    case PR_GET_SECUREBITS:
+    case PR_SVE_GET_VL:
+    case PR_GET_TAGGED_ADDR_CTRL:
+    case PR_GET_THP_DISABLE:
+    case PR_GET_TIMING:
+        return FILC_SYSCALL(my_thread, prctl(option, 0, 0, 0, 0));
+
+    case PR_GET_ENDIAN:
+    case PR_SET_ENDIAN:
+    case PR_SET_TAGGED_ADDR_CTRL: /* FIXME: Support this on ARM64. */
+    case PR_SET_UNALIGN:
+    case PR_GET_UNALIGN:
+        filc_set_errno(EINVAL);
+        return -1;
+
+    case PR_GET_FPEXC:
+    case PR_GET_CHILD_SUBREAPER:
+    case PR_GET_FPEMU:
+    case PR_GET_TSC: {
+        filc_ptr result_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        filc_check_write(result_ptr, sizeof(int));
+        return FILC_SYSCALL(my_thread, prctl(option, (int*)filc_ptr_ptr(result_ptr), 0, 0, 0));
+    }
+
     default:
         filc_set_errno(ENOSYS);
         return -1;
@@ -10956,7 +12392,7 @@ int filc_native_zsys_mount(filc_thread* my_thread, filc_ptr source_ptr, filc_ptr
     char* source = filc_check_and_get_tmp_str(my_thread, source_ptr);
     char* target = filc_check_and_get_tmp_str(my_thread, target_ptr);
     char* fs_type = filc_check_and_get_tmp_str(my_thread, fs_type_ptr);
-    char* data = filc_check_and_get_tmp_str(my_thread, data_ptr);
+    char* data = filc_check_and_get_tmp_str_or_null(my_thread, data_ptr);
     return FILC_SYSCALL(my_thread, mount(source, target, fs_type, flags, data));
 }
 
@@ -11016,10 +12452,7 @@ int filc_native_zsys_pidfd_open(filc_thread* my_thread, int pid, unsigned flags)
 #if PAS_GLIBC
     return FILC_SYSCALL(my_thread, pidfd_open(pid, flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(pid);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "pidfd_open not supported.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_pidfd_open, pid, flags));
 #endif
 }
 
@@ -11028,11 +12461,7 @@ int filc_native_zsys_pidfd_getfd(filc_thread* my_thread, int pidfd, int targetfd
 #if PAS_GLIBC
     return FILC_SYSCALL(my_thread, pidfd_getfd(pidfd, targetfd, flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(pidfd);
-    PAS_UNUSED_PARAM(targetfd);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "pidfd_getfd not supported.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_pidfd_getfd, pidfd, targetfd, flags));
 #endif
 }
 
@@ -11046,17 +12475,13 @@ int filc_native_zsys_pivot_root(filc_thread* my_thread, filc_ptr new_root_ptr, f
 int filc_native_zsys_pidfd_send_signal(filc_thread* my_thread, int pidfd, int sig,
                                        filc_ptr siginfo_ptr, unsigned flags)
 {
-#if PAS_GLIBC
     filc_check_write(siginfo_ptr, sizeof(siginfo_t)); /* Maybe this could be check read? */
+#if PAS_GLIBC
     return FILC_SYSCALL(my_thread, pidfd_send_signal(pidfd, sig,
                                                      (siginfo_t*)filc_ptr_ptr(siginfo_ptr), flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(pidfd);
-    PAS_UNUSED_PARAM(sig);
-    PAS_UNUSED_PARAM(siginfo_ptr);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "pidfd_send_signal not supported.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_pidfd_send_signal, pidfd, sig,
+                                           (siginfo_t*)filc_ptr_ptr(siginfo_ptr), flags));
 #endif
 }
 
@@ -11183,34 +12608,34 @@ int filc_native_zsys_quotactl(filc_thread* my_thread, int cmd, filc_ptr special_
         break;
     case Q_GETQUOTA:
         filc_check_write(addr_ptr, sizeof(struct dqblk));
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
 #ifdef Q_GETNEXTQUOTA
     case Q_GETNEXTQUOTA:
         filc_check_write(addr_ptr, sizeof(struct nextdqblk));
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
 #endif
     case Q_SETQUOTA:
         filc_check_read(addr_ptr, sizeof(struct dqblk));
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
     case Q_GETINFO:
         filc_check_write(addr_ptr, sizeof(struct dqinfo));
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
     case Q_SETINFO:
         filc_check_read(addr_ptr, sizeof(struct dqinfo));
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
     case Q_GETFMT:
         filc_check_write(addr_ptr, 4);
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
 #ifdef Q_GETSTATS
     case Q_GETSTATS:
         filc_check_write(addr_ptr, sizeof(struct dqstats));
-        addr = filc_ptr_ptr(addr_ptr);
+        addr = (char*)filc_ptr_ptr(addr_ptr);
         break;
 #endif
     default:
@@ -11287,17 +12712,6 @@ int filc_native_zsys_setns(filc_thread* my_thread, int fd, int nstype)
     return FILC_SYSCALL(my_thread, setns(fd, nstype));
 }
 
-int filc_native_zsys_query_module(filc_thread* my_thread, filc_ptr name_ptr, int which,
-                                  filc_ptr buf_ptr, size_t bufsize, filc_ptr ret_ptr)
-{
-    char* name = filc_check_and_get_tmp_str_or_null(my_thread, name_ptr);
-    filc_check_write(buf_ptr, bufsize);
-    if (filc_ptr_ptr(ret_ptr))
-        filc_check_write(ret_ptr, sizeof(size_t));
-    return FILC_SYSCALL(my_thread, syscall(SYS_query_module, name, which, filc_ptr_ptr(buf_ptr),
-                                           bufsize, filc_ptr_ptr(ret_ptr)));
-}
-
 int filc_native_zsys_sigqueue(filc_thread* my_thread, int pid, int sig, filc_ptr value_ptr)
 {
     if (is_unsafe_signal_for_kill(sig)) {
@@ -11320,6 +12734,42 @@ int filc_native_zsys_openat(filc_thread* my_thread, int dirfd, filc_ptr path_ptr
     if (verbose)
         pas_log("doing an openat with dirfd = %d, path = %s, flags = %d.\n", dirfd, path, flags);
     return FILC_SYSCALL(my_thread, openat(dirfd, path, flags, mode));
+}
+
+struct known_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+
+int filc_native_zsys_openat2(filc_thread* my_thread, int dirfd, filc_ptr path_ptr, filc_ptr how_ptr,
+                             size_t size)
+{
+    static const bool verbose = false;
+    char* path = filc_check_and_get_tmp_str(my_thread, path_ptr);
+    filc_check_read(how_ptr, size);
+
+    /* These shenanigans are necessary in case future kernel versions at a pointer field to
+       open_how. */
+    size_t actual_size = size;
+    if (size > sizeof(struct known_open_how)) {
+        char* bytes = (char*)filc_ptr_ptr(how_ptr);
+        for (size_t i = sizeof(struct known_open_how); i < size; i++) {
+            if (bytes[i]) {
+                filc_set_errno(E2BIG);
+                return -1;
+            }
+        }
+        actual_size = sizeof(struct known_open_how);
+    }
+    
+    if (verbose) {
+        pas_log("doing an openat2 with dirfd = %d, path = %s, size = %zu.\n",
+                dirfd, path, actual_size);
+    }
+
+    return FILC_SYSCALL(
+        my_thread, syscall(SYS_openat2, dirfd, path, filc_ptr_ptr(how_ptr), actual_size));
 }
 
 int filc_native_zsys_statfs(filc_thread* my_thread, filc_ptr path_ptr, filc_ptr buf_ptr)
@@ -11352,8 +12802,8 @@ int filc_native_zsys_renameat(filc_thread* my_thread, int oldfd, filc_ptr old_pt
                               filc_ptr new_ptr)
 {
     char* old = filc_check_and_get_tmp_str(my_thread, old_ptr);
-    char* new = filc_check_and_get_tmp_str(my_thread, new_ptr);
-    return FILC_SYSCALL(my_thread, renameat(oldfd, old, newfd, new));
+    char* new_path = filc_check_and_get_tmp_str(my_thread, new_ptr);
+    return FILC_SYSCALL(my_thread, renameat(oldfd, old, newfd, new_path));
 }
 
 int filc_native_zsys_getcpu(filc_thread* my_thread, filc_ptr cpu_ptr, filc_ptr node_ptr)
@@ -11391,7 +12841,7 @@ int filc_native_zsys_waitid(filc_thread* my_thread, int idtype, unsigned id, fil
 {
     if (filc_ptr_ptr(info_ptr))
         filc_check_write(info_ptr, sizeof(siginfo_t));
-    return FILC_SYSCALL(my_thread, waitid(idtype, id, (siginfo_t*)filc_ptr_ptr(info_ptr), options));
+    return FILC_SYSCALL(my_thread, waitid((idtype_t)idtype, id, (siginfo_t*)filc_ptr_ptr(info_ptr), options));
 }
 
 int filc_native_zsys_sigtimedwait(filc_thread* my_thread, filc_ptr set_ptr, filc_ptr info_ptr,
@@ -11428,18 +12878,12 @@ ssize_t filc_native_zsys_copy_file_range(filc_thread* my_thread, int fd_in, filc
 int filc_native_zsys_renameat2(filc_thread* my_thread, int oldfd, filc_ptr old_ptr, int newfd,
                                filc_ptr new_ptr, unsigned flags)
 {
-#if PAS_GLIBC
     char* old = filc_check_and_get_tmp_str(my_thread, old_ptr);
-    char* new = filc_check_and_get_tmp_str(my_thread, new_ptr);
-    return FILC_SYSCALL(my_thread, renameat2(oldfd, old, newfd, new, flags));
+    char* new_path = filc_check_and_get_tmp_str(my_thread, new_ptr);
+#if PAS_GLIBC
+    return FILC_SYSCALL(my_thread, renameat2(oldfd, old, newfd, new_path, flags));
 #else
-    PAS_UNUSED_PARAM(my_thread);
-    PAS_UNUSED_PARAM(oldfd);
-    PAS_UNUSED_PARAM(old_ptr);
-    PAS_UNUSED_PARAM(newfd);
-    PAS_UNUSED_PARAM(new_ptr);
-    PAS_UNUSED_PARAM(flags);
-    filc_internal_panic(NULL, "renameat2 not implemented.");
+    return FILC_SYSCALL(my_thread, syscall(SYS_renameat2, oldfd, old, newfd, new_path, flags));
 #endif
 }
 
@@ -11574,6 +13018,305 @@ int filc_native_zsys_timer_gettime(filc_thread* my_thread, int timer, filc_ptr v
                                            (struct itimerspec*)filc_ptr_ptr(val_ptr)));
 }
 
+int filc_native_zsys_fallocate(filc_thread* my_thread, int fd, int mode, long offset, long len)
+{
+    return FILC_SYSCALL(my_thread, fallocate(fd, mode, offset, len));
+}
+
+long filc_native_zsys_keyctl(filc_thread* my_thread, int op, filc_cc_cursor* args)
+{
+    switch (op) {
+    case KEYCTL_GET_KEYRING_ID:
+    case KEYCTL_LINK:
+    case KEYCTL_SETPERM:
+    case KEYCTL_UNLINK:
+    case KEYCTL_SET_TIMEOUT:
+    case KEYCTL_GET_PERSISTENT: {
+        int arg1 = filc_cc_cursor_get_next_int(my_thread, args);
+        int arg2 = filc_cc_cursor_get_next_int(my_thread, args);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, op, arg1, arg2));
+    }
+
+    case KEYCTL_JOIN_SESSION_KEYRING: {
+        filc_ptr desc_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        char* desc = filc_check_and_get_tmp_str_or_null(my_thread, desc_ptr);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_JOIN_SESSION_KEYRING, desc));
+    }
+
+    case KEYCTL_REVOKE:
+    case KEYCTL_CLEAR:
+    case KEYCTL_SET_REQKEY_KEYRING:
+    case KEYCTL_ASSUME_AUTHORITY:
+    case KEYCTL_INVALIDATE: {
+        int arg = filc_cc_cursor_get_next_int(my_thread, args);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, op, arg));
+    }
+
+    case KEYCTL_UPDATE: {
+        int id = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_ptr payload_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        size_t plen = filc_cc_cursor_get_next_size_t(my_thread, args);
+        filc_check_read(payload_ptr, plen);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_UPDATE, id,
+                                               filc_ptr_ptr(payload_ptr), plen));
+    }
+
+    case KEYCTL_CHOWN:
+    case KEYCTL_NEGATE: {
+        int arg1 = filc_cc_cursor_get_next_int(my_thread, args);
+        int arg2 = filc_cc_cursor_get_next_int(my_thread, args);
+        int arg3 = filc_cc_cursor_get_next_int(my_thread, args);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, op, arg1, arg2, arg3));
+    }
+
+    case KEYCTL_DESCRIBE:
+    case KEYCTL_READ:
+    case KEYCTL_GET_SECURITY: {
+        int id = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_ptr buffer = filc_cc_cursor_get_next_ptr(my_thread, args);
+        size_t buflen = filc_cc_cursor_get_next_size_t(my_thread, args);
+        filc_check_write(buffer, buflen);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, op, id, filc_ptr_ptr(buffer), buflen));
+    }
+
+    case KEYCTL_SEARCH: {
+        int ringid = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_ptr type_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        filc_ptr description_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        int destringid = filc_cc_cursor_get_next_int(my_thread, args);
+        char* type = filc_check_and_get_tmp_str(my_thread, type_ptr);
+        char* description = filc_check_and_get_tmp_str(my_thread, description_ptr);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_SEARCH, ringid, type, description,
+                                               destringid));
+    }
+
+    case KEYCTL_INSTANTIATE: {
+        int id = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_ptr payload_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        size_t plen = filc_cc_cursor_get_next_size_t(my_thread, args);
+        int ringid = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_check_read(payload_ptr, plen);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_INSTANTIATE, id,
+                                               filc_ptr_ptr(payload_ptr), plen, ringid));
+    }
+
+    case KEYCTL_SESSION_TO_PARENT:
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, op));
+
+    case KEYCTL_REJECT:
+    case KEYCTL_MOVE: {
+        int arg1 = filc_cc_cursor_get_next_int(my_thread, args);
+        int arg2 = filc_cc_cursor_get_next_int(my_thread, args);
+        int arg3 = filc_cc_cursor_get_next_int(my_thread, args);
+        int arg4 = filc_cc_cursor_get_next_int(my_thread, args);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, op, arg1, arg2, arg3, arg4));
+    }
+
+    case KEYCTL_INSTANTIATE_IOV: {
+        int id = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_ptr payload_iov_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        unsigned ioc = filc_cc_cursor_get_next_unsigned(my_thread, args);
+        int ringid = filc_cc_cursor_get_next_int(my_thread, args);
+        struct iovec* iov = filc_prepare_iovec(my_thread, payload_iov_ptr, ioc,
+                                               filc_extended_read_access);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_INSTANTIATE_IOV, id, iov, ioc,
+                                               ringid));
+    }
+
+    case KEYCTL_DH_COMPUTE:
+        filc_safety_panic(NULL, "invalid direct use of keyctl(KEYCTL_DH_COMPUTE); use "
+                          "keyctl_dh_compute or keyctl_dh_compute_kdf instead.");
+
+    case KEYCTL_RESTRICT_KEYRING: {
+        int keyring = filc_cc_cursor_get_next_int(my_thread, args);
+        filc_ptr type_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        filc_ptr restriction_ptr = filc_cc_cursor_get_next_ptr(my_thread, args);
+        char* type = filc_check_and_get_tmp_str_or_null(my_thread, type_ptr);
+        char* restriction = filc_check_and_get_tmp_str_or_null(my_thread, restriction_ptr);
+        return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_RESTRICT_KEYRING, keyring, type,
+                                               restriction));
+    }
+
+    case KEYCTL_PKEY_QUERY:
+        filc_safety_panic(NULL, "invalid direct use of keyctl(KEYCTL_PKEY_QUERY); use "
+                          "keyctl_pkey_query instead.");
+
+    case KEYCTL_PKEY_ENCRYPT:
+        filc_safety_panic(NULL, "invalid direct use of keyctl(KEYCTL_PKEY_ENCRYPT); use "
+                          "keyctl_pkey_encrypt instead.");
+
+    case KEYCTL_PKEY_DECRYPT:
+        filc_safety_panic(NULL, "invalid direct use of keyctl(KEYCTL_PKEY_DECRYPT); use "
+                          "keyctl_pkey_decrypt instead.");
+
+    case KEYCTL_PKEY_SIGN:
+        filc_safety_panic(NULL, "invalid direct use of keyctl(KEYCTL_PKEY_SIGN); use "
+                          "keyctl_pkey_sigh instead.");
+
+    case KEYCTL_PKEY_VERIFY:
+        filc_safety_panic(NULL, "invalid direct use of keyctl(KEYCTL_PKEY_VERIFY); use "
+                          "keyctl_pkey_verify instead.");
+
+    default:
+        filc_set_errno(ENOSYS);
+        return -1;
+    }
+}
+
+int filc_native_zsys_add_key(filc_thread* my_thread, filc_ptr type_ptr, filc_ptr description_ptr,
+                             filc_ptr payload_ptr, size_t plen, int ringid)
+{
+    char* type = filc_check_and_get_tmp_str(my_thread, type_ptr);
+    char* description = filc_check_and_get_tmp_str(my_thread, description_ptr);
+    filc_check_read(payload_ptr, plen);
+    return FILC_SYSCALL(my_thread, syscall(SYS_add_key, type, description, filc_ptr_ptr(payload_ptr),
+                                           plen, ringid));
+}
+
+int filc_native_zsys_request_key(filc_thread* my_thread, filc_ptr type_ptr, filc_ptr description_ptr,
+                                 filc_ptr callout_ptr, int destringid)
+{
+    char* type = filc_check_and_get_tmp_str(my_thread, type_ptr);
+    char* description = filc_check_and_get_tmp_str(my_thread, description_ptr);
+    char* callout = filc_check_and_get_tmp_str_or_null(my_thread, callout_ptr);
+    return FILC_SYSCALL(my_thread, syscall(SYS_request_key, type, description, callout, destringid));
+}
+
+long filc_native_zsys_keyctl_dh_compute(filc_thread* my_thread, int priv, int prime, int base,
+                                        filc_ptr buffer_ptr, size_t buflen)
+{
+    filc_check_write(buffer_ptr, buflen);
+    
+    struct keyctl_dh_params params;
+    pas_zero_memory(&params, sizeof(params));
+    params.priv = priv;
+    params.prime = prime;
+    params.base = base;
+
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_DH_COMPUTE, &params,
+                                           filc_ptr_ptr(buffer_ptr), buflen, NULL));
+}
+
+long filc_native_zsys_keyctl_dh_compute_kdf(filc_thread* my_thread, int priv, int prime, int base,
+                                            filc_ptr hashname_ptr, filc_ptr otherinfo_ptr,
+                                            size_t otherinfolen, filc_ptr buffer_ptr, size_t buflen)
+{
+    char* hashname = filc_check_and_get_tmp_str(my_thread, hashname_ptr);
+    filc_check_write(otherinfo_ptr, otherinfolen); /* Maybe this is readonly? Let's play it safe
+                                                      though. */
+    filc_check_write(buffer_ptr, buflen);
+    
+    struct keyctl_dh_params params;
+    pas_zero_memory(&params, sizeof(params));
+    params.priv = priv;
+    params.prime = prime;
+    params.base = base;
+
+    struct keyctl_kdf_params kdfparams;
+    pas_zero_memory(&kdfparams, sizeof(kdfparams));
+    kdfparams.hashname = (char*)filc_ptr_ptr(hashname_ptr);
+    kdfparams.otherinfo = (char*)filc_ptr_ptr(otherinfo_ptr);
+    kdfparams.otherinfolen = otherinfolen;
+
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_DH_COMPUTE, &params,
+                                           filc_ptr_ptr(buffer_ptr), buflen, &kdfparams));
+}
+
+long filc_native_zsys_keyctl_pkey_query(filc_thread* my_thread, int key_id, filc_ptr info_ptr,
+                                        filc_ptr result_ptr)
+{
+    char* info = filc_check_and_get_tmp_str_or_null(my_thread, info_ptr);
+    if (filc_ptr_ptr(result_ptr))
+        filc_check_write(result_ptr, sizeof(struct keyctl_pkey_query));
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_PKEY_QUERY, key_id, NULL, info,
+                                           filc_ptr_ptr(result_ptr)));
+}
+
+long filc_native_zsys_keyctl_pkey_encrypt(filc_thread* my_thread, int key_id, filc_ptr info_ptr,
+                                          filc_ptr data_ptr, size_t data_len, filc_ptr enc_ptr,
+                                          size_t enc_len)
+{
+    char* info = filc_check_and_get_tmp_str_or_null(my_thread, info_ptr);
+    filc_check_read(data_ptr, data_len);
+    filc_check_write(enc_ptr, enc_len);
+
+    struct keyctl_pkey_params params;
+    pas_zero_memory(&params, sizeof(params));
+    params.key_id = key_id;
+    params.in_len = data_len;
+    params.out_len = enc_len;
+
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_PKEY_ENCRYPT, &params, info,
+                                           filc_ptr_ptr(data_ptr), filc_ptr_ptr(enc_ptr)));
+}
+
+long filc_native_zsys_keyctl_pkey_decrypt(filc_thread* my_thread, int key_id, filc_ptr info_ptr,
+                                          filc_ptr enc_ptr, size_t enc_len, filc_ptr data_ptr,
+                                          size_t data_len)
+{
+    char* info = filc_check_and_get_tmp_str_or_null(my_thread, info_ptr);
+    filc_check_read(enc_ptr, enc_len);
+    filc_check_write(data_ptr, data_len);
+
+    struct keyctl_pkey_params params;
+    pas_zero_memory(&params, sizeof(params));
+    params.key_id = key_id;
+    params.in_len = enc_len;
+    params.out_len = data_len;
+
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_PKEY_DECRYPT, &params, info,
+                                           filc_ptr_ptr(enc_ptr), filc_ptr_ptr(data_ptr)));
+}
+
+long filc_native_zsys_keyctl_pkey_sign(filc_thread* my_thread, int key_id, filc_ptr info_ptr,
+                                       filc_ptr data_ptr, size_t data_len, filc_ptr sig_ptr,
+                                       size_t sig_len)
+{
+    char* info = filc_check_and_get_tmp_str_or_null(my_thread, info_ptr);
+    filc_check_read(data_ptr, data_len);
+    filc_check_write(sig_ptr, sig_len);
+
+    struct keyctl_pkey_params params;
+    pas_zero_memory(&params, sizeof(params));
+    params.key_id = key_id;
+    params.in_len = data_len;
+    params.out_len = sig_len;
+
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_PKEY_SIGN, &params, info,
+                                           filc_ptr_ptr(data_ptr), filc_ptr_ptr(sig_ptr)));
+}
+
+long filc_native_zsys_keyctl_pkey_verify(filc_thread* my_thread, int key_id, filc_ptr info_ptr,
+                                         filc_ptr data_ptr, size_t data_len, filc_ptr sig_ptr,
+                                         size_t sig_len)
+{
+    char* info = filc_check_and_get_tmp_str_or_null(my_thread, info_ptr);
+    filc_check_read(data_ptr, data_len);
+    filc_check_read(sig_ptr, sig_len);
+
+    struct keyctl_pkey_params params;
+    pas_zero_memory(&params, sizeof(params));
+    params.key_id = key_id;
+    params.in_len = data_len;
+    params.in2_len = sig_len;
+
+    return FILC_SYSCALL(my_thread, syscall(SYS_keyctl, KEYCTL_PKEY_VERIFY, &params, info,
+                                           filc_ptr_ptr(data_ptr), filc_ptr_ptr(sig_ptr)));
+}
+
+int filc_native_zsys_clock_adjtime(filc_thread* my_thread, int clock_id, filc_ptr buf_ptr)
+{
+    filc_check_write(buf_ptr, sizeof(struct timex));
+    return FILC_SYSCALL(my_thread, clock_adjtime(clock_id, (struct timex*)filc_ptr_ptr(buf_ptr)));
+}
+
+void filc_native_zsys_abort(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    abort();
+    PAS_ASSERT(!"Should not get here");
+}
+
 filc_ptr filc_native_zthread_self(filc_thread* my_thread)
 {
     static const bool verbose = false;
@@ -11702,7 +13445,7 @@ static void* start_thread(void* arg)
 
     thread = (filc_thread*)arg;
 
-    set_stack_limit(thread);
+    compute_and_set_stack_limit(thread);
 
     unsigned tid = gettid();
     if (verbose)
@@ -11772,9 +13515,8 @@ bool filc_native_zthread_create2(filc_thread* my_thread, filc_ptr callback_ptr, 
         filc_did_run_deferred_global_ctors,
         NULL,
         "cannot create threads before global constructors have started being run.");
-    PAS_ASSERT(filc_did_clear_deferred_global_ctors);
     filc_check_function_call(callback_ptr);
-    filc_thread* thread = filc_thread_create_with_manual_tracking();
+    filc_thread* thread = filc_thread_create_with_manual_tracking(my_thread);
     filc_thread_track_object(my_thread, filc_object_for_special_payload(thread));
     pas_system_mutex_lock(&thread->lock);
     /* I don't see how this could ever happen. */
@@ -11790,9 +13532,8 @@ bool filc_native_zthread_create2(filc_thread* my_thread, filc_ptr callback_ptr, 
     filc_exit(my_thread);
     /* Make sure we don't create threads while in a handshake. This will hold the thread in the
        !has_started && !thread state, so if the soft handshake doesn't see it, that's fine. */
-    filc_stop_the_world_lock_lock();
+    filc_handshake_lock_lock();
     filc_wait_for_world_resumption_holding_lock();
-    filc_soft_handshake_lock_lock();
     thread->has_started = true;
     pthread_t ignored_thread;
     sigset_t fullset;
@@ -11802,8 +13543,7 @@ bool filc_native_zthread_create2(filc_thread* my_thread, filc_ptr callback_ptr, 
     PAS_ASSERT(!pthread_sigmask(SIG_SETMASK, &thread->initial_blocked_sigs, NULL));
     if (result)
         thread->has_started = false;
-    filc_soft_handshake_lock_unlock();
-    filc_stop_the_world_lock_unlock();
+    filc_handshake_lock_unlock();
     if (result) {
         filc_enter(my_thread);
         pas_system_mutex_lock(&thread->lock);
@@ -11885,6 +13625,22 @@ bool filc_native_zthread_kill(filc_thread* my_thread, filc_ptr thread_ptr, int s
     return result;
 }
 
+filc_ptr filc_native_zthread_stack_limit(filc_thread* my_thread, filc_ptr thread_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    check_zthread(thread_ptr);
+    filc_thread* thread = (filc_thread*)filc_ptr_ptr(thread_ptr);
+    return filc_ptr_forge_invalid(thread->original_stack_limit.stack_limit);
+}
+
+filc_ptr filc_native_zthread_stack_top(filc_thread* my_thread, filc_ptr thread_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    check_zthread(thread_ptr);
+    filc_thread* thread = (filc_thread*)filc_ptr_ptr(thread_ptr);
+    return filc_ptr_forge_invalid(thread->original_stack_limit.stack_top);
+}
+
 void filc_native_zincrement_signal_deferral_depth(filc_thread* my_thread)
 {
     filc_increase_special_signal_deferral_depth(my_thread);
@@ -11899,6 +13655,20 @@ void filc_native_zdecrement_signal_deferral_depth(filc_thread* my_thread)
 unsigned long long filc_native_zget_signal_deferral_depth(filc_thread* my_thread)
 {
     return my_thread->special_signal_deferral_depth;
+}
+
+void filc_native_zdump_heap(filc_thread* my_thread, int fd)
+{
+    filc_exit(my_thread);
+    filc_dump_heap(fd);
+    filc_enter(my_thread);
+}
+
+void filc_native_zdump_stacks(filc_thread* my_thread)
+{
+    filc_exit(my_thread);
+    filc_dump_stacks();
+    filc_enter(my_thread);
 }
 
 void filc_thread_destroy_space_with_guard_page(filc_thread* my_thread)
@@ -11953,8 +13723,11 @@ void filc_call_syscall_with_guarded_ptr(filc_thread* my_thread,
                                         void* user_arg)
 {
     static const bool verbose = false;
-    
-    static const uintptr_t min_address = (uintptr_t)1 << (uintptr_t)32;
+
+    /* We get away with this because we're always either dynamically linked or we use -static-pie.
+       Gnu.cpp in the clang driver turns -static into -static-pie for us to support this
+       assumption. */
+    static const uintptr_t min_address = 0x100000000;
 
     /* It's possible that someone is calling an ioctl that takes an int or long argument. But, we
        don't know if the ioctl will actually interpret the argument as an int or long - it might
@@ -11966,6 +13739,8 @@ void filc_call_syscall_with_guarded_ptr(filc_thread* my_thread,
        If we ever find ioctls that require integers bigger than min_address, then they'd have to be
        special case by our wrapping. */
     if (filc_ptr_ptr(arg_ptr) < (void*)min_address) {
+        if (filc_ptr_object(arg_ptr) && filc_ptr_ptr(arg_ptr) >= filc_ptr_lower(arg_ptr))
+            pas_log("Unexpected arg_ptr = %s\n", filc_ptr_to_new_string(arg_ptr));
         PAS_ASSERT(!filc_ptr_object(arg_ptr) || filc_ptr_ptr(arg_ptr) < filc_ptr_lower(arg_ptr));
         filc_exit(my_thread);
         errno = 0;
@@ -11989,7 +13764,7 @@ void filc_call_syscall_with_guarded_ptr(filc_thread* my_thread,
         if (verbose)
             pas_log("limited_extent = %zu\n", limited_extent);
 
-        char* input_copy = bmalloc_allocate(limited_extent);
+        char* input_copy = (char*)bmalloc_allocate(limited_extent);
         memcpy(input_copy, filc_ptr_ptr(arg_ptr), limited_extent);
 
         char* start_of_space =
@@ -12057,9 +13832,26 @@ size_t filc_mul_size(size_t a, size_t b)
     return result;
 }
 
+void filc_native_zset_quiet_panic(filc_thread* my_thread, bool value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    filc_quiet_panic = value;
+}
+
+bool filc_native_zget_quiet_panic(filc_thread* my_thread)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return filc_quiet_panic;
+}
+
+void filc_native_zsetproctitle(filc_thread* my_thread, filc_ptr title_ptr)
+{
+    filc_setproctitle(filc_check_and_get_tmp_str(my_thread, title_ptr));
+}
+
 void filc_get_bool_env(const char* name, bool* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     if (!strcmp(value, "1") ||
@@ -12080,7 +13872,7 @@ void filc_get_bool_env(const char* name, bool* value_ptr)
 
 void filc_get_unsigned_env(const char* name, unsigned* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     unsigned result;
@@ -12094,7 +13886,7 @@ void filc_get_unsigned_env(const char* name, unsigned* value_ptr)
 
 void filc_get_size_env(const char* name, size_t* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     size_t result;
@@ -12108,7 +13900,7 @@ void filc_get_size_env(const char* name, size_t* value_ptr)
 
 void filc_get_double_env(const char* name, double* value_ptr)
 {
-    char* value = getenv(name);
+    char* value = secure_getenv(name);
     if (!value)
         return;
     double result;
@@ -12348,6 +14140,42 @@ long double filc_native_zmath_nearbyintl(filc_thread* my_thread, long double val
     return nearbyintl(value);
 }
 
+long double filc_native_zmath_acosl(filc_thread* my_thread, long double value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return acosl(value);
+}
+
+long double filc_native_zmath_atan2l(filc_thread* my_thread, long double y, long double x)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return atan2l(y, x);
+}
+
+long double filc_native_zmath_atanl(filc_thread* my_thread, long double value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return atanl(value);
+}
+
+long double filc_native_zmath_logbl(filc_thread* my_thread, long double value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return logbl(value);
+}
+
+long double filc_native_zmath_significandl(filc_thread* my_thread, long double value)
+{
+    PAS_UNUSED_PARAM(my_thread);
+#if PAS_GLIBC
+    return significandl(value);
+#else
+    PAS_UNUSED_PARAM(value);
+    filc_internal_panic(NULL, "significandl not implemented.");
+    return 0.;
+#endif
+}
+
 unsigned filc_native_zmath_getcw(filc_thread* my_thread)
 {
     PAS_UNUSED_PARAM(my_thread);
@@ -12361,6 +14189,32 @@ void filc_native_zmath_setcw(filc_thread* my_thread, unsigned cw)
     PAS_UNUSED_PARAM(my_thread);
     asm volatile ("fldcw %0" : : "m"(cw));
 }
+
+void filc_native_zmath_feclearexcept(filc_thread* my_thread, int excepts)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_ASSERT(!feclearexcept(excepts));
+}
+
+int filc_native_zmath_feenableexcept(filc_thread* my_thread, int excepts)
+{
+    PAS_UNUSED_PARAM(my_thread);
+#ifdef __USE_GNU
+    return feenableexcept(excepts);
+#else
+    PAS_UNUSED_PARAM(excepts);
+    filc_internal_panic(NULL, "feenableexcept not implemented.");
+    return 0;
+#endif
+}
+
+int filc_native_zmath_fetestexcept(filc_thread* my_thread, int excepts)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    return fetestexcept(excepts);
+}
+
+PAS_END_EXTERN_C;
 
 #endif /* PAS_ENABLE_FILC */
 

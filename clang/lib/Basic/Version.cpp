@@ -19,6 +19,8 @@
 
 #include "VCSVersion.inc"
 
+#define FILC_VERSION "0.680"
+
 namespace clang {
 
 std::string getClangRepositoryPath() {
@@ -57,13 +59,19 @@ std::string getLLVMRevision() {
 #endif
 }
 
+std::string getClangVendor() {
+  return "";
+}
+
 std::string getClangFullRepositoryVersion() {
   std::string buf;
   llvm::raw_string_ostream OS(buf);
   std::string Path = getClangRepositoryPath();
   std::string Revision = getClangRevision();
+  OS << '(';
+  OS << "Fil-C " << FILC_VERSION;
   if (!Path.empty() || !Revision.empty()) {
-    OS << '(';
+    OS << ' ';
     if (!Path.empty())
       OS << Path;
     if (!Revision.empty()) {
@@ -71,8 +79,8 @@ std::string getClangFullRepositoryVersion() {
         OS << ' ';
       OS << Revision;
     }
-    OS << ')';
   }
+  OS << ')';
   // Support LLVM in a separate repository.
   std::string LLVMRev = getLLVMRevision();
   if (!LLVMRev.empty() && LLVMRev != Revision) {
@@ -92,10 +100,7 @@ std::string getClangFullVersion() {
 std::string getClangToolFullVersion(StringRef ToolName) {
   std::string buf;
   llvm::raw_string_ostream OS(buf);
-#ifdef CLANG_VENDOR
-  OS << CLANG_VENDOR;
-#endif
-  OS << ToolName << " version " CLANG_VERSION_STRING;
+  OS << getClangVendor() << ToolName << " version " CLANG_VERSION_STRING;
 
   std::string repo = getClangFullRepositoryVersion();
   if (!repo.empty()) {
@@ -110,10 +115,7 @@ std::string getClangFullCPPVersion() {
   // the one we report on the command line.
   std::string buf;
   llvm::raw_string_ostream OS(buf);
-#ifdef CLANG_VENDOR
-  OS << CLANG_VENDOR;
-#endif
-  OS << "Clang " CLANG_VERSION_STRING;
+  OS << getClangVendor() << "Clang " CLANG_VERSION_STRING;
 
   std::string repo = getClangFullRepositoryVersion();
   if (!repo.empty()) {

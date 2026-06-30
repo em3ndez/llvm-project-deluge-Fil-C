@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -80,6 +80,22 @@ void zmemmove_union(void* dst, void* src, __SIZE_TYPE__ count);
 
    You shouldn't ever have to call this directly */
 void zmemmove_builtin(void* dst, void* src, __SIZE_TYPE__ count);
+
+/* This annotates the passed-in pointer as being a union, resulting in the optimizer being more
+   careful about how to compile aggregate assignments.
+
+   It's a no-op other than it blocks certain optimizations that could result in loss of capability. */
+void zhas_union(void* ptr);
+
+/* Dumps the pas heap status. */
+void zdump_pas_status(void);
+
+/* Suspend the scavenger, set its periods to 1ms, and resume it.
+ 
+   This might even be a good thing to call for some performance situations, like if you want to
+   ensure that we're returning memory to the OS ASAP. But for now, it's just used for tests, and
+   so it's not an officially supported API. */
+void zset_scavenger_periods_to_1ms(void);
 
 #ifdef __cplusplus
 }

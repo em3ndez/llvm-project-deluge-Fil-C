@@ -21,6 +21,7 @@
 #	include "crc32_arm64.h"
 #endif
 
+#include <stdfil.h>
 
 #ifdef CRC32_GENERIC
 
@@ -184,6 +185,10 @@ lzma_crc32(const uint8_t *buf, size_t size, uint32_t crc)
 	if (size <= 16)
 		return crc32_generic(buf, size, crc);
 #endif
+
+        if (!zinbounds(zmkptr(buf, (uintptr_t)buf & -16)) ||
+            !zinbounds(zmkptr(buf, (((uintptr_t)buf + size + 15) & -16) - 1)))
+                return crc32_generic(buf, size, crc);
 
 /*
 #ifndef HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR

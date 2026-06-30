@@ -6,22 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file is a part of Fil-C.
-//
-// See here for an overview:
-// https://github.com/pizlonator/llvm-project-deluge/blob/deluge/Manifesto.md
-//
-// This document explains the semantics we're trying to achieve:
-// https://github.com/pizlonator/llvm-project-deluge/blob/deluge/gimso_semantics.md
-//
-// Here is a non-exhaustive set of examples of issues this catches:
-// https://github.com/pizlonator/llvm-project-deluge/blob/deluge/invisicaps_by_example.md
-//
-// And and explanation of the disassembly:
-// https://github.com/pizlonator/llvm-project-deluge/blob/deluge/test43.md
-//
-// This pass strongly relies on the Fil-C runtime and FUGC garbage collector.
-// Those components are in the llvm-project/libpas directory.
+// This file is a part of Fil-C. https://fil-c.org/
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,8 +14,10 @@
 
 #include <llvm/Analysis/CFG.h>
 #include <llvm/Demangle/Demangle.h>
+#include <llvm/IR/Comdat.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/InlineAsm.h>
+#include <llvm/IR/Module.h>
 #include <llvm/IR/Operator.h>
 #include <llvm/IR/TypedPointerType.h>
 #include <llvm/IR/Verifier.h>
@@ -43,6 +30,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <sstream>
+#include <cctype>
+#include <climits>
 
 using namespace llvm;
 
@@ -66,9 +55,6 @@ static cl::opt<bool> optimizeChecks(
 static cl::opt<bool> propagateChecksBackward(
   "filc-propagate-checks-backward", cl::desc("Perform backward propagation of checks"),
   cl::Hidden, cl::init(true));
-static cl::opt<bool> useAsmForOffsets(
-  "filc-use-asm-for-offset", cl::desc("Use inline assembly to compute offsets"),
-  cl::Hidden, cl::init(false));
 
 // This has to match the FilC runtime.
 
@@ -89,7 +75,6 @@ static constexpr uint16_t ObjectFlagGlobal = 1;
 static constexpr uint16_t ObjectFlagReadonly = 2;
 static constexpr uint16_t ObjectFlagFree = 4;
 static constexpr uint16_t ObjectFlagGlobalAux = 16;
-static constexpr uint16_t ObjectFlagClosure = 64;
 static constexpr uint16_t ObjectFlagsSpecialShift = 7;
 static constexpr uint16_t ObjectFlagsAlignShift = 11;
 
@@ -110,6 +95,9 @@ static constexpr size_t ThreadMaxInlineSizeClass = 416;
 static constexpr size_t ThreadNumAllocators = (ThreadMaxInlineSizeClass / GCMinAlign) + 1;
 
 static constexpr size_t MaxBytesBetweenPollchecks = 10000;
+
+static constexpr uint64_t GenericSignature = 0;
+static constexpr uint64_t NumFastTypes = 11;
 
 enum class AccessKind {
   Read,
@@ -171,10 +159,13 @@ enum class ConstexprOpcode {
 };
 
 enum class MemoryKind {
+  Invalid,
   CC,
   GlobalInit,
   ThreadLocalInit,
-  Heap
+  Heap,
+  LocalExplicit,
+  LocalNaked
 };
 
 struct ValuePtr {
@@ -209,19 +200,21 @@ namespace {
 struct FunctionOriginKey {
   FunctionOriginKey() = default;
 
-  FunctionOriginKey(Function* OldF, bool CanCatch)
-    : OldF(OldF), CanCatch(CanCatch) {
+  FunctionOriginKey(Function* OldF, DIScope* Scope, bool CanCatch)
+    : OldF(OldF), Scope(Scope), CanCatch(CanCatch) {
   }
 
   Function* OldF { nullptr };
+  DIScope* Scope { nullptr };
   bool CanCatch { false };
 
   bool operator==(const FunctionOriginKey& Other) const {
-    return OldF == Other.OldF && CanCatch == Other.CanCatch;
+    return OldF == Other.OldF && Scope == Other.Scope && CanCatch == Other.CanCatch;
   }
 
   size_t hash() const {
-    return std::hash<Function*>()(OldF) + static_cast<size_t>(CanCatch);
+    return std::hash<Function*>()(OldF) + std::hash<DIScope*>()(Scope)
+      + static_cast<size_t>(CanCatch);
   }
 };
 
@@ -293,22 +286,22 @@ struct OriginKey {
 struct InlineFrameKey {
   InlineFrameKey() = default;
 
-  InlineFrameKey(Function* OldF, DISubprogram* Subprogram, DILocation* InlinedAt, bool CanCatch)
-    : OldF(OldF), Subprogram(Subprogram), InlinedAt(InlinedAt), CanCatch(CanCatch) {
+  InlineFrameKey(Function* OldF, DILocalScope* Scope, DILocation* InlinedAt, bool CanCatch)
+    : OldF(OldF), Scope(Scope), InlinedAt(InlinedAt), CanCatch(CanCatch) {
   }
 
   Function* OldF { nullptr };
-  DISubprogram* Subprogram { nullptr };
+  DILocalScope* Scope { nullptr };
   DILocation* InlinedAt { nullptr };
   bool CanCatch { false };
 
   bool operator==(const InlineFrameKey& Other) const {
-    return OldF == Other.OldF && Subprogram == Other.Subprogram && InlinedAt == Other.InlinedAt
+    return OldF == Other.OldF && Scope == Other.Scope && InlinedAt == Other.InlinedAt
       && CanCatch == Other.CanCatch;
   }
 
   size_t hash() const {
-    return std::hash<Function*>()(OldF) + std::hash<DISubprogram*>()(Subprogram)
+    return std::hash<Function*>()(OldF) + std::hash<DILocalScope*>()(Scope)
       + std::hash<DILocation*>()(InlinedAt) + static_cast<size_t>(CanCatch);
   }
 };
@@ -850,6 +843,8 @@ struct ChecksWithDIOrBottom {
   ChecksWithDIOrBottom(): Bottom(true) {}
 };
 
+// Used for cases where we require a known offset, and so if we can't get one, we don't return the
+// underlying pointer (i.e. HighP might be a GEP).
 struct PtrAndOffset {
   Value* HighP { nullptr };
   int64_t Offset { 0 };
@@ -857,6 +852,36 @@ struct PtrAndOffset {
   PtrAndOffset() = default;
 
   PtrAndOffset(Value* HighP, int64_t Offset): HighP(HighP), Offset(Offset) {}
+};
+
+enum class PtrRandomness {
+  /* Not random accessed (we can deduce the offset statically). */
+  NotRandom,
+
+  /* Random accessed (we do not know the offset statically). */
+  Random
+};
+
+// Used for cases where we require the underlying pointer, and so we might not be able to produce an
+// offset.
+struct PtrAndRandom {
+  Value* P { nullptr };
+  PtrRandomness R { PtrRandomness::NotRandom };
+  int64_t Offset;
+
+  PtrAndRandom() = default;
+
+  PtrAndRandom(Value* P, PtrRandomness R, int64_t Offset): P(P), R(R), Offset(Offset) { }
+
+  PtrAndRandom plus(int64_t Offset) const {
+    PtrAndRandom Result = *this;
+    Result.Offset += Offset;
+    if ((int32_t)Result.Offset != Result.Offset) {
+      Result.R = PtrRandomness::Random;
+      Result.Offset = 0;
+    }
+    return Result;
+  }
 };
 
 struct GEPKey {
@@ -996,15 +1021,6 @@ void EraseIf(VectorT& V, const FuncT& F) {
   V.resize(DstIndex);
 }
 
-struct AuxBaseAndPtr {
-  AllocaInst* Var { nullptr };
-  Value* BaseP { nullptr };
-  Value* P { nullptr };
-
-  AuxBaseAndPtr() = default;
-  AuxBaseAndPtr(AllocaInst* Var, Value* BaseP, Value* P): Var(Var), BaseP(BaseP), P(P) {}
-};
-
 enum class CapabilityInferenceState {
   Bottom,
   Definite,
@@ -1060,6 +1076,7 @@ struct IntrinsicAccessDetails {
   Value* Ptr { nullptr };
   Value* Mask { nullptr };
   int64_t Alignment { 0 };
+  bool IsContiguous { false };
 
   IntrinsicAccessDetails() = default;
 
@@ -1101,6 +1118,65 @@ struct AsmConstraint {
   }
 };
 
+enum class FastArgType : unsigned {
+  Int64,
+  Float,
+  Double,
+  LongDouble,
+  Vec128,
+  Vec256,
+  Vec512,
+  Ptr,
+  Reserved1,
+  Reserved2,
+  Reserved3,
+  Invalid
+};
+
+uint64_t SafeAdd64(uint64_t A, uint64_t B) {
+  uint64_t Result;
+  bool DidOverflow = __builtin_add_overflow(A, B, &Result);
+  if (DidOverflow)
+    llvm_unreachable("Unexpected overflow on add");
+  return Result;
+}
+
+uint64_t SafeMul64(uint64_t A, uint64_t B) {
+  uint64_t Result;
+  bool DidOverflow = __builtin_mul_overflow(A, B, &Result);
+  if (DidOverflow)
+    llvm_unreachable("Unexpected overflow on mul");
+  return Result;
+}
+
+class FastTypeAccumulator {
+public:
+  FastTypeAccumulator() { }
+
+  void addType(FastArgType T) {
+    if (T == FastArgType::Invalid || Num == 16) {
+      Valid = false;
+      return;
+    }
+    uint64_t TV = static_cast<uint64_t>(T);
+    assert(TV < NumFastTypes);
+    Result = SafeAdd64(Result, Step);
+    Result = SafeAdd64(Result, SafeMul64(TV, Step));
+    Step = SafeMul64(Step, NumFastTypes);
+    Num = SafeAdd64(Num, 1);
+  }
+
+  uint64_t getResult() const { return Result; }
+  uint64_t getNum() const { return Num; }
+  bool isValid() const { return Valid; }
+
+private:
+  uint64_t Result { 0 };
+  uint64_t Num { 0 };
+  uint64_t Step { 1 };
+  bool Valid { true };
+};
+
 enum class ArgKind {
   Direct,
   ByVal
@@ -1109,12 +1185,288 @@ enum class ArgKind {
 struct ArgInfo {
   Type* T { nullptr };
   ArgKind AK { ArgKind::Direct };
+  Align A;
 
   ArgInfo() = default;
 
-  ArgInfo(Type* T, ArgKind AK): T(T), AK(AK) {
+  ArgInfo(Type* T, ArgKind AK, Align A): T(T), AK(AK), A(A) {
   }
 };
+
+enum class PointerKind {
+  // It's just a regular heap pointer.
+  Escaping,
+
+  // It's a pointer to something that doesn't escape, but that gets random accessed, so we need to
+  // have an explicit filc_stack_aux for it. This means that the filc_stack_aux itself will escape
+  // from LLVM IR's perspective, but at least it's a stack allocation, not a heap allocation.
+  LocalExplicit,
+
+  // It's a pointer to something that doesn't escape, and does not get random accessed. So, we do have
+  // a stack aux for it, but it's "naked" (has no header, isn't tracked). This means that all stores to
+  // this alloca need to replicate to the lowers array.
+  LocalNaked
+};
+
+raw_ostream& operator<<(raw_ostream& OS, PointerKind PK) {
+  switch (PK) {
+  case PointerKind::Escaping:
+    OS << "Escaping";
+    return OS;
+  case PointerKind::LocalExplicit:
+    OS << "LocalExplicit";
+    return OS;
+  case PointerKind::LocalNaked:
+    OS << "LocalNaked";
+    return OS;
+  }
+  llvm_unreachable("Bad PointerKind");
+  return OS;
+}
+
+PointerKind mergePointerKinds(PointerKind A, PointerKind B) {
+  switch (A) {
+  case PointerKind::Escaping:
+    return PointerKind::Escaping;
+  case PointerKind::LocalExplicit:
+    if (B == PointerKind::Escaping)
+      return PointerKind::Escaping;
+    return PointerKind::LocalExplicit;
+  case PointerKind::LocalNaked:
+    return B;
+  }
+  llvm_unreachable("Bad PointerKind");
+  return PointerKind::Escaping;
+}
+
+enum LifetimeMarkerKind {
+  Start,
+  End
+};
+
+struct LifetimeMarker {
+  AllocaInst* AI { nullptr };
+  LifetimeMarkerKind LMK { LifetimeMarkerKind::Start };
+
+  LifetimeMarker() = default;
+
+  LifetimeMarker(AllocaInst* AI, LifetimeMarkerKind LMK): AI(AI), LMK(LMK) { }
+
+  explicit operator bool() const {
+    return !!AI;
+  }
+};
+
+enum class LifetimeState {
+  // We haven't decided what the state of this thing is yet.
+  Undetermined,
+  
+  // We know it's live.
+  Live,
+  
+  // It could be dead, or maybe it could be live. We don't want to assume it's live. Better kill it.
+  Zombie
+};
+
+raw_ostream& operator<<(raw_ostream& OS, LifetimeState LS) {
+  switch (LS) {
+  case LifetimeState::Undetermined:
+    OS << "Undetermined";
+    return OS;
+  case LifetimeState::Live:
+    OS << "Live";
+    return OS;
+  case LifetimeState::Zombie:
+    OS << "Zombie";
+    return OS;
+  }
+  llvm_unreachable("Bad LifetimeState");
+  return OS;
+}
+
+LifetimeState mergeLifetimeState(LifetimeState A, LifetimeState B) {
+  switch (A) {
+  case LifetimeState::Undetermined:
+    return B;
+  case LifetimeState::Live:
+    if (B != LifetimeState::Undetermined)
+      return B;
+    return LifetimeState::Live;
+  case LifetimeState::Zombie:
+    return LifetimeState::Zombie;
+  }
+  llvm_unreachable("Bad LifetimeState");
+  return LifetimeState::Zombie;
+}
+
+enum class FrameEntryKind {
+  Invalid,
+  Ignored,
+  Lower,
+  LowerFromStackAux,
+  ExplicitStackAux
+};
+
+struct FrameEntry {
+  FrameEntryKind FEK { FrameEntryKind::Invalid };
+  size_t Index { SIZE_MAX };
+
+  FrameEntry() = default;
+
+  FrameEntry(FrameEntryKind FEK, size_t Index): FEK(FEK), Index(Index) { }
+};
+
+struct LocalAllocaData {
+  bool Explicit;
+  AllocaInst* OrigAI { nullptr };
+  AllocaInst* Payload { nullptr };
+  AllocaInst* AuxAlloca { nullptr };
+  Instruction* Aux { nullptr };
+  uint64_t Size { UINT64_MAX };
+};
+
+struct PtrOperandData {
+  PointerKind PK { PointerKind::Escaping };
+  AllocaInst* AuxBaseVar { nullptr };
+  LocalAllocaData LAD;
+  PtrAndRandom PAR;
+
+  PtrOperandData() = default;
+};
+
+struct MemoryAccessData {
+  Value* Lower { nullptr };
+  Value* P { nullptr };
+  Value* AuxP { nullptr };
+  Value* AuxBaseP { nullptr };
+  MemoryKind MK { MemoryKind::Invalid };
+  AllocaInst* OrigAI { nullptr };
+  int64_t LocalOffset { INT64_MIN };
+  uint64_t Size { UINT64_MAX };
+
+  MemoryAccessData() { }
+
+  // Lower is only needed if we're doing an atomic access.
+  MemoryAccessData(Value* Lower, Value* P, Value* AuxP, Value* AuxBaseP, MemoryKind MK):
+    Lower(Lower), P(P), AuxP(AuxP), AuxBaseP(AuxBaseP), MK(MK) {
+    validate();
+  }
+
+  void validate() const {
+    assert(P);
+    assert(AuxP);
+    assert(AuxBaseP);
+    assert(MK == MemoryKind::Heap || MK == MemoryKind::LocalExplicit || MK == MemoryKind::LocalNaked
+           || MK == MemoryKind::CC || MK == MemoryKind::GlobalInit
+           || MK == MemoryKind::ThreadLocalInit);
+    if (MK == MemoryKind::LocalNaked) {
+      assert(OrigAI);
+      assert(LocalOffset != INT64_MIN);
+      assert(Size != UINT64_MAX);
+    } else {
+      assert(!OrigAI);
+      assert(LocalOffset == INT64_MIN);
+      assert(Size == UINT64_MAX);
+    }
+  }
+
+  MemoryAccessData plus(Value* P, Value* AuxP, int64_t Offset) {
+    MemoryAccessData Result = *this;
+    Result.P = P;
+    Result.AuxP = AuxP;
+    if (MK == MemoryKind::LocalNaked) {
+      assert(Result.LocalOffset != INT64_MIN);
+      Result.LocalOffset += Offset;
+      assert((int32_t)Result.LocalOffset == Result.LocalOffset);
+    } else
+      assert(Result.LocalOffset == INT64_MIN);
+    return Result;
+  }
+};
+
+struct FullMemoryAccessData {
+  PtrOperandData POD;
+  MemoryAccessData MAD;
+};
+
+struct UnsafeExport {
+  std::string Name;
+  Constant* Aliasee { nullptr };
+
+  UnsafeExport() = default;
+
+  UnsafeExport(const std::string& Name, Constant* Aliasee):
+    Name(Name), Aliasee(Aliasee) { }
+};
+
+struct NameAndSignature {
+  NameAndSignature() = default;
+
+  NameAndSignature(const std::string Name, uint64_t Signature):
+    Name(Name), Signature(Signature) {
+  }
+
+  explicit operator bool() const { return !Name.empty(); }
+
+  bool operator==(const NameAndSignature& Other) const {
+    return Name == Other.Name && Signature == Other.Signature;
+  }
+
+  size_t hash() const {
+    return std::hash<std::string>()(Name) + std::hash<uint64_t>()(Signature);
+  }
+
+  std::string Name;
+  uint64_t Signature { 0 };
+};
+
+} // anonymous namespace
+
+template<> struct std::hash<NameAndSignature> {
+  size_t operator()(const NameAndSignature& Key) const {
+    return Key.hash();
+  };
+};
+
+namespace {
+
+// Infer the size in bits of an x86 register operand from its name. Returns 0
+// if the size cannot be determined.
+static int inferRegSize(StringRef reg) {
+  std::string r = reg.lower();
+  if (r == "al" || r == "bl" || r == "cl" || r == "dl" ||
+      r == "ah" || r == "bh" || r == "ch" || r == "dh" ||
+      r == "spl" || r == "bpl" || r == "sil" || r == "dil" ||
+      r == "r8b" || r == "r9b" || r == "r10b" || r == "r11b" ||
+      r == "r12b" || r == "r13b" || r == "r14b" || r == "r15b")
+    return 8;
+  if (r == "ax" || r == "bx" || r == "cx" || r == "dx" ||
+      r == "si" || r == "di" || r == "bp" || r == "sp" ||
+      (r.size() >= 2 && r.back() == 'w'))
+    return 16;
+  if (r == "eax" || r == "ebx" || r == "ecx" || r == "edx" ||
+      r == "esi" || r == "edi" || r == "ebp" || r == "esp" ||
+      (r.size() >= 2 && r.back() == 'd'))
+    return 32;
+  if (r == "rax" || r == "rbx" || r == "rcx" || r == "rdx" ||
+      r == "rsi" || r == "rdi" || r == "rbp" || r == "rsp" ||
+      (r.size() >= 2 && r[0] == 'r' &&
+       std::isdigit(static_cast<unsigned char>(r[1]))))
+    return 64;
+  return 0;
+}
+
+// Infer the operand size in bits from a trailing AT&T size suffix.
+// Returns 0 for an unknown or missing suffix.
+static int inferSizeFromSuffix(char suffix) {
+  switch (suffix) {
+  case 'b': return 8;
+  case 'w': return 16;
+  case 'l': return 32;
+  case 'q': return 64;
+  default: return 0;
+  }
+}
 
 class Pizlonator {
   static constexpr unsigned TargetAS = 0;
@@ -1123,6 +1475,7 @@ class Pizlonator {
   Module &M;
   const DataLayout DLBefore;
   const DataLayout DL;
+  Triple::ArchType Arch;
 
   unsigned PtrBits;
   Type* VoidTy;
@@ -1150,6 +1503,9 @@ class Pizlonator {
   StructType* AlignmentAndOffsetTy;
   StructType* PizlonatedReturnValueTy;
   StructType* PtrPairTy;
+  StructType* FunctionPayloadTy;
+  StructType* FunctionObjectTy;
+  StructType* ClosureTy;
   FunctionType* PizlonatedFuncTy;
   FunctionType* PizlonatedGetterTy;
   FunctionType* ThreadLocalEnsureTy;
@@ -1159,11 +1515,15 @@ class Pizlonator {
   Constant* RawNull;
   Constant* FlightNull;
   BitCastInst* Dummy;
+  FunctionType* UnsafeFuncTy;
 
   // Low-level functions used by codegen.
-  FunctionCallee PollcheckSlow;
+  FunctionCallee Pollcheck;
+  FunctionCallee Enter;
+  FunctionCallee Exit;
   FunctionCallee StoreBarrierForLowerSlow;
-  FunctionCallee StorePtrAtomicWithPtrPairOutline;
+  FunctionCallee StorePtrAtomicOutline;
+  FunctionCallee LoadPtrAtomicOutline;
   FunctionCallee ObjectEnsureAuxPtrOutline;
   FunctionCallee ThreadEnsureCCOutlineBufferSlow;
   FunctionCallee StrongCasPtr;
@@ -1173,11 +1533,18 @@ class Pizlonator {
   FunctionCallee AllocateWithAlignment;
   FunctionCallee LocalAllocatorAllocate;
   FunctionCallee FreeWithChecks;
+  FunctionCallee LogAllocate;
   FunctionCallee OptimizedAlignmentContradiction;
   FunctionCallee OptimizedAccessCheckFail;
-  FunctionCallee MaskedAccessCheckFail;
+  FunctionCallee OptimizedStackAlignmentContradiction;
+  FunctionCallee OptimizedStackAccessCheckFail;
+  FunctionCallee MaskedWriteCheckFail;
+  FunctionCallee MaskedReadCheckFail;
+  FunctionCallee CompressWriteCheckFail;
+  FunctionCallee ExpandReadCheckFail;
   FunctionCallee CheckFunctionCallFail;
   FunctionCallee CheckClosureFail;
+  FunctionCallee ComdatLinkFail;
   FunctionCallee Memset;
   FunctionCallee Memmove;
   FunctionCallee MemmoveAlreadyChecked;
@@ -1187,6 +1554,12 @@ class Pizlonator {
   FunctionCallee FinishMemmoveSmall3;
   FunctionCallee FinishMemmoveSmall4;
   FunctionCallee FinishMemmoveSmall5;
+  FunctionCallee MemmoveAlreadyCheckedStackToHeap;
+  FunctionCallee MemmoveStackToHeap;
+  FunctionCallee MemmoveAlreadyCheckedHeapToStack;
+  FunctionCallee MemmoveHeapToStack;
+  FunctionCallee MemmoveAlreadyCheckedStack;
+  FunctionCallee MemmoveStack;
   FunctionCallee GlobalInitializationStart;
   FunctionCallee GlobalInitializationEnd;
   FunctionCallee CallIfunc;
@@ -1196,10 +1569,12 @@ class Pizlonator {
   FunctionCallee Error;
   FunctionCallee RealMemset;
   FunctionCallee RealMemcpy;
+  FunctionCallee RealMemmove;
   FunctionCallee LandingPad;
   FunctionCallee ResumeUnwind;
   FunctionCallee JmpBufCreate;
   FunctionCallee PromoteAlreadyCheckedStackToHeapWithoutExiting;
+  FunctionCallee PromoteAlreadyCheckedStackToHeapWithAlignmentWithoutExiting;
   FunctionCallee DemoteWordAlignedAlreadyCheckedHeapToStackWithoutExiting;
   FunctionCallee DemoteAlreadyCheckedHeapToStackWithoutExiting;
   FunctionCallee PromoteArgsToHeap;
@@ -1219,6 +1594,9 @@ class Pizlonator {
   FunctionCallee DoNothing;
 
   Constant* CurrentMarkingState;
+
+  std::unordered_map<AllocaInst*, PointerKind> AllocaKinds;
+  std::unordered_set<AllocaInst*> AlwaysLive;
 
   std::unordered_set<CombinedDI> CombinedDIs;
   std::unordered_map<std::pair<const CombinedDI*, const CombinedDI*>,
@@ -1240,7 +1618,9 @@ class Pizlonator {
   std::unordered_map<OptimizedAlignmentContradictionOriginKey,
                      GlobalVariable*> OptimizedAlignmentContradictionOrigins;
   std::unordered_map<Value*, AllocaInst*> CanonicalPtrAuxBaseVars;
-  std::unordered_map<Instruction*, std::vector<AllocaInst*>> AuxBaseVarOperands;
+  std::unordered_map<AllocaInst*, LocalAllocaData> LocalAllocaDatas;
+  std::unordered_map<Instruction*, std::vector<PtrOperandData>> PtrOperandDatas;
+  bool AuxBaseVarCreationAllowed { false };
 
   std::vector<GlobalVariable*> Globals;
   std::vector<Function*> Functions;
@@ -1253,7 +1633,15 @@ class Pizlonator {
   std::unordered_map<GlobalValue*, GlobalVariable*> GlobalToGlobal;
   std::unordered_set<Value*> Getters;
   std::unordered_map<Function*, Function*> FunctionToHiddenFunction;
+  std::unordered_map<Function*, uint64_t> FunctionToSignature;
   std::unordered_map<Function*, Constant*> FunctionToLower;
+
+  std::unordered_map<GlobalValue*, Comdat*> GlobalToComdat;
+  std::unordered_map<Comdat*, Comdat*> ComdatMap;
+
+  std::unordered_map<std::string, BitCastInst*> UnsafeFuncs;
+  std::unordered_set<GlobalVariable*> UnsafeExportGVs;
+  std::vector<UnsafeExport> UnsafeExports;
 
   std::string FunctionName;
   Function* OldF { nullptr };
@@ -1262,6 +1650,10 @@ class Pizlonator {
   std::unordered_map<Instruction*, Type*> InstTypes;
   std::unordered_map<Instruction*, std::vector<Type*>> InstTypeVectors;
   std::unordered_map<InvokeInst*, LandingPadInst*> LPIs;
+
+  std::unordered_map<uint64_t, Function*> CallerEntrypointThunks;
+  std::unordered_map<uint64_t, Function*> CalleeEntrypointThunks;
+  std::unordered_map<NameAndSignature, Function*> KnownTargetCallsiteThunks;
   
   BasicBlock* FirstRealBlock;
 
@@ -1272,6 +1664,7 @@ class Pizlonator {
   BasicBlock* ReallyReturnB;
 
   bool UsesVastartOrZargs;
+  bool UsesVariadicCC;
   size_t SnapshottedArgsFrameIndex;
   Value* SnapshottedArgsPtrForVastart;
   Value* SnapshottedArgsPtrForZargs;
@@ -1279,8 +1672,10 @@ class Pizlonator {
 
   Value* MyThread { nullptr };
 
-  std::unordered_map<ValuePtr, size_t> FrameIndexMap;
-  size_t FrameSize;
+  // SIZE_MAX entries mean: do not record
+  std::unordered_map<ValuePtr, FrameEntry> FrameIndexMap;
+  size_t FrameSize { SIZE_MAX };
+  size_t NumStackAuxes { SIZE_MAX };
   Value* Frame;
 
   std::vector<Instruction*> ToErase;
@@ -1297,18 +1692,24 @@ class Pizlonator {
     Constant* C = ConstantDataArray::getString(this->C, Str);
     GlobalVariable* Result = new GlobalVariable(
       M, C->getType(), true, GlobalVariable::PrivateLinkage, C, "filc_string");
+    Result->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     Strings[Str.str()] = Result;
     return Result;
   }
 
-  std::string getFunctionName(Function *F) {
-    std::string FunctionName;
-    if (char* DemangledName = itaniumDemangle(F->getName())) {
-      FunctionName = DemangledName;
+  std::string demangle(StringRef Name) {
+    std::string Result;
+    if (char* DemangledName = itaniumDemangle(Name)) {
+      Result = DemangledName;
       free(DemangledName);
+      return Result;
     } else
-      FunctionName = F->getName();
-    return FunctionName;
+      Result = Name;
+    return Result;
+  }
+
+  std::string getFunctionName(Function *F) {
+    return demangle(F->getName());
   }
 
   // What does "CanCatch" mean in this context? CanCatch=true means we're at an origin that is either:
@@ -1316,10 +1717,10 @@ class Pizlonator {
   // - an InvokeInst.
   //
   // Lots of origins don't meet this definition!
-  Constant* getFunctionOrigin(bool CanCatch) {
+  Constant* getFunctionOrigin(DIScope* Scope, bool CanCatch) {
     assert(OldF);
     
-    FunctionOriginKey FOK(OldF, CanCatch);
+    FunctionOriginKey FOK(OldF, Scope, CanCatch);
     auto iter = FunctionOrigins.find(FOK);
     if (iter != FunctionOrigins.end())
       return iter->second;
@@ -1333,18 +1734,26 @@ class Pizlonator {
     bool CanThrow = !OldF->doesNotThrow();
 
     assert(FrameSize < UINT_MAX);
+    assert(NumStackAuxes < UINT_MAX);
+
+    std::string Filename;
+    if (Scope)
+      Filename = Scope->getFilename();
+    if (Filename.empty() && OldF->getSubprogram())
+      Filename = OldF->getSubprogram()->getFilename();
     
     Constant* C = ConstantStruct::get(
       FunctionOriginTy,
       { ConstantStruct::get(
           OriginNodeTy,
           { getString(getFunctionName(OldF)),
-            OldF->getSubprogram() ? getString(OldF->getSubprogram()->getFilename()) : RawNull,
+            Filename.size() ? getString(Filename) : RawNull,
             ConstantInt::get(Int32Ty, FrameSize) }),
         Personality, ConstantInt::get(Int8Ty, CanThrow), ConstantInt::get(Int8Ty, CanCatch),
-        ConstantInt::get(Int8Ty, HasSetjmps) });
+        ConstantInt::get(Int8Ty, HasSetjmps), ConstantInt::get(Int32Ty, NumStackAuxes) });
     GlobalVariable* Result = new GlobalVariable(
       M, FunctionOriginTy, true, GlobalVariable::PrivateLinkage, C, "filc_function_origin");
+    Result->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     FunctionOrigins[FOK] = Result;
     return Result;
   }
@@ -1357,11 +1766,11 @@ class Pizlonator {
     return GlobalToGetter[EHDatas[LPI]];
   }
 
-  Constant* getInlineFrame(DISubprogram* Subprogram, DILocation* InlinedAt, bool CanCatch) {
+  Constant* getInlineFrame(DILocalScope* Scope, DILocation* InlinedAt, bool CanCatch) {
     assert(OldF);
     assert(InlinedAt);
 
-    InlineFrameKey IFK(OldF, Subprogram, InlinedAt, CanCatch);
+    InlineFrameKey IFK(OldF, Scope, InlinedAt, CanCatch);
     auto iter = InlineFrames.find(IFK);
     if (iter != InlineFrames.end())
       return iter->second;
@@ -1369,28 +1778,37 @@ class Pizlonator {
     unsigned Line = InlinedAt->getLine();
     unsigned Col = InlinedAt->getColumn();
 
+    std::string FunctionName;
+    if (Scope->getSubprogram()) {
+      FunctionName = Scope->getSubprogram()->getLinkageName();
+      if (FunctionName.size())
+        FunctionName = demangle(FunctionName);
+    }
+    if (FunctionName.empty())
+      FunctionName = Scope->getName();
+
     Constant* C = ConstantStruct::get(
       InlineFrameTy,
       { ConstantStruct::get(
           OriginNodeTy,
-          { getString(Subprogram->getName()), getString(Subprogram->getFilename()),
+          { getString(FunctionName), getString(Scope->getFilename()),
             ConstantInt::get(Int32Ty, UINT_MAX) }),
         ConstantStruct::get(
           OriginTy,
-          { getOriginNode(InlinedAt->getScope()->getSubprogram(), InlinedAt->getInlinedAt(),
-                          CanCatch),
+          { getOriginNode(InlinedAt->getScope(), InlinedAt->getInlinedAt(), CanCatch),
             ConstantInt::get(Int32Ty, Line), ConstantInt::get(Int32Ty, Col) }) });
     GlobalVariable* Result = new GlobalVariable(
       M, InlineFrameTy, true, GlobalVariable::PrivateLinkage, C, "filc_inline_frame");
+    Result->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     InlineFrames[IFK] = Result;
     return Result;
   }
 
-  Constant* getOriginNode(DISubprogram* Subprogram, DILocation* InlinedAt, bool CanCatch) {
-    assert(Subprogram);
+  Constant* getOriginNode(DILocalScope* Scope, DILocation* InlinedAt, bool CanCatch) {
+    assert(Scope);
     if (InlinedAt)
-      return getInlineFrame(Subprogram, InlinedAt, CanCatch);
-    return getFunctionOrigin(CanCatch);
+      return getInlineFrame(Scope, InlinedAt, CanCatch);
+    return getFunctionOrigin(Scope, CanCatch);
   }
 
   // See the definition of CanCatch, above.
@@ -1420,9 +1838,9 @@ class Pizlonator {
     if (Loc) {
       Line = Loc.getLine();
       Col = Loc.getCol();
-      OriginNode = getOriginNode(Loc->getScope()->getSubprogram(), Loc->getInlinedAt(), CanCatch);
+      OriginNode = getOriginNode(Loc->getScope(), Loc->getInlinedAt(), CanCatch);
     } else
-      OriginNode = getFunctionOrigin(CanCatch);
+      OriginNode = getFunctionOrigin(nullptr, CanCatch);
 
     GlobalVariable* Result;
     if (CanCatch && OldF->hasPersonalityFn()) {
@@ -1439,6 +1857,7 @@ class Pizlonator {
       Result = new GlobalVariable(
         M, OriginTy, true, GlobalVariable::PrivateLinkage, C, "filc_origin");
     }
+    Result->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     Origins[OK] = Result;
     return Result;
   }
@@ -1791,25 +2210,49 @@ class Pizlonator {
   }
 
   Value* loadPtr(
-    Value* P, Value* BaseAuxP, Value* AuxP, bool isVolatile, Align A, AtomicOrdering AO,
-    MemoryKind MK, Instruction* InsertBefore) {
-    if (MK != MemoryKind::Heap) {
+    MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO, Instruction* InsertBefore) {
+    assert(MAD.MK == MemoryKind::CC ||
+           MAD.MK == MemoryKind::Heap ||
+           MAD.MK == MemoryKind::LocalExplicit ||
+           MAD.MK == MemoryKind::LocalNaked);
+    if (MAD.MK == MemoryKind::LocalExplicit || MAD.MK == MemoryKind::LocalNaked) {
+      // If we've proved that the memory doesn't escape then we can drop all of the atomic flags. Might
+      // as well do that now.
+      //
+      // Note we cannot do that for volatile. Instead, we take volatile to mean that the memory
+      // escapes.
+      AO = AtomicOrdering::NotAtomic;
+    }
+    if (MAD.MK != MemoryKind::Heap) {
       assert(!isVolatile);
       assert(AO == AtomicOrdering::NotAtomic);
     }
+
+    if (AO != AtomicOrdering::NotAtomic || isVolatile) {
+      assert(MAD.MK == MemoryKind::Heap);
+      assert(MAD.Lower);
+      assert(MAD.P);
+      storeOrigin(getOrigin(InsertBefore->getDebugLoc()), InsertBefore);
+      Instruction* Result = CallInst::Create(
+        LoadPtrAtomicOutline, { createFlightPtr(MAD.Lower, MAD.P, InsertBefore) }, "filc_atomic_load",
+        InsertBefore);
+      Result->setDebugLoc(InsertBefore->getDebugLoc());
+      return Result;
+    }
+    
     Value* BaseAuxPIsNull;
     BasicBlock* OriginalB = InsertBefore->getParent();
-    if (MK == MemoryKind::Heap) {
+    if (MAD.MK == MemoryKind::Heap) {
       Instruction* BaseAuxPIsNullInst = new ICmpInst(
-        InsertBefore, ICmpInst::ICMP_EQ, BaseAuxP, RawNull, "filc_base_aux_ptr_is_null");
+        InsertBefore, ICmpInst::ICMP_EQ, MAD.AuxBaseP, RawNull, "filc_base_aux_ptr_is_null");
       BaseAuxPIsNullInst->setDebugLoc(InsertBefore->getDebugLoc());
       BaseAuxPIsNull = BaseAuxPIsNullInst;
     } else
       BaseAuxPIsNull = ConstantInt::getBool(Int1Ty, false);
     Instruction* NotNullCase = SplitBlockAndInsertIfElse(BaseAuxPIsNull, InsertBefore, false);
     Instruction* LowerAsIntLoad = new LoadInst(
-      IntPtrTy, AuxP, "filc_load_lower", isVolatile, Align(WordSize),
-      MK == MemoryKind::Heap ? getMergedAtomicOrdering(AtomicOrdering::Monotonic, AO) : AO,
+      IntPtrTy, MAD.AuxP, "filc_load_lower", isVolatile, Align(WordSize),
+      MAD.MK == MemoryKind::Heap ? getMergedAtomicOrdering(AtomicOrdering::Monotonic, AO) : AO,
       SyncScope::System, NotNullCase);
     LowerAsIntLoad->setDebugLoc(InsertBefore->getDebugLoc());
     PHINode* LowerAsInt = PHINode::Create(IntPtrTy, 2, "filc_lower_as_int_phi", InsertBefore);
@@ -1822,13 +2265,15 @@ class Pizlonator {
         LowerAsInt, RawPtrTy, "filc_lower_as_ptr", Where);
       LowerToPtr->setDebugLoc(InsertBefore->getDebugLoc());
       Instruction* RawPtrLoad = new LoadInst(
-        RawPtrTy, P, "filc_atomic_case_load_raw_ptr", isVolatile, std::max(A, Align(WordSize)), AO,
+        RawPtrTy, MAD.P, "filc_atomic_case_load_raw_ptr", isVolatile, std::max(A, Align(WordSize)), AO,
         SyncScope::System, Where);
       RawPtrLoad->setDebugLoc(InsertBefore->getDebugLoc());
       return createFlightPtr(LowerToPtr, RawPtrLoad, Where);
     };
     
-    if (MK == MemoryKind::Heap) {
+    if (MAD.MK == MemoryKind::Heap) {
+      assert(!isVolatile);
+      assert(AO == AtomicOrdering::NotAtomic);
       Instruction* Masked = BinaryOperator::Create(
         Instruction::And, LowerAsInt, ConstantInt::get(IntPtrTy, AtomicBoxBit),
         "filc_lower_atomic_box_bit", InsertBefore);
@@ -1841,28 +2286,12 @@ class Pizlonator {
       Instruction* ElseTerm;
       SplitBlockAndInsertIfThenElse(expectTrue(IsNotBox, InsertBefore), InsertBefore,
                                     &ThenTerm, &ElseTerm);
-      Value* AtomicCaseNotBoxPtr = nullptr;
-      if (isVolatile || AO != AtomicOrdering::NotAtomic)
-        AtomicCaseNotBoxPtr = FinishCreatingFlight(ThenTerm);
       Instruction* BoxAsInt = BinaryOperator::Create(
         Instruction::And, LowerAsInt, ConstantInt::get(IntPtrTy, ~AtomicBoxBit),
         "filc_box_as_int", ElseTerm);
       BoxAsInt->setDebugLoc(InsertBefore->getDebugLoc());
       Instruction* Box = new IntToPtrInst(BoxAsInt, RawPtrTy, "filc_box", ElseTerm);
       Box->setDebugLoc(InsertBefore->getDebugLoc());
-      if (isVolatile || AO != AtomicOrdering::NotAtomic) {
-        // FIXME: Maybe it would be better if this was a function call.
-        Instruction* PtrWord = new LoadInst(
-          Int128Ty, Box, "filc_ptr_word_from_box", isVolatile, std::max(A, Align(FlightPtrAlign)),
-          getMergedAtomicOrdering(AtomicOrdering::Monotonic, AO), SyncScope::System, ElseTerm);
-        PtrWord->setDebugLoc(InsertBefore->getDebugLoc());
-        Value* AtomicCaseBoxPtr = flightPtrForWord(PtrWord, ElseTerm);
-        PHINode* Result = PHINode::Create(FlightPtrTy, 2, "filc_ptr_load_phi", InsertBefore);
-        Result->setDebugLoc(InsertBefore->getDebugLoc());
-        Result->addIncoming(AtomicCaseNotBoxPtr, ThenTerm->getParent());
-        Result->addIncoming(AtomicCaseBoxPtr, ElseTerm->getParent());
-        return Result;
-      }
       Instruction* LowerFromBoxLoadInt = new LoadInst(
         IntPtrTy, flightPtrLowerPtr(Box, ElseTerm), "filc_lower_from_box", isVolatile,
         Align(WordSize), getMergedAtomicOrdering(AtomicOrdering::Monotonic, AO),
@@ -1877,20 +2306,8 @@ class Pizlonator {
     return FinishCreatingFlight(InsertBefore);
   }
 
-  Value* loadPtr(
-    Value* P, AuxBaseAndPtr Aux, bool isVolatile, Align A, AtomicOrdering AO, MemoryKind MK,
-    Instruction* InsertBefore) {
-    return loadPtr(P, Aux.BaseP, Aux.P, isVolatile, A, AO, MK, InsertBefore);
-  }
-
-  Value* loadPtr(Value* P, Value* BaseAuxP, Value* AuxP, Instruction* InsertBefore) {
-    return loadPtr(
-      P, BaseAuxP, AuxP, false, Align(WordSize), AtomicOrdering::NotAtomic, MemoryKind::Heap,
-      InsertBefore);
-  }
-
-  Value* loadPtr(Value* P, AuxBaseAndPtr Aux, Instruction* InsertBefore) {
-    return loadPtr(P, Aux.BaseP, Aux.P, InsertBefore);
+  Value* loadPtr(MemoryAccessData MAD, Instruction* InsertBefore) {
+    return loadPtr(MAD, false, Align(WordSize), AtomicOrdering::NotAtomic, InsertBefore);
   }
 
   void storeBarrierForLower(Value* Lower, Instruction* InsertBefore) {
@@ -1918,34 +2335,58 @@ class Pizlonator {
   }
   
   void storePtr(
-    Value* V, Value* P, Value* AuxP, bool isVolatile, Align A, AtomicOrdering AO, MemoryKind MK,
+    Value* V, MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO,
     Instruction* InsertBefore) {
-    if (MK != MemoryKind::Heap) {
+    assert(MAD.MK == MemoryKind::CC ||
+           MAD.MK == MemoryKind::GlobalInit ||
+           MAD.MK == MemoryKind::ThreadLocalInit ||
+           MAD.MK == MemoryKind::Heap ||
+           MAD.MK == MemoryKind::LocalExplicit ||
+           MAD.MK == MemoryKind::LocalNaked);
+
+    if (MAD.MK == MemoryKind::LocalExplicit || MAD.MK == MemoryKind::LocalNaked)
+      AO = AtomicOrdering::NotAtomic;
+
+    if (MAD.MK != MemoryKind::Heap) {
       assert(!isVolatile);
       assert(AO == AtomicOrdering::NotAtomic);
     }
 
-    if (MK == MemoryKind::Heap && (AO != AtomicOrdering::NotAtomic || isVolatile)) {
-      CallInst::Create(StorePtrAtomicWithPtrPairOutline, { MyThread, P, AuxP, V }, "", InsertBefore)
-        ->setDebugLoc(InsertBefore->getDebugLoc());
+    if (AO != AtomicOrdering::NotAtomic || isVolatile) {
+      assert(MAD.MK == MemoryKind::Heap);
+      assert(MAD.Lower);
+      assert(MAD.P);
+      storeOrigin(getOrigin(InsertBefore->getDebugLoc()), InsertBefore);
+      CallInst::Create(
+        StorePtrAtomicOutline, { MyThread, createFlightPtr(MAD.Lower, MAD.P, InsertBefore), V }, "",
+        InsertBefore)->setDebugLoc(InsertBefore->getDebugLoc());
       return;
     }
     
-    if (MK == MemoryKind::Heap || MK == MemoryKind::ThreadLocalInit)
+    if (MAD.MK == MemoryKind::Heap || MAD.MK == MemoryKind::ThreadLocalInit)
       storeBarrierForValue(V, InsertBefore);
 
     (new StoreInst(
-      flightPtrLower(V, InsertBefore), AuxP, isVolatile, std::max(A, Align(WordSize)),
-      MK == MemoryKind::Heap ? getMergedAtomicOrdering(AtomicOrdering::Monotonic, AO) : AO,
+      flightPtrLower(V, InsertBefore), MAD.AuxP, isVolatile, std::max(A, Align(WordSize)),
+      MAD.MK == MemoryKind::Heap ? getMergedAtomicOrdering(AtomicOrdering::Monotonic, AO) : AO,
       SyncScope::System, InsertBefore))->setDebugLoc(InsertBefore->getDebugLoc());
     (new StoreInst(
-      flightPtrPtr(V, InsertBefore), P, isVolatile, std::max(A, Align(WordSize)), AO,
+      flightPtrPtr(V, InsertBefore), MAD.P, isVolatile, std::max(A, Align(WordSize)), AO,
       SyncScope::System, InsertBefore))->setDebugLoc(InsertBefore->getDebugLoc());
+
+    // Note that we have to defend ourselves against crashing the compiler in case we are emitting a
+    // totally invalid store (a store that is known to be out of bounds, or isn't aligned). But we
+    // don't have to emit correct code in that case, since this path is unreachable in that case.
+    if (MAD.MK == MemoryKind::LocalNaked && MAD.LocalOffset >= 0
+        && static_cast<uint64_t>(MAD.LocalOffset) < MAD.Size) {
+      FrameEntry FE = FrameIndexMap[ValuePtr(MAD.OrigAI, MAD.LocalOffset / WordSize)];
+      assert(FE.FEK == FrameEntryKind::LowerFromStackAux);
+      recordLowerAtIndex(flightPtrLower(V, InsertBefore), FE.Index, InsertBefore);
+    }
   }
 
-  void storePtr(Value* V, Value* P, Value* AuxP, Instruction* InsertBefore) {
-    storePtr(V, P, AuxP, false, Align(WordSize), AtomicOrdering::NotAtomic, MemoryKind::Heap,
-             InsertBefore);
+  void storePtr(Value* V, MemoryAccessData MAD, Instruction* InsertBefore) {
+    storePtr(V, MAD, false, Align(WordSize), AtomicOrdering::NotAtomic, InsertBefore);
   }
 
   // This happens to work just as well for raw types and flight types, and that's important.
@@ -2002,14 +2443,13 @@ class Pizlonator {
   }
 
   Value* loadValueRecurseAfterCheck(
-    Type* T, Value* P, Value* BaseAuxP, Value* AuxP,
-    bool isVolatile, Align A, AtomicOrdering AO, SyncScope::ID SS, MemoryKind MK,
+    Type* T, MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO, SyncScope::ID SS,
     Instruction* InsertBefore) {
     A = std::min(DL.getABITypeAlign(T), A);
     
     if (!hasPtrs(T)) {
       return new LoadInst(
-        toFlightType(T), P, "filc_load", isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
+        toFlightType(T), MAD.P, "filc_load", isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
     }
     
     if (isa<FunctionType>(T)) {
@@ -2025,22 +2465,24 @@ class Pizlonator {
     assert(T != FlightPtrTy);
 
     if (T == RawPtrTy)
-      return loadPtr(P, BaseAuxP, AuxP, isVolatile, A, AO, MK, InsertBefore);
+      return loadPtr(MAD, isVolatile, A, AO, InsertBefore);
 
     assert(!isa<PointerType>(T));
 
     if (StructType* ST = dyn_cast<StructType>(T)) {
       Value* Result = UndefValue::get(toFlightType(T));
+      const StructLayout* SL = DL.getStructLayout(ST);
       for (unsigned Index = ST->getNumElements(); Index--;) {
         Type* InnerT = ST->getElementType(Index);
         Value *InnerP = GetElementPtrInst::Create(
-          ST, P, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
+          ST, MAD.P, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
           "filc_InnerP_struct", InsertBefore);
         Value* InnerAuxP = GetElementPtrInst::Create(
-          ST, AuxP, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
+          ST, MAD.AuxP, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
           "filc_InnerAuxP_struct", InsertBefore);
         Value* V = loadValueRecurseAfterCheck(
-          InnerT, InnerP, BaseAuxP, InnerAuxP, isVolatile, A, AO, SS, MK, InsertBefore);
+          InnerT, MAD.plus(InnerP, InnerAuxP, SL->getElementOffset(Index).getFixedValue()), isVolatile,
+          A, AO, SS, InsertBefore);
         Result = InsertValueInst::Create(Result, V, Index, "filc_insert_struct", InsertBefore);
       }
       return Result;
@@ -2049,15 +2491,17 @@ class Pizlonator {
     if (ArrayType* AT = dyn_cast<ArrayType>(T)) {
       Value* Result = UndefValue::get(toFlightType(AT));
       assert(static_cast<unsigned>(AT->getNumElements()) == AT->getNumElements());
+      Type* ET = AT->getElementType();
+      size_t ESize = DL.getTypeAllocSize(ET);
       for (unsigned Index = static_cast<unsigned>(AT->getNumElements()); Index--;) {
         Value *InnerP = GetElementPtrInst::Create(
-          AT, P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          AT, MAD.P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerP_array", InsertBefore);
         Value *InnerAuxP = GetElementPtrInst::Create(
-          AT, AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          AT, MAD.AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerAuxP_array", InsertBefore);
         Value* V = loadValueRecurseAfterCheck(
-          AT->getElementType(), InnerP, BaseAuxP, InnerAuxP, isVolatile, A, AO, SS, MK, InsertBefore);
+          ET, MAD.plus(InnerP, InnerAuxP, Index * ESize), isVolatile, A, AO, SS, InsertBefore);
         Result = InsertValueInst::Create(Result, V, Index, "filc_insert_array", InsertBefore);
       }
       return Result;
@@ -2065,15 +2509,17 @@ class Pizlonator {
       
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
       Value* Result = UndefValue::get(toFlightType(VT));
+      Type* ET = VT->getElementType();
+      size_t ESize = DL.getTypeAllocSize(ET);
       for (unsigned Index = VT->getElementCount().getFixedValue(); Index--;) {
         Value *InnerP = GetElementPtrInst::Create(
-          VT, P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          VT, MAD.P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerP_vector", InsertBefore);
         Value *InnerAuxP = GetElementPtrInst::Create(
-          VT, AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          VT, MAD.AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerAuxP_vector", InsertBefore);
         Value* V = loadValueRecurseAfterCheck(
-          VT->getElementType(), InnerP, BaseAuxP, InnerAuxP, isVolatile, A, AO, SS, MK, InsertBefore);
+          ET, MAD.plus(InnerP, InnerAuxP, Index * ESize), isVolatile, A, AO, SS, InsertBefore);
         Result = InsertElementInst::Create(
           Result, V, ConstantInt::get(IntPtrTy, Index), "filc_insert_vector", InsertBefore);
       }
@@ -2089,22 +2535,13 @@ class Pizlonator {
     return nullptr;
   }
 
-  Value* loadValueRecurseAfterCheck(
-    Type* T, Value* P, AuxBaseAndPtr Aux,
-    bool isVolatile, Align A, AtomicOrdering AO, SyncScope::ID SS, MemoryKind MK,
-    Instruction* InsertBefore) {
-    return loadValueRecurseAfterCheck(
-      T, P, Aux.BaseP, Aux.P, isVolatile, A, AO, SS, MK, InsertBefore);
-  }
-  
   void storeValueRecurseAfterCheck(
-    Type* T, Value* V, Value* P, Value* AuxP,
-    bool isVolatile, Align A, AtomicOrdering AO, SyncScope::ID SS, MemoryKind MK,
-    Instruction* InsertBefore) {
+    Type* T, Value* V, MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO,
+    SyncScope::ID SS, Instruction* InsertBefore) {
     A = std::min(DL.getABITypeAlign(T), A);
     
     if (!hasPtrs(T)) {
-      new StoreInst(V, P, isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
+      new StoreInst(V, MAD.P, isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
       return;
     }
     
@@ -2121,58 +2558,69 @@ class Pizlonator {
     assert(T != FlightPtrTy);
 
     if (T == RawPtrTy) {
-      storePtr(V, P, AuxP, isVolatile, A, AO, MK, InsertBefore);
+      storePtr(V, MAD, isVolatile, A, AO, InsertBefore);
       return;
     }
 
     assert(!isa<PointerType>(T));
 
     if (StructType* ST = dyn_cast<StructType>(T)) {
+      const StructLayout* SL = DL.getStructLayout(ST);
       for (unsigned Index = ST->getNumElements(); Index--;) {
         Type* InnerT = ST->getElementType(Index);
-        Value *InnerP = GetElementPtrInst::Create(
-          ST, P, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
+        Instruction *InnerP = GetElementPtrInst::Create(
+          ST, MAD.P, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
           "filc_InnerP_struct", InsertBefore);
-        Value *InnerAuxP = GetElementPtrInst::Create(
-          ST, AuxP, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
+        InnerP->setDebugLoc(InsertBefore->getDebugLoc());
+        Instruction *InnerAuxP = GetElementPtrInst::Create(
+          ST, MAD.AuxP, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, Index) },
           "filc_InnerAuxP_struct", InsertBefore);
-        Value* InnerV = ExtractValueInst::Create(
+        InnerAuxP->setDebugLoc(InsertBefore->getDebugLoc());
+        Instruction* InnerV = ExtractValueInst::Create(
           toFlightType(InnerT), V, { Index }, "filc_extract_struct", InsertBefore);
+        InnerV->setDebugLoc(InsertBefore->getDebugLoc());
         storeValueRecurseAfterCheck(
-          InnerT, InnerV, InnerP, InnerAuxP, isVolatile, A, AO, SS, MK, InsertBefore);
+          InnerT, InnerV, MAD.plus(InnerP, InnerAuxP, SL->getElementOffset(Index).getFixedValue()),
+          isVolatile, A, AO, SS, InsertBefore);
       }
       return;
     }
       
     if (ArrayType* AT = dyn_cast<ArrayType>(T)) {
       assert(static_cast<unsigned>(AT->getNumElements()) == AT->getNumElements());
+      Type* ET = AT->getElementType();
+      size_t ESize = DL.getTypeAllocSize(ET);
       for (unsigned Index = static_cast<unsigned>(AT->getNumElements()); Index--;) {
         Value *InnerP = GetElementPtrInst::Create(
-          AT, P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          AT, MAD.P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerP_array", InsertBefore);
         Value *InnerAuxP = GetElementPtrInst::Create(
-          AT, AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          AT, MAD.AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerAuxP_array", InsertBefore);
         Value* InnerV = ExtractValueInst::Create(
           toFlightType(AT->getElementType()), V, { Index }, "filc_extract_array", InsertBefore);
         storeValueRecurseAfterCheck(
-          AT->getElementType(), InnerV, InnerP, InnerAuxP, isVolatile, A, AO, SS, MK, InsertBefore);
+          AT->getElementType(), InnerV, MAD.plus(InnerP, InnerAuxP, Index * ESize), isVolatile, A, AO,
+          SS, InsertBefore);
       }
       return;
     }
       
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
+      Type* ET = VT->getElementType();
+      size_t ESize = DL.getTypeAllocSize(ET);
       for (unsigned Index = VT->getElementCount().getFixedValue(); Index--;) {
         Value *InnerP = GetElementPtrInst::Create(
-          VT, P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          VT, MAD.P, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerP_vector", InsertBefore);
         Value *InnerAuxP = GetElementPtrInst::Create(
-          VT, AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
+          VT, MAD.AuxP, { ConstantInt::get(IntPtrTy, 0), ConstantInt::get(IntPtrTy, Index) },
           "filc_InnerAuxP_vector", InsertBefore);
         Value* InnerV = ExtractElementInst::Create(
           V, ConstantInt::get(IntPtrTy, Index), "filc_extract_vector", InsertBefore);
         storeValueRecurseAfterCheck(
-          VT->getElementType(), InnerV, InnerP, InnerAuxP, isVolatile, A, AO, SS, MK, InsertBefore);
+          VT->getElementType(), InnerV, MAD.plus(InnerP, InnerAuxP, Index * ESize), isVolatile, A, AO,
+          SS, InsertBefore);
       }
       return;
     }
@@ -2233,6 +2681,11 @@ class Pizlonator {
   }
 
   Value* allocateObject(Value* Size, Value* Alignment, Instruction* InsertBefore) {
+    if (logAllocations) {
+      CallInst::Create(
+        LogAllocate, { MyThread, getOrigin(InsertBefore->getDebugLoc()), Size, Alignment },
+        "", InsertBefore);
+    }
     Instruction* Result;
     ConstantInt* AlignmentInt = dyn_cast<ConstantInt>(Alignment);
     if (AlignmentInt && AlignmentInt->getZExtValue() <= GCMinAlign) {
@@ -2281,9 +2734,99 @@ class Pizlonator {
     return 0;
   }
 
+  PointerKind pointerKindDirect(Value* V) {
+    if (AllocaInst* AI = dyn_cast<AllocaInst>(V)) {
+      assert(AllocaKinds.count(AI));
+      return AllocaKinds[AI];
+    }
+    return PointerKind::Escaping;
+  }
+
+  PointerKind underlyingPointerKind(Value* V) {
+    return pointerKindDirect(underlyingPtr(V).P);
+  }
+
+  bool allocaHasSizeForUs(AllocaInst* AI) {
+    std::optional<TypeSize> AllocaSize = AI->getAllocationSize(DL);
+    if (!AllocaSize)
+      return false;
+    if (AllocaSize->isScalable())
+      return false;
+    uint64_t Result = AllocaSize->getFixedValue();
+    return (int64_t)Result >= 0 && (int32_t)Result == (int64_t)Result;
+  }
+
+  size_t originalAllocaSize(AllocaInst* AI) {
+    std::optional<TypeSize> AllocaSize = AI->getAllocationSize(DL);
+    assert(AllocaSize);
+    assert(!AllocaSize->isScalable());
+    return AllocaSize->getFixedValue();
+  }
+
+  size_t alignedAllocaSize(AllocaInst* AI) {
+    return (originalAllocaSize(AI) + GCMinAlign - 1) & -GCMinAlign;
+  }
+
+  size_t countPtrsForAlloca(AllocaInst* AI) {
+    return alignedAllocaSize(AI) / WordSize;
+  }
+  
+  size_t countPtrsForValue(Value* V) {
+    // FIXME: We should not be dealing with GEPs here at all.
+    Value* UP = underlyingPtr(V).P;
+    switch (pointerKindDirect(UP)) {
+    case PointerKind::Escaping:
+      return countPtrs(V->getType());
+    case PointerKind::LocalExplicit:
+      return 0;
+    case PointerKind::LocalNaked:
+      if (UP == V)
+        return countPtrsForAlloca(cast<AllocaInst>(V));
+      return 0;
+    }
+    llvm_unreachable("Bad pointer kind");
+    return 0;
+  }
+
+  bool usesVariadicCC(Function* F) {
+    for (BasicBlock& BB : *F) {
+      for (Instruction& I : BB) {
+        if (CallBase* CI = dyn_cast<CallBase>(&I)) {
+          if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
+            if (F->getName() == "zargs" || F->getName() == "zreturn")
+              return true;
+          }
+        }
+        if (IntrinsicInst* II = dyn_cast<IntrinsicInst>(&I)) {
+          if (II->getIntrinsicID() == Intrinsic::vastart)
+            return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool usesCallee(Function* F) {
+    for (BasicBlock& BB : *F) {
+      for (Instruction& I : BB) {
+        if (CallBase* CI = dyn_cast<CallBase>(&I)) {
+          if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
+            if (F->getName() == "zcallee" || F->getName() == "zcallee_closure_data")
+              return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   void computeFrameIndexMap(const std::vector<BasicBlock*>& Blocks) {
+    assert(FrameSize == SIZE_MAX);
+    assert(NumStackAuxes == SIZE_MAX);
+    
     FrameIndexMap.clear();
     FrameSize = NumSpecialFrameObjects;
+    NumStackAuxes = 0;
     HasSetjmps = false;
     UsesVastartOrZargs = false;
     SetjmpSetFrameIndex = SIZE_MAX;
@@ -2291,6 +2834,8 @@ class Pizlonator {
     assert(!Blocks.empty());
 
     auto LiveCast = [&] (Value* V) -> Value* {
+      if (underlyingPointerKind(V) != PointerKind::Escaping)
+        return nullptr;
       if (isa<Instruction>(V))
         return V;
       if (Argument* A = dyn_cast<Argument>(V)) {
@@ -2318,6 +2863,18 @@ class Pizlonator {
           Instruction* I = &*It;
           if (verbose)
             errs() << "Liveness dealing with: " << *I << "\n";
+
+          if (LifetimeMarker LM = analyzeLifetimeMarker(I)) {
+            switch (LM.LMK) {
+            case LifetimeMarkerKind::Start:
+              Live.erase(LM.AI);
+              break;
+            case LifetimeMarkerKind::End:
+              Live.insert(LM.AI);
+              break;
+            }
+            continue;
+          }
 
           Live.erase(I);
           
@@ -2356,6 +2913,19 @@ class Pizlonator {
       }
     }
 
+    // Make sure that AlwaysLive allocas are always live. This is very hacky, but is obviously
+    // correct.
+    for (BasicBlock* BB : Blocks) {
+      for (Instruction& I : *BB) {
+        if (AllocaInst* AI = dyn_cast<AllocaInst>(&I)) {
+          if (AlwaysLive.count(AI)) {
+            for (auto& Pair : LiveAtTail)
+              Pair.second.insert(&I);
+          }
+        }
+      }
+    }
+
     std::unordered_map<ValuePtr, std::unordered_set<ValuePtr>> Interference;
 
     for (size_t BlockIndex = Blocks.size(); BlockIndex--;) {
@@ -2364,25 +2934,41 @@ class Pizlonator {
       
       for (auto It = BB->rbegin(); It != BB->rend(); ++It) {
         Instruction* I = &*It;
-        
-        Live.erase(I);
 
-        size_t NumIPtrs = countPtrs(I->getType());
-        if (NumIPtrs) {
-          for (Value* LV : Live) {
-            size_t NumVIPtrs = countPtrs(LV->getType());
-            for (size_t LVPtrIndex = NumVIPtrs; LVPtrIndex--;) {
-              for (size_t IPtrIndex = NumIPtrs; IPtrIndex--;) {
-                Interference[ValuePtr(I, IPtrIndex)].insert(ValuePtr(LV, LVPtrIndex));
-                Interference[ValuePtr(LV, LVPtrIndex)].insert(ValuePtr(I, IPtrIndex));
+        Instruction* Defined = nullptr;
+        if (LifetimeMarker LM = analyzeLifetimeMarker(I)) {
+          if (LM.LMK == LifetimeMarkerKind::Start) {
+            Live.erase(LM.AI);
+            Defined = LM.AI;
+          }
+        } else {
+          Live.erase(I);
+          Defined = I;
+        }
+
+        if (Defined) {
+          size_t NumIPtrs = countPtrsForValue(Defined);
+          if (NumIPtrs) {
+            for (Value* LV : Live) {
+              size_t NumVIPtrs = countPtrsForValue(LV);
+              for (size_t LVPtrIndex = NumVIPtrs; LVPtrIndex--;) {
+                for (size_t IPtrIndex = NumIPtrs; IPtrIndex--;) {
+                  Interference[ValuePtr(Defined, IPtrIndex)].insert(ValuePtr(LV, LVPtrIndex));
+                  Interference[ValuePtr(LV, LVPtrIndex)].insert(ValuePtr(Defined, IPtrIndex));
+                }
               }
             }
           }
         }
 
-        for (Value* V : I->operand_values()) {
-          if (Value* LV = LiveCast(V))
-            Live.insert(LV);
+        if (LifetimeMarker LM = analyzeLifetimeMarker(I)) {
+          if (LM.LMK == LifetimeMarkerKind::End)
+            Live.insert(LM.AI);
+        } else {
+          for (Value* V : I->operand_values()) {
+            if (Value* LV = LiveCast(V))
+              Live.insert(LV);
+          }
         }
       }
     }
@@ -2401,6 +2987,22 @@ class Pizlonator {
       }
     }
 
+    // All indices for a value interfere with one another.
+    for (Argument& A : OldF->args()) {
+      for (size_t PtrIndex = countPtrs(A.getType()); PtrIndex--;) {
+        for (size_t APtrIndex = countPtrs(A.getType()); APtrIndex--;)
+          Interference[ValuePtr(&A, PtrIndex)].insert(ValuePtr(&A, APtrIndex));
+      }
+    }
+    for (BasicBlock* BB : Blocks) {
+      for (Instruction& I : *BB) {
+        for (size_t PtrIndex = countPtrsForValue(&I); PtrIndex--;) {
+          for (size_t APtrIndex = countPtrsForValue(&I); APtrIndex--;)
+            Interference[ValuePtr(&I, PtrIndex)].insert(ValuePtr(&I, APtrIndex));
+        }
+      }
+    }
+
     // Make this deterministic by having a known order in which we process stuff.
     std::vector<ValuePtr> Order;
     for (Argument& A : OldF->args()) {
@@ -2409,8 +3011,14 @@ class Pizlonator {
     }
     for (BasicBlock* BB : Blocks) {
       for (Instruction& I : *BB) {
-        for (size_t PtrIndex = countPtrs(I.getType()); PtrIndex--;)
-          Order.push_back(ValuePtr(&I, PtrIndex));
+        Value* UP = underlyingPtr(&I).P;
+        PointerKind PK = pointerKindDirect(UP);
+        if ((PK == PointerKind::LocalNaked || PK == PointerKind::LocalExplicit) && UP != &I)
+          FrameIndexMap[ValuePtr(&I, 0)] = FrameEntry(FrameEntryKind::Ignored, 0);
+        else {
+          for (size_t PtrIndex = countPtrsForValue(&I); PtrIndex--;)
+            Order.push_back(ValuePtr(&I, PtrIndex));
+        }
       }
     }
 
@@ -2419,13 +3027,20 @@ class Pizlonator {
       for (size_t FrameIndex = NumSpecialFrameObjects; ; FrameIndex++) {
         bool Ok = true;
         for (ValuePtr AIP : Adjacency) {
-          if (FrameIndexMap.count(AIP) && FrameIndexMap[AIP] == FrameIndex) {
+          if (FrameIndexMap.count(AIP) && FrameIndexMap[AIP].Index == FrameIndex) {
             Ok = false;
             break;
           }
         }
         if (Ok) {
-          FrameIndexMap[IP] = FrameIndex;
+          FrameEntryKind FEK;
+          PointerKind PK = pointerKindDirect(IP.V);
+          assert(PK == PointerKind::Escaping || PK == PointerKind::LocalNaked);
+          if (PK == PointerKind::LocalNaked)
+            FEK = FrameEntryKind::LowerFromStackAux;
+          else
+            FEK = FrameEntryKind::Lower;
+          FrameIndexMap[IP] = FrameEntry(FEK, FrameIndex);
           FrameSize = std::max(FrameSize, FrameIndex + 1);
           break;
         }
@@ -2452,8 +3067,80 @@ class Pizlonator {
       if (UsesVastartOrZargs)
         break;
     }
-    if (UsesVastartOrZargs)
+    if (UsesVastartOrZargs) {
+      assert(UsesVariadicCC);
       SnapshottedArgsFrameIndex = FrameSize++;
+    }
+
+    std::unordered_map<AllocaInst*, std::unordered_set<AllocaInst*>> StackAuxInterference;
+
+    for (size_t BlockIndex = Blocks.size(); BlockIndex--;) {
+      BasicBlock* BB = Blocks[BlockIndex];
+      std::unordered_set<AllocaInst*> Live;
+      for (Value* V : LiveAtTail[BB]) {
+        if (pointerKindDirect(V) == PointerKind::LocalExplicit)
+          Live.insert(cast<AllocaInst>(V));
+      }
+      
+      for (auto It = BB->rbegin(); It != BB->rend(); ++It) {
+        Instruction* I = &*It;
+        
+        if (LifetimeMarker LM = analyzeLifetimeMarker(I)) {
+          if (LM.LMK == LifetimeMarkerKind::Start) {
+            Live.erase(LM.AI);
+            for (AllocaInst* LAI : Live) {
+              StackAuxInterference[LM.AI].insert(LAI);
+              StackAuxInterference[LAI].insert(LM.AI);
+            }
+          }
+        }
+
+        if (LifetimeMarker LM = analyzeLifetimeMarker(I)) {
+          if (LM.LMK == LifetimeMarkerKind::End)
+            Live.insert(LM.AI);
+        }
+      }
+    }
+
+    if (verbose)
+      errs() << "Before explicit stack aux allocation, FrameSize = " << FrameSize << "\n";
+    
+    std::vector<AllocaInst*> StackAuxOrder;
+    for (BasicBlock* BB : Blocks) {
+      for (Instruction& I : *BB) {
+        if (pointerKindDirect(&I) == PointerKind::LocalExplicit)
+          StackAuxOrder.push_back(cast<AllocaInst>(&I));
+      }
+    }
+
+    for (AllocaInst* AI : StackAuxOrder) {
+      const std::unordered_set<AllocaInst*>& Adjacency = StackAuxInterference[AI];
+      for (size_t FrameIndex = FrameSize; ; FrameIndex++) {
+        bool Ok = true;
+        for (AllocaInst* AAI : Adjacency) {
+          if (FrameIndexMap.count(ValuePtr(AAI, 0))
+              && FrameIndexMap[ValuePtr(AAI, 0)].Index == FrameIndex) {
+            Ok = false;
+            break;
+          }
+        }
+        if (Ok) {
+          if (verbose) {
+            errs() << "For explicit local " << AI->getName() << " using lowers index " << FrameIndex
+                   << "\n";
+          }
+          FrameIndexMap[ValuePtr(AI, 0)] = FrameEntry(FrameEntryKind::ExplicitStackAux, FrameIndex);
+          NumStackAuxes = std::max(NumStackAuxes, FrameIndex + 1 - FrameSize);
+          break;
+        }
+      }
+    }
+
+    FrameSize += NumStackAuxes;
+    if (verbose) {
+      errs() << "After explicit stack aux allocation, NumStackAuxes = " << NumStackAuxes
+             << ", FrameSize = " << FrameSize << "\n";
+    }
 
     for (BasicBlock* BB : Blocks) {
       for (Instruction& I : *BB) {
@@ -2487,6 +3174,8 @@ class Pizlonator {
   }
 
   void recordLowerAtIndex(Value* Lower, size_t FrameIndex, Instruction* InsertBefore) {
+    if (verbose)
+      errs() << "Recording lower at " << FrameIndex << "\n";
     (new StoreInst(Lower, recordedLowerPtrAtIndex(FrameIndex, InsertBefore), InsertBefore))
       ->setDebugLoc(InsertBefore->getDebugLoc());
   }
@@ -2500,9 +3189,18 @@ class Pizlonator {
 
     if (T == RawPtrTy) {
       assert(FrameIndexMap.count(ValuePtr(ValueKey, PtrIndex)));
-      size_t FrameIndex = FrameIndexMap[ValuePtr(ValueKey, PtrIndex)];
-      assert(FrameIndex >= NumSpecialFrameObjects);
-      recordLowerAtIndex(flightPtrLower(V, InsertBefore), FrameIndex, InsertBefore);
+      FrameEntry FE = FrameIndexMap[ValuePtr(ValueKey, PtrIndex)];
+      switch (FE.FEK) {
+      case FrameEntryKind::Ignored:
+        break;
+      case FrameEntryKind::Lower:
+        assert(FE.Index >= NumSpecialFrameObjects);
+        recordLowerAtIndex(flightPtrLower(V, InsertBefore), FE.Index, InsertBefore);
+        break;
+      default:
+        llvm_unreachable("Invalid FrameEntryKind");
+        break;
+      }
       PtrIndex++;
       return;
     }
@@ -2590,6 +3288,7 @@ class Pizlonator {
         ConstantArray::get(AT, SemanticDICs) });
     GlobalVariable* Result = new GlobalVariable(
       M, ST, true, GlobalVariable::PrivateLinkage, CS, "filc_optimized_access_check_origin");
+    Result->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     OptimizedAccessCheckOrigins[OACOK] = Result;
     return Result;
   }
@@ -2619,6 +3318,7 @@ class Pizlonator {
     GlobalVariable* AlignmentsG = new GlobalVariable(
       M, AT, true, GlobalVariable::PrivateLinkage, ConstantArray::get(AT, AlignmentConsts),
       "filc_alignments_and_offsets");
+    AlignmentsG->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
 
     size_t SemanticDILength = SemanticDI ? SemanticDI->Locations.size() : 0;
     AT = ArrayType::get(RawPtrTy, SemanticDILength + 1);
@@ -2634,6 +3334,7 @@ class Pizlonator {
     GlobalVariable* Result = new GlobalVariable(
       M, ST, true, GlobalVariable::PrivateLinkage, CS,
       "filc_optimized_alignment_contradiction_origin");
+    Result->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     OptimizedAlignmentContradictionOrigins[OACOK] = Result;
     return Result;
   }
@@ -2702,6 +3403,8 @@ class Pizlonator {
     if (Iter != CanonicalPtrAuxBaseVars.end())
       return Iter->second;
 
+    assert(AuxBaseVarCreationAllowed);
+
     Instruction* InsertBefore = &NewF->getEntryBlock().front();
     AllocaInst* Result = new AllocaInst(RawPtrTy, 0, nullptr, "filc_aux_base_var", InsertBefore);
     new StoreInst(RawNull, Result, InsertBefore);
@@ -2718,22 +3421,61 @@ class Pizlonator {
     (new StoreInst(Origin, OriginPtr, InsertBefore))->setDebugLoc(InsertBefore->getDebugLoc());
   }
 
-  AuxBaseAndPtr auxPtrForOperand(Value* P, Instruction* I, unsigned OperandIdx,
-                                 Instruction* InsertBefore) {
-    assert(AuxBaseVarOperands.count(I));
-    assert(OperandIdx < AuxBaseVarOperands[I].size());
-    AllocaInst* AuxBaseVar = AuxBaseVarOperands[I][OperandIdx];
-    assert(AuxBaseVar);
-    if (verbose) {
-      errs() << "For " << *I << " and operand index " << OperandIdx << " got AuxBaseVar = "
-             << *AuxBaseVar << "\n";
+  FullMemoryAccessData accessDataForOperand(Value* P, Instruction* I, unsigned OperandIdx,
+                                            Instruction* InsertBefore) {
+    if (verbose)
+      errs() << "Looking at " << *I << " and operand index " << OperandIdx << "\n";
+    assert(PtrOperandDatas.count(I));
+    assert(OperandIdx < PtrOperandDatas[I].size());
+    FullMemoryAccessData FMAD;
+    FMAD.POD = PtrOperandDatas[I][OperandIdx];
+    FMAD.MAD.P = flightPtrPtr(P, InsertBefore);
+    Value* Offset;
+    if (FMAD.POD.PK == PointerKind::Escaping) {
+      FMAD.MAD.Lower = flightPtrLower(P, InsertBefore);
+      if (verbose) {
+        errs() << "For " << *I << " and operand index " << OperandIdx << " got AuxBaseVar = "
+               << *FMAD.POD.AuxBaseVar << "\n";
+      }
+      Instruction* AuxBasePI = new LoadInst(
+        RawPtrTy, FMAD.POD.AuxBaseVar, "filc_aux_base_ptr", InsertBefore);
+      AuxBasePI->setDebugLoc(InsertBefore->getDebugLoc());
+      FMAD.MAD.AuxBaseP = AuxBasePI;
+      FMAD.MAD.MK = MemoryKind::Heap;
+      Offset = flightPtrOffset(P, InsertBefore);
+    } else {
+      if (verbose) {
+        errs() << "For " << *I << " and operand index " << OperandIdx << " got OrigAI  = "
+               << *FMAD.POD.LAD.OrigAI << "\n";
+      }
+      FMAD.MAD.AuxBaseP = FMAD.POD.LAD.Aux;
+      if (FMAD.POD.PK == PointerKind::LocalExplicit) {
+        FMAD.MAD.MK = MemoryKind::LocalExplicit;
+        Instruction* PayloadAsInt = new PtrToIntInst(
+          FMAD.POD.LAD.Payload, IntPtrTy, "filc_local_payload_as_int", InsertBefore);
+        PayloadAsInt->setDebugLoc(InsertBefore->getDebugLoc());
+        Instruction* OffsetI = BinaryOperator::Create(
+          Instruction::Sub, flightPtrPtrAsInt(P, InsertBefore), PayloadAsInt, "filc_local_ptr_offset",
+          InsertBefore);
+        OffsetI->setDebugLoc(OffsetI->getDebugLoc());
+        Offset = OffsetI;
+      } else {
+        assert(FMAD.POD.PK == PointerKind::LocalNaked);
+        assert(FMAD.POD.PAR.R == PtrRandomness::NotRandom);
+        FMAD.MAD.OrigAI = FMAD.POD.LAD.OrigAI;
+        FMAD.MAD.MK = MemoryKind::LocalNaked;
+        FMAD.MAD.LocalOffset = FMAD.POD.PAR.Offset;
+        FMAD.MAD.Size = FMAD.POD.LAD.Size;
+        assert(!(FMAD.MAD.Size % WordSize));
+        Offset = ConstantInt::get(IntPtrTy, FMAD.MAD.LocalOffset);
+      }
     }
-    Instruction* AuxBaseP = new LoadInst(RawPtrTy, AuxBaseVar, "filc_aux_base_ptr", InsertBefore);
-    AuxBaseP->setDebugLoc(InsertBefore->getDebugLoc());
-    Instruction* AuxP = GetElementPtrInst::Create(
-      Int8Ty, AuxBaseP, flightPtrOffset(P, InsertBefore), "filc_aux_ptr", InsertBefore);
-    AuxP->setDebugLoc(InsertBefore->getDebugLoc());
-    return AuxBaseAndPtr(AuxBaseVar, AuxBaseP, AuxP);
+    Instruction* AuxPI = GetElementPtrInst::Create(
+      Int8Ty, FMAD.MAD.AuxBaseP, Offset, "filc_aux_ptr", InsertBefore);
+    AuxPI->setDebugLoc(InsertBefore->getDebugLoc());
+    FMAD.MAD.AuxP = AuxPI;
+    FMAD.MAD.validate();
+    return FMAD;
   }
 
   void emitChecks(std::vector<AccessCheckWithDI> Checks, Instruction* Inst) {
@@ -2746,24 +3488,20 @@ class Pizlonator {
     for (size_t Index = 0; Index < Checks.size();) {
       Value* CanonicalPtr = Checks[Index].CanonicalPtr;
       Value* FlightPtr = lowerConstantValue(CanonicalPtr, Inst);
+      Value* UnderlyingPtr = underlyingPtr(CanonicalPtr).P;
+      PointerKind PK = pointerKindDirect(UnderlyingPtr);
+      LocalAllocaData LAD;
+      if (PK != PointerKind::Escaping) {
+        AllocaInst* AI = cast<AllocaInst>(UnderlyingPtr);
+        assert(LocalAllocaDatas.count(AI));
+        LAD = LocalAllocaDatas[AI];
+      }
 
       auto ptrWithOffset = [&] (int64_t Offset, Instruction* InsertBefore) {
         assert((int32_t)Offset == Offset);
         assert(FlightPtr);
         
-        if (!useAsmForOffsets)
-          return flightPtrWithOffset(FlightPtr, ConstantInt::get(IntPtrTy, Offset), InsertBefore);
-        
-        Value* FlightP = flightPtrPtr(FlightPtr, InsertBefore);
-        std::ostringstream buf;
-        buf << "leaq " << Offset << "($1), $0";
-        FunctionCallee Asm = InlineAsm::get(
-          FunctionType::get(RawPtrTy, { RawPtrTy }, false),
-          buf.str(), "=r,r,~{dirflag},~{fpsr},~{flags}",
-          /*hasSideEffects=*/false);
-        Instruction* OffsetP = CallInst::Create(Asm, { FlightP }, "filc_lea", InsertBefore);
-        OffsetP->setDebugLoc(Inst->getDebugLoc());
-        return flightPtrWithPtr(FlightPtr, OffsetP, InsertBefore);
+        return flightPtrWithOffset(FlightPtr, ConstantInt::get(IntPtrTy, Offset), InsertBefore);
       };
       
       int64_t Alignment = 0;
@@ -2848,11 +3586,27 @@ class Pizlonator {
           }
         }
 
+        if (PK == PointerKind::Escaping) {
+          CallInst::Create(
+            OptimizedAlignmentContradiction,
+            { FlightPtr,
+              optimizedAlignmentContradictionOrigin(Alignments, Inst->getDebugLoc(), RangeDI) },
+            "", Inst)->setDebugLoc(Inst->getDebugLoc());
+          continue;
+        }
+
+        Instruction* PayloadAsInt = new PtrToIntInst(
+          LAD.Payload, IntPtrTy, "filc_local_payload_as_int", Inst);
+        PayloadAsInt->setDebugLoc(Inst->getDebugLoc());
+        Instruction* Offset = BinaryOperator::Create(
+          Instruction::Sub, flightPtrPtrAsInt(FlightPtr, Inst), PayloadAsInt, "filc_local_offset",
+          Inst);
+        Offset->setDebugLoc(Inst->getDebugLoc());
         CallInst::Create(
-          OptimizedAlignmentContradiction, {
-            FlightPtr,
-            optimizedAlignmentContradictionOrigin(Alignments, Inst->getDebugLoc(), RangeDI) }, "",
-          Inst)->setDebugLoc(Inst->getDebugLoc());
+          OptimizedStackAlignmentContradiction,
+          { Offset, ConstantInt::get(IntPtrTy, LAD.Size),
+            optimizedAlignmentContradictionOrigin(Alignments, Inst->getDebugLoc(), RangeDI) },
+          "", Inst)->setDebugLoc(Inst->getDebugLoc());
         continue;
       }
 
@@ -2897,20 +3651,41 @@ class Pizlonator {
       if (HasRangeCheck) {
         RangeFailB = BasicBlock::Create(C, "filc_range_fail_block", NewF);
         Instruction* RangeFailTerm = new UnreachableInst(C, RangeFailB);
-        CallInst::Create(
-          OptimizedAccessCheckFail,
-          { ptrWithOffset(LowerBoundOffset, RangeFailTerm),
-            optimizedAccessCheckOrigin(
-              HasUpperBound ? UpperBoundOffset - LowerBoundOffset : 0, Alignment,
-              PositiveModulo(AlignmentOffset - LowerBoundOffset, Alignment),
-              NeedsWritable, Inst->getDebugLoc(), RangeDI) },
-          "", RangeFailTerm)->setDebugLoc(Inst->getDebugLoc());
+        if (PK == PointerKind::Escaping) {
+          CallInst::Create(
+            OptimizedAccessCheckFail,
+            { ptrWithOffset(LowerBoundOffset, RangeFailTerm),
+              optimizedAccessCheckOrigin(
+                HasUpperBound ? UpperBoundOffset - LowerBoundOffset : 0, Alignment,
+                PositiveModulo(AlignmentOffset - LowerBoundOffset, Alignment),
+                NeedsWritable, Inst->getDebugLoc(), RangeDI) },
+            "", RangeFailTerm)->setDebugLoc(Inst->getDebugLoc());
+        } else {
+          Instruction* PayloadAsInt = new PtrToIntInst(
+            LAD.Payload, IntPtrTy, "filc_local_payload_as_int", RangeFailTerm);
+          PayloadAsInt->setDebugLoc(Inst->getDebugLoc());
+          Instruction* Offset = BinaryOperator::Create(
+            Instruction::Sub,
+            flightPtrPtrAsInt(ptrWithOffset(LowerBoundOffset, RangeFailTerm), RangeFailTerm),
+            PayloadAsInt, "filc_local_offset", RangeFailTerm);
+          Offset->setDebugLoc(Inst->getDebugLoc());
+          CallInst::Create(
+            OptimizedStackAccessCheckFail,
+            { Offset, ConstantInt::get(IntPtrTy, LAD.Size),
+              optimizedAccessCheckOrigin(
+                HasUpperBound ? UpperBoundOffset - LowerBoundOffset : 0, Alignment,
+                PositiveModulo(AlignmentOffset - LowerBoundOffset, Alignment),
+                NeedsWritable, Inst->getDebugLoc(), RangeDI) },
+            "", RangeFailTerm)->setDebugLoc(Inst->getDebugLoc());
+        }
       }
 
       for (size_t SubIndex = BeginIndex; SubIndex < EndIndex; ++SubIndex) {
         AccessCheckWithDI AC = Checks[SubIndex];
         switch (AC.CK) {
         case CheckKind::ValidObject: {
+          if (PK != PointerKind::Escaping)
+            break;
           ICmpInst* NullObject = new ICmpInst(
             Inst, ICmpInst::ICMP_EQ, flightPtrLower(FlightPtr, Inst), RawNull,
             "filc_null_access_object");
@@ -2944,6 +3719,8 @@ class Pizlonator {
         }
 
         case CheckKind::CanWrite: {
+          if (PK != PointerKind::Escaping)
+            break;
           assert(NeedsWritable);
           BinaryOperator* Masked = BinaryOperator::Create(
             Instruction::And, flagsForLower(flightPtrLower(FlightPtr, Inst), Inst),
@@ -2960,6 +3737,8 @@ class Pizlonator {
         }
 
         case CheckKind::NotFree: {
+          if (PK != PointerKind::Escaping)
+            break;
           assert(HasFreeCheck);
           if ((HasLowerBound && HasUpperBound) || NeedsWritable)
             break;
@@ -2980,7 +3759,16 @@ class Pizlonator {
           assert(HasLowerBound);
           assert(HasUpperBound);
           assert(UpperBoundOffset > LowerBoundOffset);
-          Value* Upper = upperForLower(flightPtrLower(FlightPtr, Inst), Inst);
+          Value* Upper;
+          if (PK == PointerKind::Escaping)
+            Upper = upperForLower(flightPtrLower(FlightPtr, Inst), Inst);
+          else {
+            assert(LAD.Size != UINT64_MAX);
+            Instruction* GEP = GetElementPtrInst::Create(
+              Int8Ty, LAD.Payload, { ConstantInt::get(IntPtrTy, LAD.Size) }, "filc_stack_upper", Inst);
+            GEP->setDebugLoc(Inst->getDebugLoc());
+            Upper = GEP;
+          }
           Value* Ptr = flightPtrPtr(ptrWithOffset(LowerBoundOffset, Inst), Inst);
           Instruction* IsBelowUpper;
           if (UpperBoundOffset - LowerBoundOffset == Alignment
@@ -3012,9 +3800,14 @@ class Pizlonator {
 
         case CheckKind::LowerBound: {
           assert(HasLowerBound);
+          Value* Lower;
+          if (PK == PointerKind::Escaping)
+            Lower = flightPtrLower(FlightPtr, Inst);
+          else
+            Lower = LAD.Payload;
           Instruction* IsBelowLower = new ICmpInst(
             Inst, ICmpInst::ICMP_ULT, flightPtrPtr(ptrWithOffset(LowerBoundOffset, Inst), Inst),
-            flightPtrLower(FlightPtr, Inst), "filc_ptr_below_lower");
+            Lower, "filc_ptr_below_lower");
           IsBelowLower->setDebugLoc(Inst->getDebugLoc());
           SplitBlockAndInsertIfThen(
             expectFalse(IsBelowLower, Inst), Inst, false, nullptr, nullptr, nullptr, RangeFailB);
@@ -3022,6 +3815,8 @@ class Pizlonator {
         }
 
         case CheckKind::GetAuxPtr: {
+          if (PK != PointerKind::Escaping)
+            break;
           AllocaInst* AuxBaseVar = canonicalPtrAuxBaseVar(CanonicalPtr);
           (new StoreInst(auxPtrForLower(flightPtrLower(FlightPtr, Inst), Inst), AuxBaseVar,
                          Inst))->setDebugLoc(Inst->getDebugLoc());
@@ -3029,6 +3824,8 @@ class Pizlonator {
         }
 
         case CheckKind::EnsureAuxPtr: {
+          if (PK != PointerKind::Escaping)
+            break;
           AllocaInst* AuxBaseVar = canonicalPtrAuxBaseVar(CanonicalPtr);
           Instruction* AuxBase = new LoadInst(RawPtrTy, AuxBaseVar, "filc_get_aux_ptr", Inst);
           AuxBase->setDebugLoc(Inst->getDebugLoc());
@@ -3153,6 +3950,8 @@ class Pizlonator {
     assert(T != FlightPtrTy);
 
     if (T == RawPtrTy) {
+      // FIXME: atomic accesses do checks in native code, so it's kinda redundant that we also do them
+      // in compiled code. The aux ptr shenanigans are especially redundant.
       buildCheck(WordSize, WordSize, HighP, Offset, AK, DI, Checks);
       Checks.push_back(AccessCheckWithDI(HighP, 0, 0, CheckKind::GetAuxPtr, DI));
       if (AK == AccessKind::Write)
@@ -3196,6 +3995,33 @@ class Pizlonator {
     llvm_unreachable("Should not get here.");
   }
 
+  PtrAndRandom underlyingPtr(Value* P) {
+    PtrAndRandom PAR(P, PtrRandomness::NotRandom, 0);
+    while (GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(PAR.P)) {
+      PAR.P = GEP->getPointerOperand();
+      APInt OffsetAP(64, 0, false);
+      if (GEP->accumulateConstantOffset(DLBefore, OffsetAP))
+        PAR.Offset += OffsetAP.getZExtValue();
+      else
+        PAR.R = PtrRandomness::Random;
+    }
+    if ((int32_t)PAR.Offset != PAR.Offset)
+      PAR.R = PtrRandomness::Random;
+    if (PAR.R == PtrRandomness::Random)
+      PAR.Offset = 0;
+    return PAR;
+  }
+
+  PtrAndRandom underlyingPtr(PtrAndOffset PAO) {
+    return underlyingPtr(PAO.HighP).plus(PAO.Offset);
+  }
+
+  Instruction* getAsInstruction(ConstantExpr* CE) {
+    Instruction* I = CE->getAsInstruction();
+    dropUB(I);
+    return I;
+  }
+
   PtrAndOffset canonicalizePtr(Value* HighP) {
     Value* OriginalHighP = HighP;
     int64_t Offset = 0;
@@ -3210,7 +4036,7 @@ class Pizlonator {
 
     if (ConstantExpr* CE = dyn_cast<ConstantExpr>(HighP)) {
       if (CE->getOpcode() == Instruction::GetElementPtr) {
-        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(getAsInstruction(CE));
         APInt OffsetAP(64, 0, false);
         if (GEP->accumulateConstantOffset(DLBefore, OffsetAP)) {
           Offset += OffsetAP.getZExtValue();
@@ -3252,11 +4078,357 @@ class Pizlonator {
         }
         assert(!hasPtrs(IAD.T));
         break;
+      case Intrinsic::masked_compressstore:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = cast<FixedVectorType>(II->getArgOperand(0)->getType());
+        IAD.Ptr = II->getArgOperand(1);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        IAD.IsContiguous = true;
+        assert(!hasPtrs(IAD.T));
+        break;
+      case Intrinsic::masked_expandload:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Read;
+        IAD.T = cast<FixedVectorType>(II->getType());
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        IAD.IsContiguous = true;
+        assert(!hasPtrs(IAD.T));
+        break;
+      case Intrinsic::x86_avx_maskload_pd:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(DoubleTy, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskload_ps:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(FloatTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskload_pd_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(DoubleTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskload_ps_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(FloatTy, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_pd:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(DoubleTy, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_ps:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(FloatTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_pd_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(DoubleTy, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx_maskstore_ps_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(FloatTy, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      // AVX512 pmov downconvert masked stores.
+      // All have signature: void(ptr, source_vector, mask)
+      // IAD.T is the destination (narrowed) vector type.
+      // qb: i64->i8
+      case Intrinsic::x86_avx512_mask_pmov_qb_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovs_qb_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovus_qb_mem_128:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_qb_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovs_qb_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovus_qb_mem_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_qb_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovs_qb_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovus_qb_mem_512:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      // qw: i64->i16
+      case Intrinsic::x86_avx512_mask_pmov_qw_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovs_qw_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovus_qw_mem_128:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int16Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_qw_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovs_qw_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovus_qw_mem_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int16Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_qw_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovs_qw_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovus_qw_mem_512:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int16Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      // qd: i64->i32
+      case Intrinsic::x86_avx512_mask_pmov_qd_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovs_qd_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovus_qd_mem_128:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_qd_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovs_qd_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovus_qd_mem_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_qd_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovs_qd_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovus_qd_mem_512:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      // db: i32->i8
+      case Intrinsic::x86_avx512_mask_pmov_db_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovs_db_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovus_db_mem_128:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_db_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovs_db_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovus_db_mem_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_db_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovs_db_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovus_db_mem_512:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 16);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      // dw: i32->i16
+      case Intrinsic::x86_avx512_mask_pmov_dw_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovs_dw_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovus_dw_mem_128:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int16Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_dw_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovs_dw_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovus_dw_mem_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int16Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_dw_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovs_dw_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovus_dw_mem_512:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int16Ty, 16);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      // wb: i16->i8
+      case Intrinsic::x86_avx512_mask_pmov_wb_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovs_wb_mem_128:
+      case Intrinsic::x86_avx512_mask_pmovus_wb_mem_128:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx512_mask_pmov_wb_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovs_wb_mem_256:
+      case Intrinsic::x86_avx512_mask_pmovus_wb_mem_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 16);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
       case Intrinsic::x86_avx512_mask_pmov_wb_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovs_wb_mem_512:
+      case Intrinsic::x86_avx512_mask_pmovus_wb_mem_512:
+        assert(II->arg_size() == 3);
         IAD.AK = AccessKind::Write;
         IAD.T = FixedVectorType::get(Int8Ty, 32);
         IAD.Ptr = II->getArgOperand(0);
         IAD.Mask = II->getArgOperand(2);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_d:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int32Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_q:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int64Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_d_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int32Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskload_q_256:
+        assert(II->arg_size() == 2);
+        IAD.AK = AccessKind::Read;
+        IAD.T = FixedVectorType::get(Int64Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_d:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_q:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int64Ty, 2);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_d_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int32Ty, 8);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_avx2_maskstore_q_256:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int64Ty, 4);
+        IAD.Ptr = II->getArgOperand(0);
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_sse2_maskmov_dqu:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 16);
+        IAD.Ptr = II->getArgOperand(2);  // Note: maskmov uses (data, mask, ptr) order
+        IAD.Mask = II->getArgOperand(1);
+        IAD.Alignment = 1;
+        break;
+      case Intrinsic::x86_mmx_maskmovq:
+        assert(II->arg_size() == 3);
+        IAD.AK = AccessKind::Write;
+        IAD.T = FixedVectorType::get(Int8Ty, 8);
+        IAD.Ptr = II->getArgOperand(2);  // Note: maskmov uses (data, mask, ptr) order
+        IAD.Mask = II->getArgOperand(1);
         IAD.Alignment = 1;
         break;
       case Intrinsic::x86_sse3_ldu_dq:
@@ -3325,7 +4497,7 @@ class Pizlonator {
       return;
     }
 
-    if (isOptMemmoveCall(I)) {
+    if (isInlineableMemmoveCall(I)) {
       CallBase* CI = cast<CallBase>(I);
       size_t Count = cast<ConstantInt>(CI->getArgOperand(2))->getZExtValue();
       bool CouldHavePtrs = Count >= WordSize;
@@ -3364,6 +4536,11 @@ class Pizlonator {
     return AI->getPointerOperand();
   }
 
+  bool isHasUnionFT(FunctionType* FT) {
+    return FT->getNumParams() == 1 && !FT->isVarArg() &&
+      FT->getReturnType() == VoidTy && FT->getParamType(0) == RawPtrTy;
+  }
+
   bool isMemmoveFT(FunctionType* FT) {
     return FT->getNumParams() == 3 &&
       !FT->isVarArg() &&
@@ -3373,32 +4550,63 @@ class Pizlonator {
       FT->getParamType(2) == IntPtrTy;
   }
 
-  bool isCallToOptMemmove(CallBase* CI) {
+  bool isCallToRecognizableMemmove(CallBase* CI) {
     if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
       FunctionType* FT = CI->getFunctionType();
-      if ((F->isIntrinsic() && (F->getIntrinsicID() == Intrinsic::memcpy ||
-                                F->getIntrinsicID() == Intrinsic::memcpy_inline ||
-                                F->getIntrinsicID() == Intrinsic::memmove)) ||
-          ((F->getName() == "zmemmove_union" || F->getName() == "zmemmove_builtin")
-           && isMemmoveFT(FT))) {
-        if (ConstantInt* C = dyn_cast<ConstantInt>(CI->getArgOperand(2))) {
-          if (C->getBitWidth() <= 64) {
-            size_t Count = C->getZExtValue();
-            // This returns false for zero-length memmoves. We shouldn't see those ever, but if we
-            // did then we don't want to optimize them since the optimizations strongly (but subtly)
-            // assume that the count is not zero. Also return zero for any count that might
-            // overflow.
-            return Count && (uint32_t)(int32_t)Count == Count;
-          }
+      return ((F->isIntrinsic()
+               && (F->getIntrinsicID() == Intrinsic::memcpy ||
+                   F->getIntrinsicID() == Intrinsic::memcpy_inline ||
+                   F->getIntrinsicID() == Intrinsic::memmove)) ||
+              ((F->getName() == "zmemmove_union" || F->getName() == "zmemmove_builtin")
+               && isMemmoveFT(FT)));
+    }
+    return false;
+  }
+
+  bool isCallToNonescapingMemmove(CallBase* CI) {
+    if (!isCallToRecognizableMemmove(CI))
+      return false;
+    if (IntrinsicInst* II = dyn_cast<IntrinsicInst>(CI)) {
+      assert(II->getIntrinsicID() == Intrinsic::memcpy ||
+             II->getIntrinsicID() == Intrinsic::memcpy_inline ||
+             II->getIntrinsicID() == Intrinsic::memmove);
+      return isa<ConstantInt>(CI->getArgOperand(3))
+        && cast<ConstantInt>(CI->getArgOperand(3))->isZero();
+    }
+    return true;
+  }
+
+  bool isCallToInlineableMemmove(CallBase* CI) {
+    if (isCallToNonescapingMemmove(CI)) {
+      if (ConstantInt* C = dyn_cast<ConstantInt>(CI->getArgOperand(2))) {
+        if (C->getBitWidth() <= 64) {
+          size_t Count = C->getZExtValue();
+          // This returns false for zero-length memmoves. We shouldn't see those ever, but if we
+          // did then we don't want to optimize them since the optimizations strongly (but subtly)
+          // assume that the count is not zero. Also return zero for any count that might
+          // overflow.
+          return Count && (int32_t)Count >= 0 && (uint32_t)(int32_t)Count == Count;
         }
       }
     }
     return false;
   }
 
-  bool isOptMemmoveCall(Instruction* I) {
+  bool isRecognizableMemmoveCall(Instruction* I) {
     if (CallBase* CI = dyn_cast<CallBase>(I))
-      return isCallToOptMemmove(CI);
+      return isCallToRecognizableMemmove(CI);
+    return false;
+  }
+
+  bool isNonescapingMemmoveCall(Instruction* I) {
+    if (CallBase* CI = dyn_cast<CallBase>(I))
+      return isCallToNonescapingMemmove(CI);
+    return false;
+  }
+
+  bool isInlineableMemmoveCall(Instruction* I) {
+    if (CallBase* CI = dyn_cast<CallBase>(I))
+      return isCallToInlineableMemmove(CI);
     return false;
   }
 
@@ -3406,6 +4614,7 @@ class Pizlonator {
     return F->willReturn() ||
       F->getName() == "zmemmove_union" ||
       F->getName() == "zmemmove_builtin" ||
+      F->getName() == "zhas_union" ||
       F->getName() == "zgc_alloc" ||
       F->getName() == "malloc" ||
       F->getName() == "zgc_aligned_alloc" ||
@@ -3420,6 +4629,7 @@ class Pizlonator {
       F->getName() == "zgc_finq_aligned_alloc" ||
       F->getName() == "zgetlower" ||
       F->getName() == "zgetupper" ||
+      F->getName() == "zis_readonly" ||
       F->getName() == "zhasvalidcap" ||
       F->getName() == "zsetcap" ||
       F->getName() == "zptr_to_new_string" ||
@@ -3524,7 +4734,7 @@ class Pizlonator {
       return;
     }
 
-    if (isOptMemmoveCall(I)) {
+    if (isInlineableMemmoveCall(I)) {
       CallBase* CI = cast<CallBase>(I);
       // FIXME: This callback situation is confusing and imperfect.
       // FIXME: We actually know more about the alignment than what we're passing here.
@@ -3585,12 +4795,37 @@ class Pizlonator {
     });
   }
 
-  void captureAuxBaseVars(const std::vector<Instruction*>& Instructions) {
+  void capturePointerOperands(const std::vector<Instruction*>& Instructions) {
+    AuxBaseVarCreationAllowed = true;
     for (Instruction* I : Instructions) {
-      forEachCanonicalPtrOperand(I, [&] (PtrAndOffset PAO) {
-        AuxBaseVarOperands[I].push_back(canonicalPtrAuxBaseVar(PAO.HighP));
-      });
+      auto DealWithPtr = [&] (PtrAndOffset PAO) {
+        PtrOperandData POD;
+        POD.PAR = underlyingPtr(PAO);
+        POD.PK = pointerKindDirect(POD.PAR.P);
+        if (POD.PK == PointerKind::Escaping)
+          POD.AuxBaseVar = canonicalPtrAuxBaseVar(PAO.HighP);
+        else {
+          AllocaInst* AI = cast<AllocaInst>(POD.PAR.P);
+          assert(LocalAllocaDatas.count(AI));
+          POD.LAD = LocalAllocaDatas[AI];
+          if (POD.PK == PointerKind::LocalNaked)
+            assert(POD.PAR.R == PtrRandomness::NotRandom);
+        }
+        PtrOperandDatas[I].push_back(POD);
+      };
+
+      // The forEachChecks path won't consider non-opt memmoves, but our memmove lowering for stack
+      // locals needs us to consider the non-opt ones. YUCK!
+      if (isRecognizableMemmoveCall(I)) {
+        CallBase* CI = cast<CallBase>(I);
+        DealWithPtr(canonicalizePtr(CI->getArgOperand(0)));
+        DealWithPtr(canonicalizePtr(CI->getArgOperand(1)));
+        continue;
+      }
+      
+      forEachCanonicalPtrOperand(I, DealWithPtr);
     }
+    AuxBaseVarCreationAllowed = false;
   }
 
   const CombinedDI* hashConsDI(const CombinedDI& DI) {
@@ -4640,7 +5875,7 @@ class Pizlonator {
   size_t argsAlignment(const std::vector<ArgInfo>& Elements) {
     size_t Alignment = WordSize;
     iterateArgs(Elements, [&] (size_t Idx, ArgInfo AI, size_t Offset) {
-      Alignment = std::max(Alignment, DL.getABITypeAlign(AI.T).value());
+      Alignment = std::max(Alignment, AI.A.value());
     });
     return Alignment;
   }
@@ -4648,30 +5883,254 @@ class Pizlonator {
   std::vector<ArgInfo> argInfosForFunction(Function* F) {
     std::vector<ArgInfo> Elements;
     for (Argument& A : F->args()) {
-      if (A.hasByValAttr())
-        Elements.push_back(ArgInfo(A.getParamByValType(), ArgKind::ByVal));
-      else {
+      if (A.hasByValAttr()) {
+        Elements.push_back(
+          ArgInfo(
+            A.getParamByValType(),
+            ArgKind::ByVal,
+            std::max(DL.getABITypeAlign(A.getParamByValType()),
+                     A.getParamAlign().valueOrOne())));
+      } else {
         assert(!A.hasPassPointeeByValueCopyAttr());
-        Elements.push_back(ArgInfo(A.getType(), ArgKind::Direct));
+        Type* T = normalizeArgType(A.getType());
+        Elements.push_back(ArgInfo(T, ArgKind::Direct, DL.getABITypeAlign(T)));
       }
     }
     return Elements;
   }
 
-  std::vector<ArgInfo> argInfosForCall(CallBase* CB) {
-    std::vector<ArgInfo> Elements;
-    assert(InstTypeVectors.count(CB));
-    std::vector<Type*> ArgTypes = InstTypeVectors[CB];
-    assert(ArgTypes.size() == CB->arg_size());
-    for (size_t Idx = 0; Idx < CB->arg_size(); ++Idx) {
-      if (CB->isByValArgument(Idx))
-        Elements.push_back(ArgInfo(CB->getParamByValType(Idx), ArgKind::ByVal));
-      else {
-        assert(!CB->isPassPointeeByValueArgument(Idx));
-        Elements.push_back(ArgInfo(ArgTypes[Idx], ArgKind::Direct));
+  Type* normalizeArgType(Type* T) {
+    assert(!isa<FunctionType>(T));
+    assert(!isa<TypedPointerType>(T));
+    assert(!isa<ScalableVectorType>(T));
+    assert(T != FlightPtrTy);
+
+    if (IntegerType* IntT = dyn_cast<IntegerType>(T)) {
+      if (IntT->getBitWidth() < 64)
+        return Int64Ty;
+    }
+
+    return T;
+  }
+
+  Value* convertToNormalizedArgType(Type* T, Value* V, Instruction* Before) {
+    assert(!isa<FunctionType>(T));
+    assert(!isa<TypedPointerType>(T));
+    assert(!isa<ScalableVectorType>(T));
+    assert(T != FlightPtrTy);
+
+    if (IntegerType* IntT = dyn_cast<IntegerType>(T)) {
+      if (IntT->getBitWidth() < 64) {
+        Instruction* ZExt = new ZExtInst(V, Int64Ty, "filc_arg_zext", Before);
+        ZExt->setDebugLoc(Before->getDebugLoc());
+        return ZExt;
       }
     }
-    return Elements;
+
+    return V;
+  }
+
+  Value* convertFromNormalizedArgType(Type* T, Value* V, Instruction* Before) {
+    assert(!isa<FunctionType>(T));
+    assert(!isa<TypedPointerType>(T));
+    assert(!isa<ScalableVectorType>(T));
+    assert(T != FlightPtrTy);
+
+    if (IntegerType* IntT = dyn_cast<IntegerType>(T)) {
+      if (IntT->getBitWidth() < 64) {
+        Instruction* Trunc = new TruncInst(V, T, "filc_arg_trunc", Before);
+        Trunc->setDebugLoc(Before->getDebugLoc());
+        return Trunc;
+      }
+    }
+
+    return V;
+  }
+
+  Type* normalizeRetType(Type* T) {
+    if (StructType* ST = dyn_cast<StructType>(T)) {
+      assert(!ST->isOpaque());
+      if (ST->isLiteral() && !ST->isPacked()) {
+        std::vector<Type*> Elements;
+        for (Type* InnerT : ST->elements())
+          Elements.push_back(normalizeArgType(InnerT));
+        return StructType::get(C, Elements, false);
+      }
+      return ST;
+    }
+
+    return normalizeArgType(T);
+  }
+
+  Value* insertAndNormalizeReturn(Type* T, Value* V, Value* Result, Instruction* Before) {
+    if (StructType* ST = dyn_cast<StructType>(T)) {
+      assert(!ST->isOpaque());
+      assert(ST->isLiteral());
+      assert(!ST->isPacked());
+      for (unsigned Index = ST->getNumElements(); Index--;) {
+        Type* InnerT = ST->getElementType(Index);
+        Instruction* InnerV = ExtractValueInst::Create(
+          toFlightType(InnerT), V, { Index }, "filc_insert_and_normalize_return_extract",
+          Before);
+        InnerV->setDebugLoc(Before->getDebugLoc());
+        Instruction* Insert = InsertValueInst::Create(
+          Result, convertToNormalizedArgType(InnerT, InnerV, Before), Index + 1,
+          "filc_insert_and_normalize_return_insert", Before);
+        Insert->setDebugLoc(Before->getDebugLoc());
+        Result = Insert;
+      }
+      return Result;
+    }
+
+    Instruction* Insert = InsertValueInst::Create(
+      Result, convertToNormalizedArgType(T, V, Before), 1,
+      "filc_insert_and_normalize_return_insert_one", Before);
+    Insert->setDebugLoc(Before->getDebugLoc());
+    return Insert;
+  }
+
+  Value* normalizeReturn(Type* T, Value* V, Instruction* Before) {
+    if (StructType* ST = dyn_cast<StructType>(T)) {
+      assert(!ST->isOpaque());
+      if (ST->isLiteral() && !ST->isPacked()) {
+        Value* Result = UndefValue::get(normalizeRetType(T));
+        for (unsigned Index = ST->getNumElements(); Index--;) {
+          Type* InnerT = ST->getElementType(Index);
+          Instruction* InnerV = ExtractValueInst::Create(
+            toFlightType(InnerT), V, { Index }, "filc_normalize_return_extract",
+            Before);
+          InnerV->setDebugLoc(Before->getDebugLoc());
+          Instruction* Insert = InsertValueInst::Create(
+            Result, convertToNormalizedArgType(InnerT, InnerV, Before), Index,
+            "filc_normalize_return_insert", Before);
+          Insert->setDebugLoc(Before->getDebugLoc());
+          Result = Insert;
+        }
+        return Result;
+      }
+      return V;
+    }
+
+    return convertToNormalizedArgType(T, V, Before);
+  }
+
+  Value* extractAndDenormalizeReturn(Type* T, Value* V, Instruction* Before) {
+    if (StructType* ST = dyn_cast<StructType>(T)) {
+      assert(!ST->isOpaque());
+      assert(ST->isLiteral());
+      assert(!ST->isPacked());
+      Value* Result = UndefValue::get(toFlightType(T));
+      for (unsigned Index = ST->getNumElements(); Index--;) {
+        Type* InnerT = ST->getElementType(Index);
+        Instruction* InnerV = ExtractValueInst::Create(
+          toFlightType(normalizeArgType(InnerT)), V, { Index + 1 },
+          "filc_extract_and_denormalize_return_extract", Before);
+        InnerV->setDebugLoc(Before->getDebugLoc());
+        Instruction* Insert = InsertValueInst::Create(
+          Result, convertFromNormalizedArgType(InnerT, InnerV, Before), { Index },
+          "filc_extract_and_denormalize_return_insert", Before);
+        Insert->setDebugLoc(Before->getDebugLoc());
+        Result = Insert;
+      }
+      return Result;
+    }
+
+    Instruction* Extract = ExtractValueInst::Create(
+      toFlightType(normalizeArgType(T)), V, { 1 },
+      "filc_extract_and_dernomalize_return_extract_one", Before);
+    Extract->setDebugLoc(Before->getDebugLoc());
+    return convertFromNormalizedArgType(T, Extract, Before);
+  }
+
+  Value* denormalizeReturn(Type* T, Value* V, Instruction* Before) {
+    if (StructType* ST = dyn_cast<StructType>(T)) {
+      assert(!ST->isOpaque());
+      if (ST->isLiteral() && !ST->isPacked()) {
+        Value* Result = UndefValue::get(toFlightType(T));
+        for (unsigned Index = ST->getNumElements(); Index--;) {
+          Type* InnerT = ST->getElementType(Index);
+          Instruction* InnerV = ExtractValueInst::Create(
+            toFlightType(normalizeArgType(InnerT)), V, { Index },
+            "filc_extract_and_denormalize_return_extract", Before);
+          InnerV->setDebugLoc(Before->getDebugLoc());
+          Instruction* Insert = InsertValueInst::Create(
+            Result, convertFromNormalizedArgType(InnerT, InnerV, Before), { Index },
+            "filc_extract_and_denormalize_return_insert", Before);
+          Insert->setDebugLoc(Before->getDebugLoc());
+          Result = Insert;
+        }
+        return Result;
+      }
+      return V;
+    }
+
+    return convertFromNormalizedArgType(T, V, Before);
+  }
+
+  FastArgType fastArgType(Type* T) {
+    assert(T != FlightPtrTy);
+    if (T == Int64Ty)
+      return FastArgType::Int64;
+    if (T == FloatTy)
+      return FastArgType::Float;
+    if (T == DoubleTy)
+      return FastArgType::Double;
+    if (T->isX86_FP80Ty())
+      return FastArgType::LongDouble;
+    if (VectorType* VecT = dyn_cast<VectorType>(T)) {
+      if (DL.getTypeAllocSize(VecT) == 64)
+        return FastArgType::Vec512;
+      if (DL.getTypeAllocSize(VecT) == 32)
+        return FastArgType::Vec256;
+      if (DL.getTypeAllocSize(VecT) == 16)
+        return FastArgType::Vec128;
+      return FastArgType::Invalid;
+    }
+    if (T == RawPtrTy)
+      return FastArgType::Ptr;
+    return FastArgType::Invalid;
+  }
+
+  template<typename Func>
+  void iterateReturnType(Type* T, const Func& func) {
+    if (T == VoidTy)
+      return;
+    if (StructType* ST = dyn_cast<StructType>(T)) {
+      assert(!ST->isOpaque());
+      if (ST->isLiteral() && !ST->isPacked()) {
+        for (unsigned Index = 0; Index < ST->getNumElements(); ++Index)
+          func(ST->getElementType(Index));
+        return;
+      }
+    }
+    func(T);
+  }
+
+  uint64_t computeSignature(const std::vector<Type*>& NormalizedArgTypes, Type* NormalizedRetType) {
+    FastTypeAccumulator RetAcc;
+    iterateReturnType(NormalizedRetType, [&] (Type* T) {
+      RetAcc.addType(fastArgType(T));
+    });
+    if (!RetAcc.isValid() || RetAcc.getNum() > 2)
+      return GenericSignature;
+    FastTypeAccumulator ArgAcc;
+    for (Type* ArgT : NormalizedArgTypes)
+      ArgAcc.addType(fastArgType(ArgT));
+    if (!ArgAcc.isValid() || ArgAcc.getNum() > 16)
+      return GenericSignature;
+    assert(RetAcc.getResult() < 133);
+    return SafeAdd64(1, SafeAdd64(RetAcc.getResult(), SafeMul64(ArgAcc.getResult(), 133)));
+  }
+
+  uint64_t computeSignature(const std::vector<ArgInfo>& AIs, Type* NormalizedRetType) {
+    std::vector<Type*> NormalizedArgTypes;
+    for (ArgInfo AI : AIs) {
+      if (AI.AK != ArgKind::Direct)
+        return GenericSignature;
+      assert(normalizeArgType(AI.T) == AI.T);
+      NormalizedArgTypes.push_back(AI.T);
+    }
+    return computeSignature(NormalizedArgTypes, NormalizedRetType);
   }
 
   std::vector<Value*> loadCC(const std::vector<ArgInfo>& AIs, Value* PassedSize,
@@ -4769,10 +6228,19 @@ class Pizlonator {
       switch (AI.AK) {
       case ArgKind::Direct:
         Result = loadValueRecurseAfterCheck(
-          ArgT, PayloadPtr, AuxAlloca, AuxPtr, false, DL.getABITypeAlign(ArgT),
-          AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::CC, InsertBefore);
+          ArgT, MemoryAccessData(nullptr, PayloadPtr, AuxPtr, AuxAlloca, MemoryKind::CC), false,
+          DL.getABITypeAlign(ArgT), AtomicOrdering::NotAtomic, SyncScope::System, InsertBefore);
         break;
       case ArgKind::ByVal:
+        if (AI.A.value() > GCMinAlign) {
+          Result = CallInst::Create(
+            PromoteAlreadyCheckedStackToHeapWithAlignmentWithoutExiting,
+            { MyThread, PayloadPtr, AuxPtr,
+              ConstantInt::get(IntPtrTy, (DL.getTypeAllocSize(ArgT) + WordSize - 1) & -WordSize),
+              ConstantInt::get(IntPtrTy, AI.A.value()) },
+            "filc_promote_stack", InsertBefore);
+          break;
+        }
         Result = CallInst::Create(
           PromoteAlreadyCheckedStackToHeapWithoutExiting,
           { MyThread, PayloadPtr, AuxPtr,
@@ -4793,7 +6261,7 @@ class Pizlonator {
   Value* loadCC(Type* T, Value* PassedSize, FunctionCallee CCCheckFailure, Instruction* InsertBefore,
                 DebugLoc DI) {
     std::vector<ArgInfo> AIs;
-    AIs.push_back(ArgInfo(T, ArgKind::Direct));
+    AIs.push_back(ArgInfo(T, ArgKind::Direct, DL.getABITypeAlign(T)));
     std::vector<Value*> Vs = loadCC(AIs, PassedSize, CCCheckFailure, InsertBefore, DI);
     assert(Vs.size() == 1);
     return Vs[0];
@@ -4857,8 +6325,9 @@ class Pizlonator {
       switch (AI.AK) {
       case ArgKind::Direct: {
         storeValueRecurseAfterCheck(
-          ArgT, Vs[Index], PayloadPtr, AuxPtr, false, DL.getABITypeAlign(ArgT),
-          AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::CC, InsertBefore);
+          ArgT, Vs[Index], MemoryAccessData(nullptr, PayloadPtr, AuxPtr, AuxAlloca, MemoryKind::CC),
+          false, DL.getABITypeAlign(ArgT), AtomicOrdering::NotAtomic, SyncScope::System,
+          InsertBefore);
         break;
       }
       case ArgKind::ByVal: {
@@ -4938,7 +6407,7 @@ class Pizlonator {
 
   Value* storeCC(Type* T, Value* V, Instruction* InsertBefore, DebugLoc DI) {
     std::vector<ArgInfo> AIs;
-    AIs.push_back(ArgInfo(T, ArgKind::Direct));
+    AIs.push_back(ArgInfo(T, ArgKind::Direct, DL.getABITypeAlign(T)));
     std::vector<Value*> Vs;
     Vs.push_back(V);
     return storeCC(AIs, Vs, InsertBefore, DI);
@@ -5093,7 +6562,7 @@ class Pizlonator {
       case Instruction::GetElementPtr: {
         ConstantTarget Target = constexprRecurse(CE->getOperand(0));
         APInt OffsetAP(64, 0, false);
-        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(getAsInstruction(CE));
         bool result = GEP->accumulateConstantOffset(DL, OffsetAP);
         GEP->deleteValue();
         if (!result)
@@ -5107,6 +6576,7 @@ class Pizlonator {
             ConstantInt::get(IntPtrTy, Offset) });
         GlobalVariable* ExprG = new GlobalVariable(
           M, ConstexprNodeTy, true, GlobalVariable::PrivateLinkage, CS, "filc_constexpr_gep_node");
+        ExprG->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
         return ConstantTarget(ConstantKind::Expr, ExprG);
       }
       default:
@@ -5187,12 +6657,15 @@ class Pizlonator {
       assert(!GlobalToGetter.count(nullptr));
       assert(!Getters.count(nullptr));
       assert(!Getters.count(G));
+      if (!GlobalToGetter.count(G))
+        errs() << "Cannot find getter for: " << *G << "\n";
       assert(GlobalToGetter.count(G));
       assert(MyThread);
       Function* Getter = GlobalToGetter[G];
       assert(Getter);
-      if (Getter->isDeclaration() &&
-          (Getter->hasWeakAnyLinkage() || Getter->hasExternalWeakLinkage())) {
+      if (((Getter->hasWeakLinkage() || Getter->hasLinkOnceLinkage()) &&
+           GlobalToComdat.count(G)) ||
+          Getter->hasExternalWeakLinkage()) {
         ICmpInst* IsNull = new ICmpInst(
           InsertBefore, ICmpInst::ICMP_EQ, Getter, RawNull, "filc_weak_symbol_is_null");
         IsNull->setDebugLoc(InsertBefore->getDebugLoc());
@@ -5261,7 +6734,8 @@ class Pizlonator {
     if (verbose)
       errs() << "Lowering CE = " << *CE << "\n";
 
-    Instruction* CEInst = CE->getAsInstruction(InsertBefore);
+    Instruction* CEInst = getAsInstruction(CE);
+    CEInst->insertBefore(InsertBefore);
     CEInst->setDebugLoc(InsertBefore->getDebugLoc());
 
     // I am the worst compiler programmer.
@@ -5368,12 +6842,6 @@ class Pizlonator {
     Value* Ptr = IAD.Ptr;
     Value* Mask = IAD.Mask;
     assert(!hasPtrs(T));
-    uint64_t MaskSize = DL.getTypeSizeInBits(Mask->getType()).getFixedValue();
-    // Currently filc_masked_access_check_fail can only handle 64 bit masks max.
-    assert(MaskSize <= 64);
-    assert(MaskSize == T->getElementCount().getFixedValue());
-    assert(MaskSize * DL.getTypeAllocSize(T->getElementType()) == DL.getTypeAllocSize(T));
-    Type* MaskIntTy = Type::getIntNTy(C, MaskSize);
         
     // FIXME: We could query the abstract state to see if this is already above this lower bound.
     Instruction* IsBelowLowerFast = new ICmpInst(
@@ -5403,85 +6871,173 @@ class Pizlonator {
     //
     // This is an overflow-free way of saying:
     // Ptr + Offset >= Lower
-    Instruction* MaskInt = new BitCastInst(Mask, MaskIntTy, "filc_mask_as_int", BelowLowerTerm);
-    MaskInt->setDebugLoc(II->getDebugLoc());
+    uint64_t MaskSize = T->getElementCount().getFixedValue();
+    // Currently filc_masked_access_check_fail can only handle 64 bit masks max.
+    assert(MaskSize <= 64);
+    assert(MaskSize * DL.getTypeAllocSize(T->getElementType()) == DL.getTypeAllocSize(T));
+    Type* MaskIntTy = Type::getIntNTy(C, MaskSize);
+    auto FixMask = [&] (Instruction* Before) -> Value* {
+      Value* Result = Mask;
+      if (FixedVectorType* MaskVT = dyn_cast<FixedVectorType>(Result->getType())) {
+        assert(MaskVT->getElementCount().getFixedValue() == MaskSize);
+        if (MaskVT->getElementType() != Int1Ty) {
+          Instruction* Bools = new ICmpInst(
+            Before, ICmpInst::ICMP_SLT, Result, ConstantAggregateZero::get(Result->getType()),
+            "filc_mask_get_bools");
+          Bools->setDebugLoc(II->getDebugLoc());
+          Result = Bools;
+        }
+      }
+      if (Result->getType() != MaskIntTy) {
+        Instruction* MaskInt;
+        if (Result->getType()->isIntegerTy() &&
+            Result->getType()->getIntegerBitWidth() > MaskSize)
+          MaskInt = new TruncInst(Result, MaskIntTy, "filc_mask_trunc", Before);
+        else
+          MaskInt = new BitCastInst(Result, MaskIntTy, "filc_mask_as_int", Before);
+        MaskInt->setDebugLoc(II->getDebugLoc());
+        Result = MaskInt;
+      }
+      return Result;
+    };
+    Value* MaskInt = FixMask(BelowLowerTerm);
     Instruction* MaskIsZero = new ICmpInst(
       BelowLowerTerm, ICmpInst::ICMP_EQ, MaskInt, ConstantInt::get(MaskIntTy, 0),
       "filc_mask_is_zero");
     MaskIsZero->setDebugLoc(II->getDebugLoc());
     SplitBlockAndInsertIfThen(
       MaskIsZero, BelowLowerTerm, false, nullptr, nullptr, nullptr, II->getParent());
-    Instruction* TrailingZeroes = CallInst::Create(
-      Intrinsic::getDeclaration(&M, Intrinsic::cttz, MaskIntTy),
-      { MaskInt, ConstantInt::getTrue(Int1Ty) }, "filc_mask_trailing_zeroes", BelowLowerTerm);
-    TrailingZeroes->setDebugLoc(II->getDebugLoc());
-    Instruction* Offset = BinaryOperator::Create(
-      Instruction::Mul, makeIntPtr(TrailingZeroes, BelowLowerTerm),
-      ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
-      "filc_mask_offset", BelowLowerTerm);
-    Offset->setDebugLoc(II->getDebugLoc());
-    Instruction* NegativeOffset = BinaryOperator::Create(
-      Instruction::Sub, ConstantInt::get(IntPtrTy, 0), Offset, "filc_mask_neg_offset",
-      BelowLowerTerm);
-    NegativeOffset->setDebugLoc(II->getDebugLoc());
-    Instruction* LowerMinus = GetElementPtrInst::Create(
-      Int8Ty, flightPtrLower(Ptr, BelowLowerTerm), { NegativeOffset },
-      "filc_lower_minus_masked_offset", BelowLowerTerm);
-    LowerMinus->setDebugLoc(II->getDebugLoc());
-    Instruction* IsBelowLower = new ICmpInst(
-      BelowLowerTerm, ICmpInst::ICMP_ULT, flightPtrPtr(Ptr, BelowLowerTerm), LowerMinus,
-      "filc_ptr_below_lower_masked");
-    IsBelowLower->setDebugLoc(II->getDebugLoc());
-    Instruction* FailTerm = SplitBlockAndInsertIfThen(
-      expectFalse(IsBelowLower, BelowLowerTerm), BelowLowerTerm, true);
-    PHINode* MaskIntPhi = PHINode::Create(MaskIntTy, 2, "filc_mask_as_int_phi", FailTerm);
-    MaskIntPhi->addIncoming(MaskInt, IsBelowLower->getParent());
+    Instruction* FailTerm;
+    PHINode* MaskIntPhi;
+    if (IAD.IsContiguous) {
+      // For contiguous access (compressstore/expandload), if ptr < lower and mask != 0,
+      // the access starts at ptr which is below the lower bound, so it always fails.
+      BasicBlock* FailPred = BelowLowerTerm->getParent();
+      FailTerm = SplitBlockAndInsertIfThen(
+        ConstantInt::getTrue(Int1Ty), BelowLowerTerm, true);
+      MaskIntPhi = PHINode::Create(MaskIntTy, 2, "filc_mask_as_int_phi", FailTerm);
+      MaskIntPhi->addIncoming(MaskInt, FailPred);
+    } else {
+      // For fixed-position access, use cttz to find the first active element.
+      Instruction* TrailingZeroes = CallInst::Create(
+        Intrinsic::getOrInsertDeclaration(&M, Intrinsic::cttz, MaskIntTy),
+        { MaskInt, ConstantInt::getTrue(Int1Ty) }, "filc_mask_trailing_zeroes", BelowLowerTerm);
+      TrailingZeroes->setDebugLoc(II->getDebugLoc());
+      Instruction* Offset = BinaryOperator::Create(
+        Instruction::Mul, makeIntPtr(TrailingZeroes, BelowLowerTerm),
+        ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
+        "filc_mask_offset", BelowLowerTerm);
+      Offset->setDebugLoc(II->getDebugLoc());
+      Instruction* NegativeOffset = BinaryOperator::Create(
+        Instruction::Sub, ConstantInt::get(IntPtrTy, 0), Offset, "filc_mask_neg_offset",
+        BelowLowerTerm);
+      NegativeOffset->setDebugLoc(II->getDebugLoc());
+      Instruction* LowerMinus = GetElementPtrInst::Create(
+        Int8Ty, flightPtrLower(Ptr, BelowLowerTerm), { NegativeOffset },
+        "filc_lower_minus_masked_offset", BelowLowerTerm);
+      LowerMinus->setDebugLoc(II->getDebugLoc());
+      Instruction* IsBelowLower = new ICmpInst(
+        BelowLowerTerm, ICmpInst::ICMP_ULT, flightPtrPtr(Ptr, BelowLowerTerm), LowerMinus,
+        "filc_ptr_below_lower_masked");
+      IsBelowLower->setDebugLoc(II->getDebugLoc());
+      FailTerm = SplitBlockAndInsertIfThen(
+        expectFalse(IsBelowLower, BelowLowerTerm), BelowLowerTerm, true);
+      MaskIntPhi = PHINode::Create(MaskIntTy, 2, "filc_mask_as_int_phi", FailTerm);
+      MaskIntPhi->addIncoming(MaskInt, IsBelowLower->getParent());
+    }
         
     // First we identify the true Size of the access. Then we do:
     // Ptr <= Upper - Size
     //
     // This is an overflow-free way of saying:
     // Ptr + Size <= Upper
-    MaskInt = new BitCastInst(Mask, MaskIntTy, "filc_mask_as_int", AboveUpperTerm);
-    MaskInt->setDebugLoc(II->getDebugLoc());
+    MaskInt = FixMask(AboveUpperTerm);
     MaskIsZero = new ICmpInst(
       AboveUpperTerm, ICmpInst::ICMP_EQ, MaskInt, ConstantInt::get(MaskIntTy, 0),
       "filc_mask_is_zero");
     MaskIsZero->setDebugLoc(II->getDebugLoc());
     SplitBlockAndInsertIfThen(
       MaskIsZero, AboveUpperTerm, false, nullptr, nullptr, nullptr, II->getParent());
-    Instruction* LeadingZeroes = CallInst::Create(
-      Intrinsic::getDeclaration(&M, Intrinsic::ctlz, MaskIntTy),
-      { MaskInt, ConstantInt::getTrue(Int1Ty) }, "filc_mask_trailing_zeroes", AboveUpperTerm);
-    LeadingZeroes->setDebugLoc(II->getDebugLoc());
-    Instruction* OffsetFromEnd = BinaryOperator::Create(
-      Instruction::Mul, makeIntPtr(LeadingZeroes, AboveUpperTerm),
-      ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
-      "filc_mask_offset_from_end", AboveUpperTerm);
-    OffsetFromEnd->setDebugLoc(II->getDebugLoc());
-    UpperMinus = GetElementPtrInst::Create(
-      Int8Ty, UpperMinus, { OffsetFromEnd }, "filc_upper_minus_masked_offset",
-      AboveUpperTerm);
-    UpperMinus->setDebugLoc(II->getDebugLoc());
-    Instruction* IsBelowUpper = new ICmpInst(
-      AboveUpperTerm, ICmpInst::ICMP_ULE, flightPtrPtr(Ptr, AboveUpperTerm), UpperMinus,
-      "filc_ptr_below_equal_upper_masked");
-    IsBelowUpper->setDebugLoc(II->getDebugLoc());
-    SplitBlockAndInsertIfElse(
-      expectTrue(IsBelowUpper, AboveUpperTerm), AboveUpperTerm, false, nullptr, nullptr, nullptr,
-      FailTerm->getParent());
-    MaskIntPhi->addIncoming(MaskInt, IsBelowUpper->getParent());
+    if (IAD.IsContiguous) {
+      // For contiguous access, the accessed range is [Ptr, Ptr + popcount(mask) * elemsize).
+      // Check: Ptr + popcount(mask) * elemsize <= Upper, i.e., Ptr <= Upper - access_size.
+      Instruction* Popcount = CallInst::Create(
+        Intrinsic::getOrInsertDeclaration(&M, Intrinsic::ctpop, MaskIntTy),
+        { MaskInt }, "filc_mask_popcount", AboveUpperTerm);
+      Popcount->setDebugLoc(II->getDebugLoc());
+      Instruction* AccessSize = BinaryOperator::Create(
+        Instruction::Mul, makeIntPtr(Popcount, AboveUpperTerm),
+        ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
+        "filc_contiguous_access_size", AboveUpperTerm);
+      AccessSize->setDebugLoc(II->getDebugLoc());
+      Instruction* NegativeAccessSize = BinaryOperator::Create(
+        Instruction::Sub, ConstantInt::get(IntPtrTy, 0), AccessSize,
+        "filc_contiguous_neg_access_size", AboveUpperTerm);
+      NegativeAccessSize->setDebugLoc(II->getDebugLoc());
+      Instruction* UpperMinusContiguous = GetElementPtrInst::Create(
+        Int8Ty, upperForLower(flightPtrLower(Ptr, AboveUpperTerm), AboveUpperTerm),
+        { NegativeAccessSize }, "filc_upper_minus_contiguous", AboveUpperTerm);
+      UpperMinusContiguous->setDebugLoc(II->getDebugLoc());
+      Instruction* IsBelowUpper = new ICmpInst(
+        AboveUpperTerm, ICmpInst::ICMP_ULE, flightPtrPtr(Ptr, AboveUpperTerm),
+        UpperMinusContiguous, "filc_ptr_below_equal_upper_contiguous");
+      IsBelowUpper->setDebugLoc(II->getDebugLoc());
+      SplitBlockAndInsertIfElse(
+        expectTrue(IsBelowUpper, AboveUpperTerm), AboveUpperTerm, false, nullptr, nullptr, nullptr,
+        FailTerm->getParent());
+      MaskIntPhi->addIncoming(MaskInt, IsBelowUpper->getParent());
+    } else {
+      // For fixed-position access, use ctlz to find the last active element.
+      Instruction* LeadingZeroes = CallInst::Create(
+        Intrinsic::getOrInsertDeclaration(&M, Intrinsic::ctlz, MaskIntTy),
+        { MaskInt, ConstantInt::getTrue(Int1Ty) }, "filc_mask_trailing_zeroes", AboveUpperTerm);
+      LeadingZeroes->setDebugLoc(II->getDebugLoc());
+      Instruction* OffsetFromEnd = BinaryOperator::Create(
+        Instruction::Mul, makeIntPtr(LeadingZeroes, AboveUpperTerm),
+        ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
+        "filc_mask_offset_from_end", AboveUpperTerm);
+      OffsetFromEnd->setDebugLoc(II->getDebugLoc());
+      UpperMinus = GetElementPtrInst::Create(
+        Int8Ty, UpperMinus, { OffsetFromEnd }, "filc_upper_minus_masked_offset",
+        AboveUpperTerm);
+      UpperMinus->setDebugLoc(II->getDebugLoc());
+      Instruction* IsBelowUpper = new ICmpInst(
+        AboveUpperTerm, ICmpInst::ICMP_ULE, flightPtrPtr(Ptr, AboveUpperTerm), UpperMinus,
+        "filc_ptr_below_equal_upper_masked");
+      IsBelowUpper->setDebugLoc(II->getDebugLoc());
+      SplitBlockAndInsertIfElse(
+        expectTrue(IsBelowUpper, AboveUpperTerm), AboveUpperTerm, false, nullptr, nullptr, nullptr,
+        FailTerm->getParent());
+      MaskIntPhi->addIncoming(MaskInt, IsBelowUpper->getParent());
+    }
 
-    CallInst::Create(
-      MaskedAccessCheckFail,
-      { Ptr, castInt(MaskIntPhi, Int64Ty, FailTerm),
-        ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)), ConstantInt::get(Int32Ty, isStore),
-        getOrigin(II->getDebugLoc()) },
-      "", FailTerm);
+    if (IAD.IsContiguous) {
+      CallInst::Create(
+        isStore ? CompressWriteCheckFail : ExpandReadCheckFail,
+        { Ptr, castInt(MaskIntPhi, Int64Ty, FailTerm),
+          ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T->getElementType())),
+          ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)),
+          getOrigin(II->getDebugLoc()) },
+        "", FailTerm);
+    } else {
+      CallInst::Create(
+        isStore ? MaskedWriteCheckFail : MaskedReadCheckFail,
+        { Ptr, castInt(MaskIntPhi, Int64Ty, FailTerm),
+          ConstantInt::get(IntPtrTy, DL.getTypeAllocSize(T)),
+          getOrigin(II->getDebugLoc()) },
+        "", FailTerm);
+    }
   }
-
+  
+  static constexpr unsigned InlineMemmoveDstSizeLimit = 40;
+  
   void emitOptMemmove(Value* Dst, Value* Src, size_t Count, Instruction* I) {
-    if (Count <= 40) {
+    FullMemoryAccessData DstFMAD = accessDataForOperand(Dst, I, 0, I);
+    FullMemoryAccessData SrcFMAD = accessDataForOperand(Src, I, 1, I);
+    
+    if (Count <= InlineMemmoveDstSizeLimit
+        || DstFMAD.MAD.MK == MemoryKind::LocalNaked
+        || SrcFMAD.MAD.MK == MemoryKind::LocalNaked) {
       // Let's consider the number of ptr words that have to be loaded and stored for different
       // counts.
       //
@@ -5688,50 +7244,11 @@ class Pizlonator {
       // Copy the payload.
       Value* DstP = flightPtrPtr(Dst, I);
       Value* SrcP = flightPtrPtr(Src, I);
-      Instruction* Threshold = CallInst::Create(DoNothing, { }, "", I);
-      size_t Offset = 0;
-      if (ultraVerbose)
-        errs() << "Offset = " << Offset << ", Count = " << Count << "\n";
-      while (Offset < Count) {
-        size_t Remaining = Count - Offset;
-        assert(Remaining);
-        Type* T;
-        size_t ActualOffset = Offset;
-        if (Remaining >= 5 && Count >= 8)
-          T = Int64Ty;
-        else if (Remaining >= 3 && Count >= 4)
-          T = Int32Ty;
-        else if (Remaining >= 2)
-          T = Int16Ty;
-        else
-          T = Int8Ty;
-        size_t AccessSize = DL.getTypeStoreSize(T);
-        if (ultraVerbose) {
-          errs() << "Offset = " << Offset << ", Count = " << Count << ", Remaining = " << Remaining
-                 << ", AccessSize = " << AccessSize << "\n";
-        }
-        if (AccessSize > Remaining) {
-          assert(ActualOffset >= AccessSize - Remaining);
-          ActualOffset -= AccessSize - Remaining;
-        }
-        assert(ActualOffset <= Offset);
-        assert(ActualOffset + AccessSize <= Count);
-        Instruction* LoadPtr = GetElementPtrInst::Create(
-          Int8Ty, SrcP, { ConstantInt::get(IntPtrTy, ActualOffset) }, "filc_memmove_load_ptr",
-          Threshold);
-        LoadPtr->setDebugLoc(I->getDebugLoc());
-        Instruction* Load = new LoadInst(T, LoadPtr, "filc_memmove_load", Threshold);
-        Load->setDebugLoc(I->getDebugLoc());
-        Instruction* StorePtr = GetElementPtrInst::Create(
-          Int8Ty, DstP, { ConstantInt::get(IntPtrTy, ActualOffset) }, "filc_memmove_store_ptr", I);
-        StorePtr->setDebugLoc(I->getDebugLoc());
-        (new StoreInst(Load, StorePtr, I))->setDebugLoc(I->getDebugLoc());
-        Offset = ActualOffset + AccessSize;
-      }
+      CallInst::Create(
+        RealMemmove, { DstP, SrcP, ConstantInt::get(IntPtrTy, Count), ConstantInt::getFalse(Int1Ty) },
+        "", I)->setDebugLoc(I->getDebugLoc());
 
       // Copy the lowers.
-      AuxBaseAndPtr DstAux = auxPtrForOperand(Dst, I, 0, I);
-      AuxBaseAndPtr SrcAux = auxPtrForOperand(Src, I, 1, I);
       std::vector<AllocaInst*> LowerAllocas;
       for (size_t Index = (Count + 7) / 8; Index--;) {
         AllocaInst* Alloca = new AllocaInst(
@@ -5775,7 +7292,8 @@ class Pizlonator {
       SplitBlockAndInsertIfThenElse(AllNull, I, &AllNullTerm, &NonNullTerm);
       BasicBlock* AllNullB = AllNullTerm->getParent();
       Instruction* SrcAuxIsNull = new ICmpInst(
-        BeforeNullCheck, ICmpInst::ICMP_EQ, SrcAux.BaseP, RawNull, "filc_memmove_src_aux_is_null");
+        BeforeNullCheck, ICmpInst::ICMP_EQ, SrcFMAD.MAD.AuxBaseP, RawNull,
+        "filc_memmove_src_aux_is_null");
       SrcAuxIsNull->setDebugLoc(I->getDebugLoc());
       SplitBlockAndInsertIfThen(
         SrcAuxIsNull, BeforeNullCheck, false, nullptr, nullptr, nullptr, AllNullB);
@@ -5827,34 +7345,40 @@ class Pizlonator {
             IntPtrTy, SrcAuxP, "filc_memmove_load_lower", false, Align(WordSize),
             AtomicOrdering::Monotonic, SyncScope::System, Before);
           Load->setDebugLoc(I->getDebugLoc());
-          Instruction* Masked = BinaryOperator::Create(
-            Instruction::And, Load, ConstantInt::get(IntPtrTy, AtomicBoxBit),
-            "filc_memmove_lower_atomic_box_bit", Before);
-          Masked->setDebugLoc(I->getDebugLoc());
-          Instruction* IsNotBox = new ICmpInst(
-            Before, ICmpInst::ICMP_EQ, Masked, ConstantInt::get(IntPtrTy, 0),
-            "filc_memmove_lower_is_not_box");
-          IsNotBox->setDebugLoc(I->getDebugLoc());
-          Instruction* NotBoxTerm;
-          Instruction* BoxTerm;
-          SplitBlockAndInsertIfThenElse(expectTrue(IsNotBox, Before), Before, &NotBoxTerm, &BoxTerm);
-          (new StoreInst(Load, LowerAllocas[Index], NotBoxTerm))->setDebugLoc(I->getDebugLoc());
-          Instruction* BoxAsInt = BinaryOperator::Create(
-            Instruction::And, Load, ConstantInt::get(IntPtrTy, ~AtomicBoxBit),
-            "filc_memmove_box_as_int", BoxTerm);
-          BoxAsInt->setDebugLoc(I->getDebugLoc());
-          Instruction* Box = new IntToPtrInst(BoxAsInt, RawPtrTy, "filc_memmove_box", BoxTerm);
-          Box->setDebugLoc(I->getDebugLoc());
-          Instruction* LowerFromBoxLoad = new LoadInst(
-            IntPtrTy, flightPtrLowerPtr(Box, BoxTerm), "filc_memmove_lower_from_box", false,
-            Align(WordSize), AtomicOrdering::Monotonic, SyncScope::System, BoxTerm);
-          LowerFromBoxLoad->setDebugLoc(I->getDebugLoc());
-          (new StoreInst(LowerFromBoxLoad, LowerAllocas[Index], BoxTerm))
-            ->setDebugLoc(I->getDebugLoc());
+          if (SrcFMAD.MAD.MK == MemoryKind::Heap) {
+            Instruction* Masked = BinaryOperator::Create(
+              Instruction::And, Load, ConstantInt::get(IntPtrTy, AtomicBoxBit),
+              "filc_memmove_lower_atomic_box_bit", Before);
+            Masked->setDebugLoc(I->getDebugLoc());
+            Instruction* IsNotBox = new ICmpInst(
+              Before, ICmpInst::ICMP_EQ, Masked, ConstantInt::get(IntPtrTy, 0),
+              "filc_memmove_lower_is_not_box");
+            IsNotBox->setDebugLoc(I->getDebugLoc());
+            Instruction* NotBoxTerm;
+            Instruction* BoxTerm;
+            SplitBlockAndInsertIfThenElse(expectTrue(IsNotBox, Before), Before, &NotBoxTerm, &BoxTerm);
+            (new StoreInst(Load, LowerAllocas[Index], NotBoxTerm))->setDebugLoc(I->getDebugLoc());
+            Instruction* BoxAsInt = BinaryOperator::Create(
+              Instruction::And, Load, ConstantInt::get(IntPtrTy, ~AtomicBoxBit),
+              "filc_memmove_box_as_int", BoxTerm);
+            BoxAsInt->setDebugLoc(I->getDebugLoc());
+            Instruction* Box = new IntToPtrInst(BoxAsInt, RawPtrTy, "filc_memmove_box", BoxTerm);
+            Box->setDebugLoc(I->getDebugLoc());
+            Instruction* LowerFromBoxLoad = new LoadInst(
+              IntPtrTy, flightPtrLowerPtr(Box, BoxTerm), "filc_memmove_lower_from_box", false,
+              Align(WordSize), AtomicOrdering::Monotonic, SyncScope::System, BoxTerm);
+            LowerFromBoxLoad->setDebugLoc(I->getDebugLoc());
+            (new StoreInst(LowerFromBoxLoad, LowerAllocas[Index], BoxTerm))
+              ->setDebugLoc(I->getDebugLoc());
+          } else {
+            assert(SrcFMAD.MAD.MK == MemoryKind::LocalExplicit ||
+                   SrcFMAD.MAD.MK == MemoryKind::LocalNaked);
+            (new StoreInst(Load, LowerAllocas[Index], Before))->setDebugLoc(I->getDebugLoc());
+          }
         };
-        LoadLower(SrcAux.P, 0, AlignedTerm);
+        LoadLower(SrcFMAD.MAD.AuxP, 0, AlignedTerm);
         Instruction* SrcAuxPInt =
-          new PtrToIntInst(SrcAux.P, IntPtrTy, "filc_memmove_src_aux_int", MisalignedTerm);
+          new PtrToIntInst(SrcFMAD.MAD.AuxP, IntPtrTy, "filc_memmove_src_aux_int", MisalignedTerm);
         SrcAuxPInt->setDebugLoc(I->getDebugLoc());
         Instruction* SrcRoundedDownInt = BinaryOperator::Create(
           Instruction::And, SrcAuxPInt, ConstantInt::get(IntPtrTy, -WordSize),
@@ -5864,7 +7388,7 @@ class Pizlonator {
           SrcRoundedDownInt, RawPtrTy, "filc_memmove_src_aux_rounded_down", MisalignedTerm);
         SrcRoundedDown->setDebugLoc(I->getDebugLoc());
         PHINode* BaseSrc = PHINode::Create(RawPtrTy, 2, "filc_memmove_src_aux_base", BeforeNullCheck);
-        BaseSrc->addIncoming(SrcAux.P, AlignedTerm->getParent());
+        BaseSrc->addIncoming(SrcFMAD.MAD.AuxP, AlignedTerm->getParent());
         BaseSrc->addIncoming(SrcRoundedDown, MisalignedTerm->getParent());
         BaseSrc->setDebugLoc(I->getDebugLoc());
         for (size_t Index = 1; Index < Count / WordSize; ++Index) {
@@ -5896,66 +7420,74 @@ class Pizlonator {
       Instruction* StoreLowersTerm = StoreLowersB->getTerminator();
       Instruction* StoreExtraTerm = StoreExtraB->getTerminator();
       assert(StoreLowersTerm != StoreExtraTerm);
-      Instruction* DstAuxIsNull = new ICmpInst(
-        AllNullTerm, ICmpInst::ICMP_EQ, DstAux.BaseP, RawNull, "filc_memmove_dst_aux_is_null");
-      DstAuxIsNull->setDebugLoc(I->getDebugLoc());
-      SplitBlockAndInsertIfThen(
-        DstAuxIsNull, AllNullTerm, false, nullptr, nullptr, nullptr, DoneB);
-      DstAuxIsNull = new ICmpInst(
-        NonNullTerm, ICmpInst::ICMP_EQ, DstAux.BaseP, RawNull, "filc_memmove_dst_aux_is_null");
-      DstAuxIsNull->setDebugLoc(I->getDebugLoc());
-      Instruction* SlowTerm = SplitBlockAndInsertIfThen(DstAuxIsNull, NonNullTerm, false);
-      BasicBlock* SlowB = SlowTerm->getParent();
-      std::vector<Value*> Args;
-      FunctionCallee Callee;
-      switch (LowerAllocas.size()) {
-      case 1:
-        Callee = FinishMemmoveSmall1;
-        break;
-      case 2:
-        Callee = FinishMemmoveSmall2;
-        break;
-      case 3:
-        Callee = FinishMemmoveSmall3;
-        break;
-      case 4:
-        Callee = FinishMemmoveSmall4;
-        break;
-      case 5:
-        Callee = FinishMemmoveSmall5;
-        break;
-      default:
-        llvm_unreachable("Bad value of LowerAllocas.size()");
-        break;
+      Instruction* SlowAuxP = nullptr;
+      if (DstFMAD.MAD.MK == MemoryKind::Heap) {
+        Instruction* DstAuxIsNull = new ICmpInst(
+          AllNullTerm, ICmpInst::ICMP_EQ, DstFMAD.MAD.AuxBaseP, RawNull,
+          "filc_memmove_dst_aux_is_null");
+        DstAuxIsNull->setDebugLoc(I->getDebugLoc());
+        SplitBlockAndInsertIfThen(
+          DstAuxIsNull, AllNullTerm, false, nullptr, nullptr, nullptr, DoneB);
+        DstAuxIsNull = new ICmpInst(
+          NonNullTerm, ICmpInst::ICMP_EQ, DstFMAD.MAD.AuxBaseP, RawNull,
+          "filc_memmove_dst_aux_is_null");
+        DstAuxIsNull->setDebugLoc(I->getDebugLoc());
+        Instruction* SlowTerm = SplitBlockAndInsertIfThen(DstAuxIsNull, NonNullTerm, false);
+        BasicBlock* SlowB = SlowTerm->getParent();
+        storeOrigin(getOrigin(I->getDebugLoc()), SlowTerm);
+        std::vector<Value*> Args;
+        FunctionCallee Callee;
+        switch (LowerAllocas.size()) {
+        case 1:
+          Callee = FinishMemmoveSmall1;
+          break;
+        case 2:
+          Callee = FinishMemmoveSmall2;
+          break;
+        case 3:
+          Callee = FinishMemmoveSmall3;
+          break;
+        case 4:
+          Callee = FinishMemmoveSmall4;
+          break;
+        case 5:
+          Callee = FinishMemmoveSmall5;
+          break;
+        default:
+          llvm_unreachable("Bad value of LowerAllocas.size()");
+          break;
+        }
+        Args.push_back(MyThread);
+        Args.push_back(Dst);
+        for (AllocaInst* LowerAlloca : LowerAllocas) {
+          Instruction* Load = new LoadInst(RawPtrTy, LowerAlloca, "filc_memmove_load_lower", SlowTerm);
+          Load->setDebugLoc(I->getDebugLoc());
+          Args.push_back(Load);
+        }
+        Instruction* Slow = CallInst::Create(Callee, Args, "filc_memmove_slow", SlowTerm);
+        Slow->setDebugLoc(I->getDebugLoc());
+        Instruction* SlowAuxBase = ExtractValueInst::Create(
+          RawPtrTy, Slow, { 0 }, "filc_memmove_slow_aux_base", SlowTerm);
+        SlowAuxBase->setDebugLoc(I->getDebugLoc());
+        SlowAuxP = ExtractValueInst::Create(
+          RawPtrTy, Slow, { 1 }, "filc_memmove_slow_aux_ptr", SlowTerm);
+        SlowAuxP->setDebugLoc(I->getDebugLoc());
+        assert(DstFMAD.POD.PK == PointerKind::Escaping);
+        assert(DstFMAD.MAD.MK == MemoryKind::Heap);
+        (new StoreInst(SlowAuxBase, DstFMAD.POD.AuxBaseVar, SlowTerm))->setDebugLoc(I->getDebugLoc());
+        ReplaceInstWithInst(SlowTerm, BranchInst::Create(StoreExtraB));
+        LoadInst* MarkingState = new LoadInst(Int32Ty, CurrentMarkingState,
+                                              "filc_memmove_marking_state", NonNullTerm);
+        MarkingState->setDebugLoc(I->getDebugLoc());
+        ICmpInst* IsNotMarking = new ICmpInst(
+          NonNullTerm, ICmpInst::ICMP_EQ, MarkingState, ConstantInt::get(Int32Ty, 0),
+          "filc_memmove_is_not_marking");
+        IsNotMarking->setDebugLoc(I->getDebugLoc());
+        SplitBlockAndInsertIfElse(
+          IsNotMarking, NonNullTerm, false, nullptr, nullptr, nullptr, SlowB);
       }
-      Args.push_back(MyThread);
-      Args.push_back(Dst);
-      for (AllocaInst* LowerAlloca : LowerAllocas) {
-        Instruction* Load = new LoadInst(RawPtrTy, LowerAlloca, "filc_memmove_load_lower", SlowTerm);
-        Load->setDebugLoc(I->getDebugLoc());
-        Args.push_back(Load);
-      }
-      Instruction* Slow = CallInst::Create(Callee, Args, "filc_memmove_slow", SlowTerm);
-      Slow->setDebugLoc(I->getDebugLoc());
-      Instruction* SlowAuxBase = ExtractValueInst::Create(
-        RawPtrTy, Slow, { 0 }, "filc_memmove_slow_aux_base", SlowTerm);
-      SlowAuxBase->setDebugLoc(I->getDebugLoc());
-      Instruction* SlowAuxP = ExtractValueInst::Create(
-        RawPtrTy, Slow, { 1 }, "filc_memmove_slow_aux_ptr", SlowTerm);
-      SlowAuxP->setDebugLoc(I->getDebugLoc());
-      (new StoreInst(SlowAuxBase, DstAux.Var, SlowTerm))->setDebugLoc(I->getDebugLoc());
-      ReplaceInstWithInst(SlowTerm, BranchInst::Create(StoreExtraB));
-      LoadInst* MarkingState = new LoadInst(Int32Ty, CurrentMarkingState,
-                                            "filc_memmove_marking_state", NonNullTerm);
-      MarkingState->setDebugLoc(I->getDebugLoc());
-      ICmpInst* IsNotMarking = new ICmpInst(
-        NonNullTerm, ICmpInst::ICMP_EQ, MarkingState, ConstantInt::get(Int32Ty, 0),
-        "filc_memmove_is_not_marking");
-      IsNotMarking->setDebugLoc(I->getDebugLoc());
-      SplitBlockAndInsertIfElse(
-        IsNotMarking, NonNullTerm, false, nullptr, nullptr, nullptr, SlowB);
       Instruction* DstAuxPInt =
-        new PtrToIntInst(DstAux.P, IntPtrTy, "filc_memmove_dst_aux_int", StoreLowersTerm);
+        new PtrToIntInst(DstFMAD.MAD.AuxP, IntPtrTy, "filc_memmove_dst_aux_int", StoreLowersTerm);
       DstAuxPInt->setDebugLoc(I->getDebugLoc());
       Instruction* DstRoundedDownInt = BinaryOperator::Create(
         Instruction::And, DstAuxPInt, ConstantInt::get(IntPtrTy, -WordSize),
@@ -5977,7 +7509,8 @@ class Pizlonator {
       }
       PHINode* DstBasePhi = PHINode::Create(RawPtrTy, 2, "filc_memmove_dst_base", StoreExtraTerm);
       DstBasePhi->addIncoming(DstRoundedDown, DstRoundedDown->getParent());
-      DstBasePhi->addIncoming(SlowAuxP, SlowAuxP->getParent());
+      if (SlowAuxP)
+        DstBasePhi->addIncoming(SlowAuxP, SlowAuxP->getParent());
       Instruction* NeedExtra = new ICmpInst(
         StoreExtraTerm, ICmpInst::ICMP_UGT, DstPhase,
         ConstantInt::get(IntPtrTy, (WordSize - (Count & (WordSize - 1))) & (WordSize - 1)),
@@ -5990,8 +7523,58 @@ class Pizlonator {
       BaseGEP->setDebugLoc(I->getDebugLoc());
       (new StoreInst(RawNull, BaseGEP, false, Align(WordSize), AtomicOrdering::Monotonic,
                      SyncScope::System, ReallyStoreExtraTerm))->setDebugLoc(I->getDebugLoc());
+      if (DstFMAD.MAD.MK == MemoryKind::LocalNaked) {
+        assert(!(DstFMAD.MAD.Size % WordSize));
+        assert(DstFMAD.MAD.LocalOffset != INT64_MIN);
+        assert(DstFMAD.MAD.OrigAI);
+        for (int64_t Offset = std::max(static_cast<int64_t>(0), DstFMAD.MAD.LocalOffset) & -WordSize;
+             Offset < static_cast<int64_t>(
+               (std::min(static_cast<int64_t>(DstFMAD.MAD.Size),
+                         DstFMAD.MAD.LocalOffset + static_cast<int64_t>(Count))
+                + WordSize - 1)
+               & -WordSize);
+             Offset += WordSize) {
+          assert(Offset >= 0);
+          assert(!(Offset % WordSize));
+          assert(static_cast<uint64_t>(Offset) < DstFMAD.POD.LAD.Size);
+          size_t Index = Offset / WordSize;
+          GetElementPtrInst* GEP = GetElementPtrInst::Create(
+            RawPtrTy, DstFMAD.MAD.AuxBaseP, { ConstantInt::get(IntPtrTy, Index) },
+            "filc_memmove_naked_gc_aux_gep", I);
+          GEP->setDebugLoc(I->getDebugLoc());
+          LoadInst* Load = new LoadInst(RawPtrTy, GEP, "filc_memmove_naked_gc_aux_load", I);
+          Load->setDebugLoc(I->getDebugLoc());
+          FrameEntry FE = FrameIndexMap[ValuePtr(DstFMAD.MAD.OrigAI, Index)];
+          assert(FE.FEK == FrameEntryKind::LowerFromStackAux);
+          recordLowerAtIndex(Load, FE.Index, I);
+        }
+      }
       return;
     }
+    if (DstFMAD.MAD.MK == MemoryKind::LocalExplicit) {
+      if (SrcFMAD.MAD.MK == MemoryKind::LocalExplicit) {
+        CallInst::Create(
+          MemmoveAlreadyCheckedStack,
+          { MyThread, flightPtrPtr(Dst, I), DstFMAD.MAD.AuxP, flightPtrPtr(Src, I), SrcFMAD.MAD.AuxP,
+            ConstantInt::get(IntPtrTy, Count) }, "", I)->setDebugLoc(I->getDebugLoc());
+        return;
+      }
+      assert(SrcFMAD.MAD.MK == MemoryKind::Heap);
+      CallInst::Create(
+        MemmoveAlreadyCheckedHeapToStack,
+        { MyThread, flightPtrPtr(Dst, I), DstFMAD.MAD.AuxP, Src, ConstantInt::get(IntPtrTy, Count) },
+        "", I)->setDebugLoc(I->getDebugLoc());
+      return;
+    }
+    assert(DstFMAD.MAD.MK == MemoryKind::Heap);
+    if (SrcFMAD.MAD.MK == MemoryKind::LocalExplicit) {
+      CallInst::Create(
+        MemmoveAlreadyCheckedStackToHeap,
+        { MyThread, Dst, flightPtrPtr(Src, I), SrcFMAD.MAD.AuxP, ConstantInt::get(IntPtrTy, Count),
+          getOrigin(I->getDebugLoc()) }, "", I)->setDebugLoc(I->getDebugLoc());
+      return;
+    }
+    assert(SrcFMAD.MAD.MK == MemoryKind::Heap);
     FunctionCallee MemmoveFunc;
     if (Count <= MaxBytesBetweenPollchecks)
       MemmoveFunc = MemmoveAlreadyCheckedSmall;
@@ -6011,14 +7594,71 @@ class Pizlonator {
     Value* Dst = CI->getArgOperand(0);
     Value* Src = CI->getArgOperand(1);
     Value* Count = CI->getArgOperand(2);
-    if (isOptMemmoveCall(I)) {
+    if (isInlineableMemmoveCall(I)) {
       emitOptMemmove(Dst, Src, cast<ConstantInt>(Count)->getZExtValue(), I);
       return;
     }
+
+    FullMemoryAccessData DstFMAD = accessDataForOperand(Dst, I, 0, I);
+    FullMemoryAccessData SrcFMAD = accessDataForOperand(Src, I, 1, I);
+
+    if (DstFMAD.MAD.MK == MemoryKind::LocalExplicit) {
+      if (SrcFMAD.MAD.MK == MemoryKind::LocalExplicit) {
+        CallInst::Create(
+          MemmoveStack,
+          { MyThread, flightPtrPtr(Dst, I), DstFMAD.MAD.AuxP, DstFMAD.POD.LAD.AuxAlloca,
+            flightPtrPtr(Src, I), SrcFMAD.MAD.AuxP, SrcFMAD.POD.LAD.AuxAlloca,
+            Count, getOrigin(I->getDebugLoc()) },
+          "", I)->setDebugLoc(I->getDebugLoc());
+        return;
+      }
+      assert(SrcFMAD.MAD.MK == MemoryKind::Heap);
+      CallInst::Create(
+        MemmoveHeapToStack,
+        { MyThread, flightPtrPtr(Dst, I), DstFMAD.MAD.AuxP, DstFMAD.POD.LAD.AuxAlloca, Src,
+          Count, getOrigin(I->getDebugLoc()) },
+        "", I)->setDebugLoc(I->getDebugLoc());
+      return;
+    }
+    assert(DstFMAD.MAD.MK == MemoryKind::Heap);
+    if (SrcFMAD.MAD.MK == MemoryKind::LocalExplicit) {
+      CallInst::Create(
+        MemmoveStackToHeap,
+        { MyThread, Dst, flightPtrPtr(Src, I), SrcFMAD.MAD.AuxP, SrcFMAD.POD.LAD.AuxAlloca,
+          Count, getOrigin(I->getDebugLoc()) },
+        "", I)->setDebugLoc(I->getDebugLoc());
+      return;
+    }
+    assert(SrcFMAD.MAD.MK == MemoryKind::Heap);
+    
     CallInst::Create(
       Memmove,
       { MyThread, Dst, Src, makeIntPtr(Count, I), getOrigin(I->getDebugLoc()) },
       "", I)->setDebugLoc(I->getDebugLoc());
+  }
+
+  void initializeNonescapingAlloca(const LocalAllocaData& LAD, Instruction* Before) {
+    if (LAD.Explicit) {
+      FrameEntry FE;
+      assert(FrameIndexMap.count(ValuePtr(LAD.OrigAI, 0)));
+      FE = FrameIndexMap[ValuePtr(LAD.OrigAI, 0)];
+      assert(FE.FEK == FrameEntryKind::ExplicitStackAux);
+      assert(FE.Index != SIZE_MAX);
+      assert(!(LAD.Size % WordSize));
+      (new StoreInst(ConstantInt::get(IntPtrTy, LAD.Size / WordSize), LAD.AuxAlloca, Before))
+        ->setDebugLoc(Before->getDebugLoc());
+      recordLowerAtIndex(LAD.AuxAlloca, FE.Index, Before);
+    }
+    CallInst::Create(
+      RealMemset,
+      { LAD.Payload, ConstantInt::get(Int8Ty, 0), ConstantInt::get(IntPtrTy, LAD.Size),
+        ConstantInt::getFalse(Int1Ty) },
+      "", Before)->setDebugLoc(Before->getDebugLoc());
+    CallInst::Create(
+      RealMemset,
+      { LAD.Aux, ConstantInt::get(Int8Ty, 0), ConstantInt::get(IntPtrTy, LAD.Size),
+        ConstantInt::getFalse(Int1Ty) },
+      "", Before)->setDebugLoc(Before->getDebugLoc());
   }
 
   bool earlyLowerInstruction(Instruction* I) {
@@ -6050,7 +7690,35 @@ class Pizlonator {
       }
 
       case Intrinsic::lifetime_start:
-      case Intrinsic::lifetime_end:
+      case Intrinsic::lifetime_end: {
+        AllocaInst* AI = cast<AllocaInst>(II->getArgOperand(1));
+        assert(LocalAllocaDatas.count(AI));
+        LocalAllocaData LAD = LocalAllocaDatas[AI];
+        FrameEntry FE;
+        if (LAD.Explicit) {
+          assert(FrameIndexMap.count(ValuePtr(AI, 0)));
+          FE = FrameIndexMap[ValuePtr(AI, 0)];
+          assert(FE.FEK == FrameEntryKind::ExplicitStackAux);
+          assert(FE.Index != SIZE_MAX);
+          if (verbose)
+            errs() << "Using frame index " << FE.Index << "\n";
+        }
+        if (LAD.Explicit && II->getIntrinsicID() == Intrinsic::lifetime_end)
+          recordLowerAtIndex(RawNull, FE.Index, II);
+        CallInst::Create(
+          II->getFunctionType(), II->getCalledOperand(),
+          { ConstantInt::get(IntPtrTy, LAD.Size), LAD.Payload },
+          "", II)->setDebugLoc(II->getDebugLoc());
+        CallInst::Create(
+          II->getFunctionType(), II->getCalledOperand(),
+          { ConstantInt::get(IntPtrTy, LAD.Size), LAD.AuxAlloca },
+          "", II)->setDebugLoc(II->getDebugLoc());
+        if (II->getIntrinsicID() == Intrinsic::lifetime_start)
+          initializeNonescapingAlloca(LAD, II);
+        II->eraseFromParent();
+        return true;
+      }
+        
       case Intrinsic::stacksave:
       case Intrinsic::stackrestore:
       case Intrinsic::assume:
@@ -6070,18 +7738,16 @@ class Pizlonator {
       case Intrinsic::vastart:
         assert(UsesVastartOrZargs);
         lowerConstantOperand(II->getArgOperandUse(0), I);
-        storePtr(SnapshottedArgsPtrForVastart, flightPtrPtr(II->getArgOperand(0), II),
-                 auxPtrForOperand(II->getArgOperand(0), II, 0, II).P, II);
+        storePtr(SnapshottedArgsPtrForVastart,
+                 accessDataForOperand(II->getArgOperand(0), II, 0, II).MAD, II);
         II->eraseFromParent();
         return true;
         
       case Intrinsic::vacopy: {
         lowerConstantOperand(II->getArgOperandUse(0), I);
         lowerConstantOperand(II->getArgOperandUse(1), I);
-        Value* Load = loadPtr(flightPtrPtr(II->getArgOperand(1), II),
-                              auxPtrForOperand(II->getArgOperand(1), II, 1, II), II);
-        storePtr(Load, flightPtrPtr(II->getArgOperand(0), II),
-                 auxPtrForOperand(II->getArgOperand(0), II, 0, II).P, II);
+        Value* Load = loadPtr(accessDataForOperand(II->getArgOperand(1), II, 1, II).MAD, II);
+        storePtr(Load, accessDataForOperand(II->getArgOperand(0), II, 0, II).MAD, II);
         II->eraseFromParent();
         return true;
       }
@@ -6107,6 +7773,7 @@ class Pizlonator {
 
       case Intrinsic::x86_xgetbv:
       case Intrinsic::x86_sse2_pause:
+      case Intrinsic::x86_rdtsc:
         return true;
 
       case Intrinsic::returnaddress:
@@ -6157,7 +7824,17 @@ class Pizlonator {
         return true;
       }
 
+      case Intrinsic::trap: {
+        CallInst::Create(
+          Error, { getString("llvm trap intrinsic"), getOrigin(I->getDebugLoc()) }, "", I)
+          ->setDebugLoc(I->getDebugLoc());
+        return true;
+      }
+
       default: {
+        for (Use& U : II->data_ops())
+          lowerConstantOperand(U, I);
+
         IntrinsicAccessDetails IAD = analyzeIntrinsicLoadStore(II);
         
         if (!IAD
@@ -6165,7 +7842,8 @@ class Pizlonator {
             && !isa<ConstrainedFPIntrinsic>(II)
             && II->getIntrinsicID() != Intrinsic::prefetch
             && II->getIntrinsicID() != Intrinsic::get_rounding
-            && II->getIntrinsicID() != Intrinsic::set_rounding) {
+            && II->getIntrinsicID() != Intrinsic::set_rounding
+            && II->getIntrinsicID() != Intrinsic::x86_sse_sfence) {
           if (verbose)
             llvm::errs() << "Unhandled intrinsic: " << *II << "\n";
           std::string str;
@@ -6174,8 +7852,8 @@ class Pizlonator {
           CallInst::Create(Error, { getString(str), getOrigin(I->getDebugLoc()) }, "", II)
             ->setDebugLoc(II->getDebugLoc());
         }
+
         for (Use& U : II->data_ops()) {
-          lowerConstantOperand(U, I);
           if (hasPtrs(U->getType()))
             U = flightPtrPtr(U, II);
         }
@@ -6239,8 +7917,8 @@ class Pizlonator {
             "filc_jmp_buf_create", CI);
           Create->setDebugLoc(CI->getDebugLoc());
           Value* UserJmpBuf = CI->getArgOperand(0);
-          storePtr(flightPtrForPayload(Create, CI), flightPtrPtr(UserJmpBuf, CI),
-                   auxPtrForOperand(UserJmpBuf, CI, 0, CI).P, CI);
+          storePtr(flightPtrForPayload(Create, CI), accessDataForOperand(UserJmpBuf, CI, 0, CI).MAD,
+                   CI);
           Instruction* Set = new LoadInst(
             RawPtrTy, recordedLowerPtrAtIndex(SetjmpSetFrameIndex, CI), "filc_setjmp_set", CI);
           Set->setDebugLoc(CI->getDebugLoc());
@@ -6272,6 +7950,9 @@ class Pizlonator {
             FT->getNumParams() == 1 &&
             FT->getReturnType() == VoidTy &&
             FT->getParamType(0) == RawPtrTy) {
+          assert(UsesVariadicCC);
+          assert(RetSizePhi);
+          assert(ReallyReturnB);
           Instruction* Prepare = CallInst::Create(
             PrepareToReturnWithData, { MyThread, CI->getArgOperand(0), getOrigin(CI->getDebugLoc()) },
             "filc_prepare_to_return_with_data", CI);
@@ -6284,12 +7965,75 @@ class Pizlonator {
           return true;
         }
 
+        if ((((F->getName() == "zunsafe_call" || F->getName() == "zunsafe_fast_call") &&
+              FT->getNumParams() == 1 &&
+              FT->getParamType(0) == RawPtrTy) ||
+             (F->getName() == "zunsafe_buf_call" &&
+              FT->getNumParams() == 2 &&
+              FT->getParamType(0) == IntPtrTy &&
+              FT->getParamType(1) == RawPtrTy)) &&
+            FT->isVarArg() &&
+            FT->getReturnType() == IntPtrTy) {
+          Value* BufSize;
+          unsigned FirstArg;
+          if (F->getName() == "zunsafe_buf_call") {
+            FirstArg = 1;
+            BufSize = lowerConstantValue(CI->getArgOperand(0), CI);
+          } else {
+            FirstArg = 0;
+            if (F->getName() == "zunsafe_call")
+              BufSize = ConstantInt::get(IntPtrTy, MaxBytesBetweenPollchecks + 1);
+            else
+              BufSize = ConstantInt::get(IntPtrTy, 0);
+          }
+          GlobalVariable* StrConstGV = cast<GlobalVariable>(CI->getArgOperand(FirstArg));
+          assert(StrConstGV->hasInitializer());
+          ConstantDataSequential* StrConstCDS =
+            cast<ConstantDataSequential>(StrConstGV->getInitializer());
+          assert(StrConstCDS->isCString());
+          std::string StrConst = StrConstCDS->getAsCString().str();
+          BitCastInst* Dummy;
+          if (UnsafeFuncs.count(StrConst))
+            Dummy = UnsafeFuncs[StrConst];
+          else {
+            Dummy = makeDummy(RawPtrTy);
+            UnsafeFuncs[StrConst] = Dummy;
+          }
+          std::vector<Value*> Args;
+          assert(InstTypeVectors.count(CI));
+          std::vector<Type*> ArgTypes = InstTypeVectors[CI];
+          assert(ArgTypes.size() == CI->arg_size());
+          for (unsigned Idx = FirstArg + 1; Idx < CI->arg_size(); ++Idx) {
+            Value* Arg = lowerConstantValue(CI->getArgOperand(Idx), CI);
+            if (ArgTypes[Idx] == RawPtrTy) {
+              Args.push_back(flightPtrPtr(Arg, CI));
+              continue;
+            }
+            assert(!hasPtrs(ArgTypes[Idx]));
+            Args.push_back(Arg);
+          }
+          Instruction* IsSmallEnough = new ICmpInst(
+            CI, ICmpInst::ICMP_ULE, BufSize, ConstantInt::get(IntPtrTy, MaxBytesBetweenPollchecks),
+            "filc_is_small_enough");
+          IsSmallEnough->setDebugLoc(CI->getDebugLoc());
+          Instruction* LargeTerm = SplitBlockAndInsertIfElse(IsSmallEnough, CI, false);
+          storeOrigin(getOrigin(CI->getDebugLoc()), LargeTerm);
+          CallInst::Create(Exit, { MyThread }, "", LargeTerm)->setDebugLoc(CI->getDebugLoc());
+          CallInst* Result = CallInst::Create(UnsafeFuncTy, Dummy, Args, "filc_unsafe_call", CI);
+          Result->setDebugLoc(CI->getDebugLoc());
+          LargeTerm = SplitBlockAndInsertIfElse(IsSmallEnough, CI, false);
+          CallInst::Create(Enter, { MyThread }, "", LargeTerm)->setDebugLoc(CI->getDebugLoc());
+          CI->replaceAllUsesWith(Result);
+          Erasify();
+          return true;
+        }
+
         if (F->getName() == "zcallee" &&
             !FT->getNumParams() &&
             FT->getReturnType() == RawPtrTy) {
           Value* CalleeLower = NewF->getArg(1);
-          CI->replaceAllUsesWith(createFlightPtr(CalleeLower, NewF, CI));
-          CI->eraseFromParent();
+          CI->replaceAllUsesWith(createFlightPtr(CalleeLower, CalleeLower, CI));
+          Erasify();
           return true;
         }
 
@@ -6299,17 +8043,20 @@ class Pizlonator {
           Value* CalleeLower = NewF->getArg(1);
           BinaryOperator* Masked = BinaryOperator::Create(
             Instruction::And, flagsForLower(CalleeLower, CI),
-            ConstantInt::get(IntPtrTy, ObjectFlagClosure), "filc_flags_masked", CI);
+            ConstantInt::get(IntPtrTy, ObjectFlagReadonly), "filc_flags_masked", CI);
           Masked->setDebugLoc(CI->getDebugLoc());
-          ICmpInst* IsNotClosure = new ICmpInst(
+          ICmpInst* IsClosure = new ICmpInst(
             CI, ICmpInst::ICMP_EQ, Masked, ConstantInt::get(IntPtrTy, 0),
             "filc_object_is_not_closure");
-          Instruction* FailTerm = SplitBlockAndInsertIfThen(expectFalse(IsNotClosure, CI), CI, true);
+          Instruction* FailTerm = SplitBlockAndInsertIfElse(expectTrue(IsClosure, CI), CI, true);
           CallInst::Create(
             CheckClosureFail, { CalleeLower, getOrigin(CI->getDebugLoc()) }, "", FailTerm)
             ->setDebugLoc(CI->getDebugLoc());
-          CI->replaceAllUsesWith(loadFlightPtr(CalleeLower, CI));
-          CI->eraseFromParent();
+          Instruction* DataPtr = GetElementPtrInst::Create(
+            ClosureTy, CalleeLower, { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 2) },
+            "filc_closure_data_ptr_ptr", CI);
+          CI->replaceAllUsesWith(loadFlightPtr(DataPtr, CI));
+          Erasify();
           return true;
         }
 
@@ -6339,6 +8086,34 @@ class Pizlonator {
           return true;
         }
 
+        if (F->getName() == "zis_readonly" &&
+            FT->getNumParams() == 1 &&
+            !FT->isVarArg() &&
+            FT->getParamType(0) == RawPtrTy &&
+            FT->getReturnType() == Int1Ty) {
+          lowerConstantOperand(CI->getArgOperandUse(0), CI);
+          Value* Lower = flightPtrLower(CI->getArgOperand(0), CI);
+          ICmpInst* NullLower = new ICmpInst(
+            CI, ICmpInst::ICMP_EQ, Lower, RawNull, "filc_is_null_lower");
+          NullLower->setDebugLoc(CI->getDebugLoc());
+          Instruction* NotNullTerm = SplitBlockAndInsertIfElse(NullLower, CI, false);
+          BinaryOperator* Masked = BinaryOperator::Create(
+            Instruction::And, flagsForLower(Lower, NotNullTerm),
+            ConstantInt::get(IntPtrTy, ObjectFlagReadonly),
+            "filc_flags_masked", NotNullTerm);
+          Masked->setDebugLoc(CI->getDebugLoc());
+          ICmpInst* IsReadOnly = new ICmpInst(
+            NotNullTerm, ICmpInst::ICMP_NE, Masked, ConstantInt::get(IntPtrTy, 0),
+            "filc_object_is_read_only");
+          IsReadOnly->setDebugLoc(CI->getDebugLoc());
+          PHINode* Phi = PHINode::Create(Int1Ty, 2, "filc_readonly_phi", CI);
+          Phi->addIncoming(ConstantInt::getFalse(Int1Ty), NullLower->getParent());
+          Phi->addIncoming(IsReadOnly, NotNullTerm->getParent());
+          CI->replaceAllUsesWith(Phi);
+          Erasify();
+          return true;
+        }
+        
         if (F->getName() == "zthread_self_id" &&
             FT->getNumParams() == 0 &&
             !FT->isVarArg() &&
@@ -6379,6 +8154,12 @@ class Pizlonator {
           return true;
         }
 
+        if (F->getName() == "zhas_union"
+            && isHasUnionFT(FT)) {
+          Erasify();
+          return true;
+        }
+
         if ((F->getName() == "zgc_alloc" || F->getName() == "malloc") &&
             FT->getNumParams() == 1 &&
             !FT->isVarArg() &&
@@ -6402,6 +8183,35 @@ class Pizlonator {
           return true;
         }
 
+        if (F->getName() == "zstack_pointer" &&
+            FT->getNumParams() == 0 &&
+            !FT->isVarArg() &&
+            FT->getReturnType() == RawPtrTy) {
+          StringRef SPName;
+          switch (Arch) {
+          case Triple::aarch64:
+            SPName = "sp";
+            break;
+          case Triple::x86_64:
+            SPName = "rsp";
+            break;
+          default:
+            report_fatal_error("Unknown arch");
+          }
+          Instruction *RawStackAddr = CallInst::Create(
+              Intrinsic::getOrInsertDeclaration(&M, Intrinsic::read_register,
+                                                IntPtrTy),
+              {MetadataAsValue::get(C,
+                                    MDNode::get(C, MDString::get(C, SPName)))},
+              "", CI);
+          RawStackAddr->setDebugLoc(CI->getDebugLoc());
+          RawStackAddr = new IntToPtrInst(RawStackAddr, RawPtrTy, "", CI);
+          RawStackAddr->setDebugLoc(CI->getDebugLoc());
+          CI->replaceAllUsesWith(badFlightPtr(RawStackAddr, CI));
+          Erasify();
+          return true;
+        }
+        
         if (shouldPassThrough(F)) {
           for (Use& Arg : CI->args())
             lowerConstantOperand(Arg, CI);
@@ -6448,16 +8258,2605 @@ class Pizlonator {
     return false;
   }
 
+  bool validateSafeInlineAsm(CallBase* CI, InlineAsm* IA, std::string& Reason) {
+    // Whitespace helpers.
+    auto isSpace = [](char c) -> bool {
+      return c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f';
+    };
+    auto trim = [&](StringRef s) -> std::string {
+      size_t start = 0;
+      while (start < s.size() && isSpace(s[start]))
+        ++start;
+      size_t end = s.size();
+      while (end > start && isSpace(s[end - 1]))
+        --end;
+      return s.substr(start, end - start).str();
+    };
+    auto toLowerStr = [&](StringRef s) -> std::string {
+      std::string r = s.str();
+      for (char& c : r)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      return r;
+    };
+
+    // Map a register name to its family (ax, cx, r8, ...).
+    auto getRegFamily = [&](StringRef reg) -> std::string {
+      std::string r = toLowerStr(reg);
+      static const std::unordered_map<std::string, std::string> familyMap = []{
+        std::unordered_map<std::string, std::string> m;
+        m["al"] = "ax"; m["ah"] = "ax"; m["ax"] = "ax"; m["eax"] = "ax"; m["rax"] = "ax";
+        m["bl"] = "bx"; m["bh"] = "bx"; m["bx"] = "bx"; m["ebx"] = "bx"; m["rbx"] = "bx";
+        m["cl"] = "cx"; m["ch"] = "cx"; m["cx"] = "cx"; m["ecx"] = "cx"; m["rcx"] = "cx";
+        m["dl"] = "dx"; m["dh"] = "dx"; m["dx"] = "dx"; m["edx"] = "dx"; m["rdx"] = "dx";
+        m["sil"] = "si"; m["si"] = "si"; m["esi"] = "si"; m["rsi"] = "si";
+        m["dil"] = "di"; m["di"] = "di"; m["edi"] = "di"; m["rdi"] = "di";
+        m["bpl"] = "bp"; m["bp"] = "bp"; m["ebp"] = "bp"; m["rbp"] = "bp";
+        m["spl"] = "sp"; m["sp"] = "sp"; m["esp"] = "sp"; m["rsp"] = "sp";
+        for (int i = 8; i <= 15; ++i) {
+          std::string base = "r" + std::to_string(i);
+          m[base] = base;
+          m[base + "b"] = base;
+          m[base + "w"] = base;
+          m[base + "d"] = base;
+          m[base + "l"] = base;
+        }
+        for (int i = 0; i <= 7; ++i) {
+          std::string base = "mm" + std::to_string(i);
+          m[base] = base;
+        }
+        for (int i = 0; i <= 31; ++i) {
+          std::string xmm = "xmm" + std::to_string(i);
+          m[xmm] = xmm;
+          std::string ymm = "ymm" + std::to_string(i);
+          m[ymm] = ymm;
+          std::string zmm = "zmm" + std::to_string(i);
+          m[zmm] = zmm;
+        }
+        for (int i = 0; i <= 7; ++i) {
+          std::string base = "k" + std::to_string(i);
+          m[base] = base;
+        }
+        m["st"] = "st(0)";
+        for (int i = 0; i <= 7; ++i)
+          m["st(" + std::to_string(i) + ")"] = "st(" + std::to_string(i) + ")";
+        m["cs"] = "cs";
+        m["ss"] = "ss";
+        m["ds"] = "ds";
+        m["es"] = "es";
+        m["fs"] = "fs";
+        m["gs"] = "gs";
+        return m;
+      }();
+      auto it = familyMap.find(r);
+      if (it != familyMap.end())
+        return it->second;
+      return "";
+    };
+
+    // Return true if the given family is a segment register.
+    auto isSegmentFamily = [&](const std::string& family) -> bool {
+      return family == "cs" || family == "ss" || family == "ds" ||
+             family == "es" || family == "fs" || family == "gs";
+    };
+
+    // Return true if the given family is one of the x87 stack registers.
+    auto isX87Family = [&](const std::string& family) -> bool {
+      if (family == "st" || family == "st(0)")
+        return true;
+      return family.size() == 5 && family.substr(0, 3) == "st(" &&
+             family[3] >= '0' && family[3] <= '7' && family[4] == ')';
+    };
+
+    // Parse the constraint string.
+    struct ParsedConstraint {
+      enum Kind { Clobber, Output, Input } Kind;
+      std::string String;
+      bool IsRegister = false;
+      std::string Family; // non-empty for fixed-register constraints
+      int MatchingTarget = -1;
+    };
+
+    std::vector<ParsedConstraint> Constraints;
+    bool HasCCClobber = false;
+    bool HasFPSRClobber = false;
+    bool HasDirFlagClobber = false;
+    std::unordered_set<std::string> ClobberFamilies;
+
+    std::string ConstraintStr = IA->getConstraintString();
+    for (size_t idx = 0, end = ConstraintStr.size(); idx < end; ) {
+      size_t comma = ConstraintStr.find(',', idx);
+      if (comma == std::string::npos)
+        comma = end;
+      std::string cstr = trim(ConstraintStr.substr(idx, comma - idx));
+      if (!cstr.empty()) {
+        ParsedConstraint pc;
+        pc.String = cstr;
+        pc.Kind = ParsedConstraint::Input;
+        pc.IsRegister = false;
+        pc.MatchingTarget = -1;
+
+        if (cstr[0] == '~') {
+          pc.Kind = ParsedConstraint::Clobber;
+          if (cstr.size() < 3 || cstr[1] != '{' || cstr.back() != '}') {
+            Reason = "malformed clobber constraint: " + cstr;
+            return false;
+          }
+          std::string name = toLowerStr(cstr.substr(2, cstr.size() - 3));
+          if (name == "cc")
+            HasCCClobber = true;
+          else if (name == "dirflag")
+            HasDirFlagClobber = true;
+          else if (name == "memory" || name == "flags") {
+            // memory and flags clobbers are allowed.
+          } else if (name == "fpsr") {
+            HasFPSRClobber = true;
+          } else {
+            std::string family = getRegFamily(name);
+            if (family.empty()) {
+              Reason = "unsupported clobber for safe inline asm: " + cstr;
+              return false;
+            }
+            if (family == "sp" || family == "bp") {
+              Reason = "sp/bp registers cannot be used as safe inline asm clobbers: " + cstr;
+              return false;
+            }
+            if (isSegmentFamily(family)) {
+              Reason = "segment registers cannot be used as safe inline asm clobbers: " + cstr;
+              return false;
+            }
+            ClobberFamilies.insert(family);
+          }
+        } else {
+          size_t pos = 0;
+          bool isOutput = false;
+          while (pos < cstr.size()) {
+            if (cstr[pos] == '=') {
+              isOutput = true;
+              ++pos;
+            } else if (cstr[pos] == '&' || cstr[pos] == '%') {
+              ++pos;
+            } else if (cstr[pos] == '+') {
+              isOutput = true;
+              ++pos;
+            } else {
+              break;
+            }
+          }
+          if (pos >= cstr.size()) {
+            Reason = "empty constraint after prefixes: " + cstr;
+            return false;
+          }
+          if (cstr[pos] == '*') {
+            Reason = "indirect constraint not allowed in safe inline asm: " + cstr;
+            return false;
+          }
+          pc.Kind = isOutput ? ParsedConstraint::Output : ParsedConstraint::Input;
+          std::string rest = cstr.substr(pos);
+          if (rest == "r" || rest == "q" || rest == "Q" || rest == "x" ||
+              rest == "y" || rest == "v" || rest == "Yk") {
+            pc.IsRegister = true;
+          } else if (rest.size() >= 2 && rest.front() == '{' && rest.back() == '}') {
+            std::string regname = toLowerStr(rest.substr(1, rest.size() - 2));
+            std::string family = getRegFamily(regname);
+            if (family.empty()) {
+              Reason = "unknown fixed register constraint: " + cstr;
+              return false;
+            }
+            if (family == "sp" || family == "bp") {
+              Reason = "sp/bp registers cannot be used as safe inline asm constraints: " + cstr;
+              return false;
+            }
+            if (isSegmentFamily(family)) {
+              Reason = "segment registers cannot be used as safe inline asm constraints: " + cstr;
+              return false;
+            }
+            pc.IsRegister = true;
+            pc.Family = family;
+          } else {
+            bool allDigits = true;
+            for (char c : rest) {
+              if (!std::isdigit(static_cast<unsigned char>(c))) {
+                allDigits = false;
+                break;
+              }
+            }
+            if (allDigits && !rest.empty()) {
+              int target = 0;
+              for (char c : rest)
+                target = target * 10 + (c - '0');
+              pc.MatchingTarget = target;
+            } else {
+              Reason = "unsupported constraint for safe inline asm: " + cstr;
+              return false;
+            }
+          }
+        }
+        Constraints.push_back(pc);
+      }
+      idx = comma + 1;
+    }
+
+    // Operand placeholders refer to outputs and inputs, not clobbers.
+    size_t numOperandConstraints = 0;
+    for (const auto& pc : Constraints) {
+      if (pc.Kind != ParsedConstraint::Clobber)
+        ++numOperandConstraints;
+    }
+
+    // Resolve matching constraints.
+    for (auto& pc : Constraints) {
+      if (pc.MatchingTarget < 0)
+        continue;
+      size_t target = static_cast<size_t>(pc.MatchingTarget);
+      if (target >= Constraints.size()) {
+        Reason = "matching constraint out of range: " + pc.String;
+        return false;
+      }
+      const ParsedConstraint& targetPc = Constraints[target];
+      if (targetPc.Kind != ParsedConstraint::Output) {
+        Reason = "matching constraint does not point at output: " + pc.String;
+        return false;
+      }
+      if (!targetPc.IsRegister) {
+        Reason = "matching constraint points at non-register output: " + pc.String;
+        return false;
+      }
+      pc.IsRegister = true;
+      pc.Family = targetPc.Family;
+    }
+
+    // Build sets of register families covered by input/output constraints.
+    std::unordered_set<std::string> InputFamilies;
+    std::unordered_set<std::string> OutputFamilies;
+    for (const auto& pc : Constraints) {
+      if (!pc.IsRegister)
+        continue;
+      if (pc.Kind == ParsedConstraint::Input && !pc.Family.empty())
+        InputFamilies.insert(pc.Family);
+      else if (pc.Kind == ParsedConstraint::Output && !pc.Family.empty())
+        OutputFamilies.insert(pc.Family);
+    }
+
+    if (verbose) {
+      errs() << "Safe inline asm constraint analysis:\n";
+      errs() << "  Input families:";
+      for (const auto& f : InputFamilies)
+        errs() << " " << f;
+      errs() << "\n";
+      errs() << "  Output families:";
+      for (const auto& f : OutputFamilies)
+        errs() << " " << f;
+      errs() << "\n";
+      errs() << "  Clobber families:";
+      for (const auto& f : ClobberFamilies)
+        errs() << " " << f;
+      errs() << "\n";
+      errs() << "  Has cc clobber: " << HasCCClobber << "\n";
+    }
+
+    enum OperandRole { RoleInput, RoleOutput, RoleBoth };
+
+    auto parseMnemonic = [&](const std::string& mnem, std::string& baseMnemonic,
+                             bool& setsFlags, std::vector<OperandRole>& roles) -> bool {
+      StringRef m(mnem);
+
+      if (m.starts_with("cmov")) {
+        StringRef suffix = m.drop_front(4);
+        if (suffix.empty())
+          return false;
+        static const std::unordered_set<std::string> conds = {
+          "o", "no",
+          "b", "c", "nae", "nb", "nc", "ae",
+          "e", "z", "ne", "nz",
+          "be", "na", "nbe", "a",
+          "s", "ns",
+          "p", "pe", "np", "po",
+          "l", "nge", "nl", "ge",
+          "le", "ng", "nle", "g"
+        };
+        StringRef cond = suffix;
+        if (suffix.size() >= 2 && (suffix.back() == 'b' || suffix.back() == 'w' ||
+                                   suffix.back() == 'l' || suffix.back() == 'q')) {
+          StringRef maybeCond = suffix.drop_back();
+          if (conds.count(maybeCond.str()))
+            cond = maybeCond;
+        }
+        if (!conds.count(cond.str()))
+          return false;
+        baseMnemonic = "cmov";
+        setsFlags = false;
+        roles = {RoleInput, RoleOutput};
+        return true;
+      }
+
+      if (m.starts_with("fcmov")) {
+        StringRef suffix = m.drop_front(5);
+        static const std::unordered_set<std::string> conds = {
+          "b", "c", "nae", "nb", "nc", "ae",
+          "e", "z", "ne", "nz",
+          "be", "na", "nbe", "a",
+          "u", "nu"
+        };
+        if (!conds.count(suffix.str()))
+          return false;
+        baseMnemonic = "fcmov";
+        setsFlags = false;
+        roles = {RoleInput, RoleBoth};
+        return true;
+      }
+
+      if (m.starts_with("set")) {
+        // SETcc (set byte on condition) sets the destination r/m8 operand to 0
+        // or 1 based on the EFLAGS condition codes. It reads the flags (an
+        // implicit read, which is safe) but does not modify them. The single
+        // operand is the destination byte register (a write). SETcc always
+        // operates on bytes, so there is no size suffix to strip.
+        StringRef suffix = m.drop_front(3);
+        if (suffix.empty())
+          return false;
+        static const std::unordered_set<std::string> conds = {
+          "o", "no",
+          "b", "c", "nae", "nb", "nc", "ae",
+          "e", "z", "ne", "nz",
+          "be", "na", "nbe", "a",
+          "s", "ns",
+          "p", "pe", "np", "po",
+          "l", "nge", "nl", "ge",
+          "le", "ng", "nle", "g"
+        };
+        if (!conds.count(suffix.str()))
+          return false;
+        baseMnemonic = "setcc";
+        setsFlags = false;
+        roles = {RoleOutput};
+        return true;
+      }
+
+      if (m == "nop" || m == "nopw" || m == "nopl" || m == "nopq") {
+        // The bare "nop" is the single-byte no-op. The suffixed forms
+        // (nopw/nopl/nopq) are multi-byte hint NOPs; with a memory operand
+        // they compute the effective address but perform no load/store (like
+        // lea). Normalize them to a single "nop" base mnemonic so the
+        // memory-operand handling below applies uniformly. These never set
+        // flags and take no operands in their bare form.
+        baseMnemonic = "nop";
+        setsFlags = false;
+        roles.clear();
+        return true;
+      }
+
+      if (m == "cpuid" || m == "xgetbv" || m == "cbw" || m == "cwde" ||
+          m == "cdqe" || m == "cwd" || m == "cdq" || m == "cqo" ||
+          m == "clc" || m == "cld" || m == "cmc" ||
+          m == "stc" ||
+          m == "lahf" || m == "sahf" ||
+          m == "lfence" || m == "mfence" || m == "sfence" ||
+          m == "serialize" ||
+          m == "fabs" ||
+          m == "fchs" || m == "fclex" || m == "fnclex" || m == "fcos" ||
+          m == "frndint" || m == "fsin" || m == "fsqrt" ||
+          m == "fninit" || m == "fnop" ||
+          m == "fwait" || m == "wait" ||
+          m == "pause" ||
+          m == "rdtsc" || m == "rdtscp" || m == "rdpkru" ||
+          m == "fcom" || m == "fucom" || m == "fcomi" || m == "fucomi" ||
+          m == "ftst" || m == "fxam" || m == "fxch" ||
+          m == "fdiv" || m == "fdivr" ||
+          m == "fmul" ||
+          m == "fsub" || m == "fsubr" ||
+          m == "fprem" || m == "fprem1" ||
+          m == "fscale" ||
+          m == "fincstp" ||
+          m == "vzeroupper" || m == "vzeroall" ||
+          m == "ud2") {
+        baseMnemonic = mnem;
+        setsFlags = (m == "clc" || m == "cmc" ||
+                     m == "stc" ||
+                     m == "sahf" ||
+                     m == "fcomi" || m == "fucomi");
+        roles.clear();
+        return true;
+      }
+
+      if (m == "fnstsw" || m == "fstsw") {
+        baseMnemonic = m;
+        setsFlags = false;
+        roles = {RoleOutput};
+        return true;
+      }
+
+      static const std::unordered_map<std::string, std::pair<bool, std::vector<OperandRole>>> info = {
+        {"sar", {true, {RoleInput, RoleBoth}}},
+        {"shr", {true, {RoleInput, RoleBoth}}},
+        {"and", {true, {RoleInput, RoleBoth}}},
+        {"shl", {true, {RoleInput, RoleBoth}}},
+        // SAL is an alias for SHL (shift left logical). Same encoding, same
+        // operand structure: AT&T order is count, dest.
+        {"sal", {true, {RoleInput, RoleBoth}}},
+        {"rcl", {true, {RoleInput, RoleBoth}}},
+        {"rcr", {true, {RoleInput, RoleBoth}}},
+        {"rol", {true, {RoleInput, RoleBoth}}},
+        {"ror", {true, {RoleInput, RoleBoth}}},
+        // SHLD/SHRD are double-precision shifts. They shift the destination
+        // (read/written) while shifting in bits from a second source register.
+        // The count is an imm8 or CL. AT&T order: count, src, dest.
+        {"shld", {true, {RoleInput, RoleInput, RoleBoth}}},
+        {"shrd", {true, {RoleInput, RoleInput, RoleBoth}}},
+        // RORX (BMI2) rotates the source register right by an immediate count
+        // without affecting flags. AT&T operand order: $imm, src, dest.
+        {"rorx", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // SARX/SHLX/SHRX (BMI2) shift the source register by a count held in a
+        // general-purpose register, without affecting flags. Unlike the classic
+        // shifts the count may be any GPR (not just CL). AT&T order:
+        // count, src, dest.
+        {"sarx", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"shlx", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"shrx", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"xor", {true, {RoleInput, RoleBoth}}},
+        {"or", {true, {RoleInput, RoleBoth}}},
+        {"add", {true, {RoleInput, RoleBoth}}},
+        {"adc", {true, {RoleInput, RoleBoth}}},
+        {"sbb", {true, {RoleInput, RoleBoth}}},
+        {"sub", {true, {RoleInput, RoleBoth}}},
+        {"adcx", {true, {RoleInput, RoleBoth}}},
+        {"adox", {true, {RoleInput, RoleBoth}}},
+        {"mov", {false, {RoleInput, RoleOutput}}},
+        {"movapd", {false, {RoleInput, RoleOutput}}},
+        {"movaps", {false, {RoleInput, RoleOutput}}},
+        {"movupd", {false, {RoleInput, RoleOutput}}},
+        {"movups", {false, {RoleInput, RoleOutput}}},
+        {"movd", {false, {RoleInput, RoleOutput}}},
+        {"movdqa", {false, {RoleInput, RoleOutput}}},
+        {"movdqu", {false, {RoleInput, RoleOutput}}},
+        {"movdq2q", {false, {RoleInput, RoleOutput}}},
+        {"movq", {false, {RoleInput, RoleOutput}}},
+        {"movq2dq", {false, {RoleInput, RoleOutput}}},
+        {"movsd", {false, {RoleInput, RoleOutput}}},
+        {"movss", {false, {RoleInput, RoleOutput}}},
+        {"movddup", {false, {RoleInput, RoleOutput}}},
+        {"movshdup", {false, {RoleInput, RoleOutput}}},
+        {"movsldup", {false, {RoleInput, RoleOutput}}},
+        {"movsbw", {false, {RoleInput, RoleOutput}}},
+        {"movsbl", {false, {RoleInput, RoleOutput}}},
+        {"movsbq", {false, {RoleInput, RoleOutput}}},
+        {"movswl", {false, {RoleInput, RoleOutput}}},
+        {"movswq", {false, {RoleInput, RoleOutput}}},
+        {"movslq", {false, {RoleInput, RoleOutput}}},
+        {"movsx", {false, {RoleInput, RoleOutput}}},
+        {"movsxd", {false, {RoleInput, RoleOutput}}},
+        {"movzx", {false, {RoleInput, RoleOutput}}},
+        {"movzbw", {false, {RoleInput, RoleOutput}}},
+        {"movzbl", {false, {RoleInput, RoleOutput}}},
+        {"movzbq", {false, {RoleInput, RoleOutput}}},
+        {"movzwl", {false, {RoleInput, RoleOutput}}},
+        {"movzwq", {false, {RoleInput, RoleOutput}}},
+        {"movhlps", {false, {RoleInput, RoleOutput}}},
+        {"movlhps", {false, {RoleInput, RoleOutput}}},
+        {"movmskpd", {false, {RoleInput, RoleOutput}}},
+        {"movmskps", {false, {RoleInput, RoleOutput}}},
+        {"fst", {false, {RoleOutput}}},
+        {"test", {true, {RoleInput, RoleInput}}},
+        {"cmp", {true, {RoleInput, RoleInput}}},
+        {"cmppd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"cmpps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"cmpss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"cmpsd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"comisd", {true, {RoleInput, RoleInput}}},
+        {"comiss", {true, {RoleInput, RoleInput}}},
+        {"ucomisd", {true, {RoleInput, RoleInput}}},
+        {"ucomiss", {true, {RoleInput, RoleInput}}},
+        {"cvtdq2pd", {false, {RoleInput, RoleOutput}}},
+        {"cvtdq2ps", {false, {RoleInput, RoleOutput}}},
+        {"cvtpd2ps", {false, {RoleInput, RoleOutput}}},
+        {"cvtpd2d", {false, {RoleInput, RoleOutput}}},
+        {"cvttpd2d", {false, {RoleInput, RoleOutput}}},
+        {"cvtps2d", {false, {RoleInput, RoleOutput}}},
+        {"cvttps2d", {false, {RoleInput, RoleOutput}}},
+        {"cvtpd2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvttpd2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvtpi2pd", {false, {RoleInput, RoleOutput}}},
+        {"cvtpi2ps", {false, {RoleInput, RoleBoth}}},
+        {"cvtps2pd", {false, {RoleInput, RoleOutput}}},
+        {"cvtps2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvttps2pi", {false, {RoleInput, RoleOutput}}},
+        {"cvtsd2si", {false, {RoleInput, RoleOutput}}},
+        {"cvtsd2ss", {false, {RoleInput, RoleBoth}}},
+        {"cvttsd2si", {false, {RoleInput, RoleOutput}}},
+        {"cvtss2si", {false, {RoleInput, RoleOutput}}},
+        {"cvttss2si", {false, {RoleInput, RoleOutput}}},
+        {"cvtsi2sd", {false, {RoleInput, RoleOutput}}},
+        {"cvtsi2ss", {false, {RoleInput, RoleOutput}}},
+        {"cvtss2sd", {false, {RoleInput, RoleBoth}}},
+        {"extractps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"insertps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vinsertps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"dec", {true, {RoleBoth}}},
+        {"inc", {true, {RoleBoth}}},
+        {"neg", {true, {RoleBoth}}},
+        {"div", {true, {RoleInput}}},
+        {"mul", {true, {RoleInput}}},
+        {"imul", {true, {RoleInput}}},
+        {"cmpxchg", {true, {RoleInput, RoleBoth}}},
+        // XADD (exchange and add): Intel order XADD dest, src. Computes
+        // temp=dest; dest=dest+src; src=temp. Both operands are read and
+        // written, and the arithmetic flags (CF/OF/SF/ZF/AF/PF) are set like
+        // ADD. AT&T order reverses the operands (src, dest). Only the
+        // register-to-register form is safe; the memory form (which has an
+        // implicit LOCK) is rejected by the generic memory-operand check below.
+        {"xadd", {true, {RoleBoth, RoleBoth}}},
+        // XCHG (exchange): Intel order XCHG dest, src. Swaps the two operands;
+        // both are read and written. No flags are modified. Only the
+        // register-to-register form is safe; the memory form (which has an
+        // implicit LOCK) is rejected by the generic memory-operand check below.
+        {"xchg", {false, {RoleBoth, RoleBoth}}},
+        {"crc32", {true, {RoleInput, RoleBoth}}},
+        {"bsf", {true, {RoleInput, RoleOutput}}},
+        {"bsr", {true, {RoleInput, RoleOutput}}},
+        {"lzcnt", {true, {RoleInput, RoleOutput}}},
+        {"popcnt", {true, {RoleInput, RoleOutput}}},
+        {"tzcnt", {true, {RoleInput, RoleOutput}}},
+        {"bt", {true, {RoleInput, RoleInput}}},
+        {"btc", {true, {RoleInput, RoleBoth}}},
+        {"btr", {true, {RoleInput, RoleBoth}}},
+        {"bts", {true, {RoleInput, RoleBoth}}},
+        {"andn", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"addpd", {false, {RoleInput, RoleBoth}}},
+        {"addps", {false, {RoleInput, RoleBoth}}},
+        {"addsd", {false, {RoleInput, RoleBoth}}},
+        {"addss", {false, {RoleInput, RoleBoth}}},
+        {"subpd", {false, {RoleInput, RoleBoth}}},
+        {"subps", {false, {RoleInput, RoleBoth}}},
+        {"subsd", {false, {RoleInput, RoleBoth}}},
+        {"subss", {false, {RoleInput, RoleBoth}}},
+        {"mulpd", {false, {RoleInput, RoleBoth}}},
+        {"mulps", {false, {RoleInput, RoleBoth}}},
+        {"mulsd", {false, {RoleInput, RoleBoth}}},
+        {"mulss", {false, {RoleInput, RoleBoth}}},
+        {"mulx", {false, {RoleInput, RoleOutput, RoleOutput}}},
+        {"addsubpd", {false, {RoleInput, RoleBoth}}},
+        {"addsubps", {false, {RoleInput, RoleBoth}}},
+        {"haddpd", {false, {RoleInput, RoleBoth}}},
+        {"haddps", {false, {RoleInput, RoleBoth}}},
+        {"vhaddpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vhaddps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"hsubpd", {false, {RoleInput, RoleBoth}}},
+        {"hsubps", {false, {RoleInput, RoleBoth}}},
+        {"vhsubpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vhsubps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // AVX three-operand forms of the floating-point unpack and interleave
+        // instructions: two read-only sources and a write-only destination.
+        {"vunpckhpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vunpckhps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vunpcklpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vunpcklps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VFMADD132/213/231{PD,PS,SD,SS} (FMA3): fused multiply-add of packed
+        // or scalar floating-point values. Intel order: dst, src2, src3, where
+        // the destination is also the first source operand (read and written).
+        // AT&T order: src3, src2, dst. The 132/213/231 suffixes select which
+        // operands are multiplied and added. No EFLAGS are modified; the only
+        // side effects are writing the destination (an XMM/YMM register) and
+        // possibly updating MXCSR exception-status flags (a benign register
+        // effect, the same kind comiss/ucomiss already produce). The scalar
+        // (SD/SS) variants preserve the upper elements of the destination.
+        // Only the register-to-register forms are supported; memory forms are
+        // rejected by the generic memory-operand check below.
+        {"vfmadd132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmadd231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFMADDSUB132/213/231{PD,PS} (FMA3): fused multiply-Alternating
+        // Add/Subtract of packed floating-point values. Same 3-operand
+        // structure and safety properties as VFMADD above: destination is read
+        // and written (first source), the other two sources are read-only.
+        // Register-to-register forms only; memory forms rejected below.
+        {"vfmaddsub132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmaddsub231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFMSUB132/213/231{PD,PS,SD,SS} (FMA3): fused multiply-Subtract of
+        // packed or scalar floating-point values. Identical 3-operand
+        // structure and safety properties as VFMADD above.
+        {"vfmsub132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsub231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFMSUBADD132/213/231{PD,PS} (FMA3): fused multiply-Alternating
+        // Subtract/Add of packed floating-point values. The inverse of
+        // VFMADDSUB (odd elements subtracted, even added). Identical 3-operand
+        // structure and safety properties as VFMADD/VFMSUB above: destination is
+        // read and written (first source), the other two sources are read-only.
+        // Register-to-register forms only; memory forms rejected below.
+        {"vfmsubadd132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfmsubadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFNMADD132/213/231{PD,PS,SD,SS} (FMA3): fused negative multiply-add of
+        // packed or scalar floating-point values. Computes
+        // -(src_i * src_j) + src_k with the 132/213/231 suffix selecting which
+        // operands are multiplied/added. Same 3-operand structure and safety
+        // properties as VFMADD above: the destination is also the first source
+        // operand (read and written), the other two sources are read-only, and no
+        // EFLAGS are modified. The scalar (SD/SS) variants preserve the upper
+        // elements of the destination. Only the VEX-encoded (register-to-register)
+        // forms are supported; the EVEX (AVX-512) forms and memory forms are
+        // rejected (the latter by the generic memory-operand check below).
+        {"vfnmadd132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmadd231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VFNMSUB132/213/231{PD,PS,SD,SS} (FMA3): fused negative multiply-Subtract
+        // of packed or scalar floating-point values. Computes
+        // -(src_i * src_j) - src_k with the 132/213/231 suffix selecting which
+        // operands are multiplied/subtracted. Identical 3-operand structure and
+        // safety properties as VFNMADD above: the destination is also the first
+        // source operand (read and written), the other two sources are read-only,
+        // no EFLAGS are modified, and the scalar (SD/SS) variants preserve the
+        // upper elements of the destination. Only the VEX-encoded
+        // (register-to-register) forms are supported; the EVEX (AVX-512) forms
+        // and memory forms are rejected (the latter by the generic memory-operand
+        // check below).
+        {"vfnmsub132pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub132ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub132sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub132ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub213ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231pd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231ps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231sd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vfnmsub231ss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vmovshdup", {false, {RoleInput, RoleOutput}}},
+        {"vmovsldup", {false, {RoleInput, RoleOutput}}},
+        // VBROADCASTSS/VBROADCASTSD (AVX2): broadcast the low element of a
+        // source register to all elements of the destination register. AT&T
+        // order: src, dst. The source is read-only and the destination is
+        // write-only; no flags are modified. Memory-only forms (e.g.
+        // VBROADCASTF128) and AVX-512 variants are not supported here; the
+        // generic memory-operand rejection below blocks any memory form.
+        {"vbroadcastss", {false, {RoleInput, RoleOutput}}},
+        {"vbroadcastsd", {false, {RoleInput, RoleOutput}}},
+        // VPBROADCASTB/W/D/Q (AVX2): broadcast the low byte/word/dword/qword
+        // element of the source register to all locations in the destination
+        // register. AT&T order: src, dst. The source is read-only and the
+        // destination is write-only; no flags are modified. Only the VEX-encoded
+        // (register-to-register) forms are supported; the EVEX (AVX-512) forms
+        // and memory forms are rejected (the latter by the generic
+        // memory-operand rejection below).
+        {"vpbroadcastb", {false, {RoleInput, RoleOutput}}},
+        {"vpbroadcastw", {false, {RoleInput, RoleOutput}}},
+        {"vpbroadcastd", {false, {RoleInput, RoleOutput}}},
+        {"vpbroadcastq", {false, {RoleInput, RoleOutput}}},
+        {"divpd", {false, {RoleInput, RoleBoth}}},
+        {"divps", {false, {RoleInput, RoleBoth}}},
+        {"divsd", {false, {RoleInput, RoleBoth}}},
+        {"divss", {false, {RoleInput, RoleBoth}}},
+        {"dppd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"dpps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"maxpd", {false, {RoleInput, RoleBoth}}},
+        {"maxps", {false, {RoleInput, RoleBoth}}},
+        {"maxsd", {false, {RoleInput, RoleBoth}}},
+        {"maxss", {false, {RoleInput, RoleBoth}}},
+        {"minpd", {false, {RoleInput, RoleBoth}}},
+        {"minps", {false, {RoleInput, RoleBoth}}},
+        {"minsd", {false, {RoleInput, RoleBoth}}},
+        {"minss", {false, {RoleInput, RoleBoth}}},
+        {"rcpps", {false, {RoleInput, RoleOutput}}},
+        {"rcpss", {false, {RoleInput, RoleBoth}}},
+        {"vrcpps", {false, {RoleInput, RoleOutput}}},
+        {"vrcpss", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"rsqrtps", {false, {RoleInput, RoleOutput}}},
+        {"rsqrtss", {false, {RoleInput, RoleBoth}}},
+        {"vrsqrtps", {false, {RoleInput, RoleOutput}}},
+        {"vrsqrtss", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"sqrtps", {false, {RoleInput, RoleOutput}}},
+        {"sqrtpd", {false, {RoleInput, RoleOutput}}},
+        {"vsqrtps", {false, {RoleInput, RoleOutput}}},
+        {"vsqrtpd", {false, {RoleInput, RoleOutput}}},
+        {"sqrtss", {false, {RoleInput, RoleBoth}}},
+        {"sqrtsd", {false, {RoleInput, RoleBoth}}},
+        {"vsqrtss", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vsqrtsd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"roundpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"roundps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"roundsd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"roundss", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"mpsadbw", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"gf2p8affineinvq", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vgf2p8affineinvq", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"gf2p8affineq", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vgf2p8affineq", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"gf2p8mul", {false, {RoleInput, RoleBoth}}},
+        {"vgf2p8mul", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pclmulqdq", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpclmulqdq", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // AVX-VNNI dot-product-accumulate instructions. These are VEX-encoded
+        // three-operand instructions: VPDPBUSD xmm1, xmm2, xmm3/m128. The
+        // destination (xmm1) accumulates the result (read+written). AT&T operand
+        // order is src2, src1, dest.
+        {"vpdpbusd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpdpbusds", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpdpwssd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"vpdpwssds", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"aesdec", {false, {RoleInput, RoleBoth}}},
+        {"aesdeclast", {false, {RoleInput, RoleBoth}}},
+        {"aesenc", {false, {RoleInput, RoleBoth}}},
+        {"aesenclast", {false, {RoleInput, RoleBoth}}},
+        {"aesimc", {false, {RoleInput, RoleOutput}}},
+        // SHA (SHA-NI) instructions. These operate on XMM registers and have no
+        // memory access when used with register operands. AT&T operand order is
+        // src, dest for the two-operand forms; SHA1RNDS4 also takes an imm8
+        // (src, src, dest). SHA256RNDS2 reads XMM0 implicitly as an input;
+        // reading an undeclared register is harmless.
+        {"sha1msg1", {false, {RoleInput, RoleBoth}}},
+        {"sha1msg2", {false, {RoleInput, RoleBoth}}},
+        {"sha1nexte", {false, {RoleInput, RoleBoth}}},
+        {"sha1rnds4", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"sha256msg1", {false, {RoleInput, RoleBoth}}},
+        {"sha256msg2", {false, {RoleInput, RoleBoth}}},
+        {"sha256rnds2", {false, {RoleInput, RoleBoth}}},
+        {"andnpd", {false, {RoleInput, RoleBoth}}},
+        {"andnps", {false, {RoleInput, RoleBoth}}},
+        {"andpd", {false, {RoleInput, RoleBoth}}},
+        {"andps", {false, {RoleInput, RoleBoth}}},
+        {"orpd", {false, {RoleInput, RoleBoth}}},
+        {"orps", {false, {RoleInput, RoleBoth}}},
+        // XORPD/XORPS (SSE2/SSE): bitwise XOR of packed double/single
+        // precision values. Intel order: dest, src. The destination is read and
+        // written (RoleBoth), the source is read-only. No flags are modified.
+        // Register-to-register forms are available; memory forms are rejected
+        // by the generic memory-operand check below.
+        {"xorpd", {false, {RoleInput, RoleBoth}}},
+        {"xorps", {false, {RoleInput, RoleBoth}}},
+        {"pabsb", {false, {RoleInput, RoleOutput}}},
+        {"pabsd", {false, {RoleInput, RoleOutput}}},
+        {"pabsw", {false, {RoleInput, RoleOutput}}},
+        {"paddb", {false, {RoleInput, RoleBoth}}},
+        {"paddd", {false, {RoleInput, RoleBoth}}},
+        {"paddq", {false, {RoleInput, RoleBoth}}},
+        {"paddsb", {false, {RoleInput, RoleBoth}}},
+        {"paddsw", {false, {RoleInput, RoleBoth}}},
+        {"paddusb", {false, {RoleInput, RoleBoth}}},
+        {"paddusw", {false, {RoleInput, RoleBoth}}},
+        {"paddw", {false, {RoleInput, RoleBoth}}},
+        {"packssdw", {false, {RoleInput, RoleBoth}}},
+        {"packsswb", {false, {RoleInput, RoleBoth}}},
+        {"packusdw", {false, {RoleInput, RoleBoth}}},
+        {"packuswb", {false, {RoleInput, RoleBoth}}},
+        {"palignr", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pand", {false, {RoleInput, RoleBoth}}},
+        {"pandn", {false, {RoleInput, RoleBoth}}},
+        {"por", {false, {RoleInput, RoleBoth}}},
+        {"pxor", {false, {RoleInput, RoleBoth}}},
+        {"pavgb", {false, {RoleInput, RoleBoth}}},
+        {"pavgw", {false, {RoleInput, RoleBoth}}},
+        {"pblendvb", {false, {RoleInput, RoleBoth}}},
+        {"pblendw", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"ptest", {true, {RoleInput, RoleInput}}},
+        {"pcmpeqb", {false, {RoleInput, RoleBoth}}},
+        {"pcmpeqd", {false, {RoleInput, RoleBoth}}},
+        {"pcmpeqq", {false, {RoleInput, RoleBoth}}},
+        {"pcmpeqw", {false, {RoleInput, RoleBoth}}},
+        {"pcmpestri", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"pcmpestrm", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"pcmpgtb", {false, {RoleInput, RoleBoth}}},
+        {"pcmpgtd", {false, {RoleInput, RoleBoth}}},
+        {"pcmpgtq", {false, {RoleInput, RoleBoth}}},
+        {"pcmpgtw", {false, {RoleInput, RoleBoth}}},
+        {"pcmpistri", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"pcmpistrm", {true, {RoleInput, RoleInput, RoleInput}}},
+        {"blendpd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"blendps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"blendvpd", {false, {RoleInput, RoleBoth}}},
+        {"blendvps", {false, {RoleInput, RoleBoth}}},
+        {"vblendpd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vblendps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vpblendvb", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vpblendw", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vpblendd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vdppd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vdpps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vmpsadbw", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vandnpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vandnps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vandpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vandps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vorpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vorps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"aeskeygenassist", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vaeskeygenassist", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vaesdeclast", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vaesimc", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vaesenc", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vaesenclast", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"bextr", {true, {RoleInput, RoleInput, RoleOutput}}},
+        {"bzhi", {true, {RoleInput, RoleInput, RoleOutput}}},
+        {"blsi", {true, {RoleInput, RoleOutput}}},
+        {"blsmsk", {true, {RoleInput, RoleOutput}}},
+        {"blsr", {true, {RoleInput, RoleOutput}}},
+        {"pdep", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pext", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrb", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrq", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pextrw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pinsrb", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pinsrd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pinsrq", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"pinsrw", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"phaddw", {false, {RoleInput, RoleBoth}}},
+        {"vphaddw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phaddd", {false, {RoleInput, RoleBoth}}},
+        {"vphaddd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phaddsw", {false, {RoleInput, RoleBoth}}},
+        {"vphaddsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phsubw", {false, {RoleInput, RoleBoth}}},
+        {"vphsubw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phsubd", {false, {RoleInput, RoleBoth}}},
+        {"vphsubd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phsubsw", {false, {RoleInput, RoleBoth}}},
+        {"vphsubsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"phminposuw", {false, {RoleInput, RoleOutput}}},
+        {"vphminposuw", {false, {RoleInput, RoleOutput}}},
+        {"pmaddubsw", {false, {RoleInput, RoleBoth}}},
+        {"vpmaddubsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaddwd", {false, {RoleInput, RoleBoth}}},
+        {"vpmaddwd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxsb", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxsb", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxsd", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxsd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxsw", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxub", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxub", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxud", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxud", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmaxuw", {false, {RoleInput, RoleBoth}}},
+        {"vpmaxuw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pminsb", {false, {RoleInput, RoleBoth}}},
+        {"vpminsb", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pminsd", {false, {RoleInput, RoleBoth}}},
+        {"vpminsd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pminsw", {false, {RoleInput, RoleBoth}}},
+        {"vpminsw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pminub", {false, {RoleInput, RoleBoth}}},
+        {"vpminub", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pminud", {false, {RoleInput, RoleBoth}}},
+        {"vpminud", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pminuw", {false, {RoleInput, RoleBoth}}},
+        {"vpminuw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPSLLVD/VPSLLVQ/VPSRAVD/VPSRLVD/VPSRLVQ (AVX2): variable packed bit
+        // shifts. Each element of src1 is shifted by the count held in the
+        // corresponding element of src2. VEX-encoded three-operand forms
+        // (xmm/ymm) only; no flags are modified. AT&T operand order is
+        // src2, src1, dest -> {RoleInput, RoleInput, RoleOutput}. The EVEX
+        // (AVX-512) variants and memory forms are rejected (the latter by the
+        // generic memory-operand rejection below).
+        {"vpsllvd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsllvq", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsravd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsrlvd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"vpsrlvq", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pmovmskb", {false, {RoleInput, RoleOutput}}},
+        {"vpmovmskb", {false, {RoleInput, RoleOutput}}},
+        {"pmovsxbw", {false, {RoleInput, RoleOutput}}},
+        {"pmovsxbd", {false, {RoleInput, RoleOutput}}},
+        {"pmovsxbq", {false, {RoleInput, RoleOutput}}},
+        {"pmovsxwd", {false, {RoleInput, RoleOutput}}},
+        {"pmovsxwq", {false, {RoleInput, RoleOutput}}},
+        {"pmovsxdq", {false, {RoleInput, RoleOutput}}},
+        {"vpmovsxbw", {false, {RoleInput, RoleOutput}}},
+        {"vpmovsxbd", {false, {RoleInput, RoleOutput}}},
+        {"vpmovsxbq", {false, {RoleInput, RoleOutput}}},
+        {"vpmovsxwd", {false, {RoleInput, RoleOutput}}},
+        {"vpmovsxwq", {false, {RoleInput, RoleOutput}}},
+        {"vpmovsxdq", {false, {RoleInput, RoleOutput}}},
+        {"pmovzxbw", {false, {RoleInput, RoleOutput}}},
+        {"pmovzxbd", {false, {RoleInput, RoleOutput}}},
+        {"pmovzxbq", {false, {RoleInput, RoleOutput}}},
+        {"pmovzxwd", {false, {RoleInput, RoleOutput}}},
+        {"pmovzxwq", {false, {RoleInput, RoleOutput}}},
+        {"pmovzxdq", {false, {RoleInput, RoleOutput}}},
+        {"vpmovzxbw", {false, {RoleInput, RoleOutput}}},
+        {"vpmovzxbd", {false, {RoleInput, RoleOutput}}},
+        {"vpmovzxbq", {false, {RoleInput, RoleOutput}}},
+        {"vpmovzxwd", {false, {RoleInput, RoleOutput}}},
+        {"vpmovzxwq", {false, {RoleInput, RoleOutput}}},
+        {"vpmovzxdq", {false, {RoleInput, RoleOutput}}},
+        {"pmuldq", {false, {RoleInput, RoleBoth}}},
+        {"pmulhrsw", {false, {RoleInput, RoleBoth}}},
+        {"pmulhuw", {false, {RoleInput, RoleBoth}}},
+        {"pmulhw", {false, {RoleInput, RoleBoth}}},
+        {"pmulld", {false, {RoleInput, RoleBoth}}},
+        {"pmullw", {false, {RoleInput, RoleBoth}}},
+        {"pmuludq", {false, {RoleInput, RoleBoth}}},
+        {"prefetchw", {false, {RoleInput}}},
+        {"prefetcht0", {false, {RoleInput}}},
+        {"prefetcht1", {false, {RoleInput}}},
+        {"prefetcht2", {false, {RoleInput}}},
+        {"prefetchnta", {false, {RoleInput}}},
+        {"psadbw", {false, {RoleInput, RoleBoth}}},
+        {"pshufb", {false, {RoleInput, RoleBoth}}},
+        {"pshufd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pshufhw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pshuflw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        {"pshufw", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // SHUFPD/SHUFPS (SSE2/SSE): packed interleave shuffle of pairs of
+        // doubles/floats. AT&T order: $imm8, src2, dst(src1). The imm8
+        // selects from each input pair; the destination is read and written.
+        // Register-only operands are fine (no memory access needed).
+        {"shufpd", {false, {RoleInput, RoleInput, RoleBoth}}},
+        {"shufps", {false, {RoleInput, RoleInput, RoleBoth}}},
+        // VSHUFPD/VSHUFPS (AVX): three-source forms with a separate
+        // destination. AT&T order: $imm8, src3, src2, dst.
+        {"vshufpd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vshufps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"psignb", {false, {RoleInput, RoleBoth}}},
+        {"psignd", {false, {RoleInput, RoleBoth}}},
+        {"psignw", {false, {RoleInput, RoleBoth}}},
+        {"pslld", {false, {RoleInput, RoleBoth}}},
+        {"psllq", {false, {RoleInput, RoleBoth}}},
+        {"psllw", {false, {RoleInput, RoleBoth}}},
+        {"psrad", {false, {RoleInput, RoleBoth}}},
+        {"psraw", {false, {RoleInput, RoleBoth}}},
+        {"psrld", {false, {RoleInput, RoleBoth}}},
+        {"psrlq", {false, {RoleInput, RoleBoth}}},
+        {"psrlw", {false, {RoleInput, RoleBoth}}},
+        {"psubb", {false, {RoleInput, RoleBoth}}},
+        {"psubd", {false, {RoleInput, RoleBoth}}},
+        {"psubq", {false, {RoleInput, RoleBoth}}},
+        {"psubsb", {false, {RoleInput, RoleBoth}}},
+        {"psubsw", {false, {RoleInput, RoleBoth}}},
+        {"psubusb", {false, {RoleInput, RoleBoth}}},
+        {"psubusw", {false, {RoleInput, RoleBoth}}},
+        {"psubw", {false, {RoleInput, RoleBoth}}},
+        {"punpckhbw", {false, {RoleInput, RoleBoth}}},
+        {"punpckhdq", {false, {RoleInput, RoleBoth}}},
+        {"punpckhqdq", {false, {RoleInput, RoleBoth}}},
+        {"punpckhwd", {false, {RoleInput, RoleBoth}}},
+        {"punpcklbw", {false, {RoleInput, RoleBoth}}},
+        {"punpckldq", {false, {RoleInput, RoleBoth}}},
+        {"punpcklqdq", {false, {RoleInput, RoleBoth}}},
+        {"punpcklwd", {false, {RoleInput, RoleBoth}}},
+        // SSE/SSE2 floating-point unpack and interleave instructions. The
+        // destination is read-modify-write (RoleBoth) and the source is
+        // read-only. No flags, no implicit register outputs, register-only
+        // forms are available.
+        {"unpckhpd", {false, {RoleInput, RoleBoth}}},
+        {"unpckhps", {false, {RoleInput, RoleBoth}}},
+        {"unpcklpd", {false, {RoleInput, RoleBoth}}},
+        {"unpcklps", {false, {RoleInput, RoleBoth}}},
+        {"bswap", {false, {RoleBoth}}},
+        {"not", {false, {RoleBoth}}},
+        {"lar", {true, {RoleInput, RoleOutput}}},
+        {"lsl", {true, {RoleInput, RoleOutput}}},
+        {"lea", {false, {RoleInput, RoleOutput}}},
+        // RDFSBASE/RDGSBASE read the FS/GS segment base address (an implicit
+        // read, which is safe) and write it into a single general-purpose
+        // destination register. No memory access, no flags, no control flow.
+        // They are 64-bit-mode-only and require CR4.FSGSBASE; if unsupported
+        // they #UD (SIGILL), which is a safe uncatchable trap.
+        {"rdfsbase", {false, {RoleOutput}}},
+        {"rdgsbase", {false, {RoleOutput}}},
+        // RDPID reads IA32_TSC_AUX into a single general-purpose destination
+        // register. No memory access, no flags, no control flow.
+        {"rdpid", {false, {RoleOutput}}},
+        // RDRAND reads a hardware random number into a single general-purpose
+        // destination register and sets CF. No memory access, no control flow.
+        {"rdrand", {true, {RoleOutput}}},
+        // RDSSPD/RDSSPQ copy the shadow stack pointer (SSP) into a single
+        // general-purpose destination register. No memory access, no flags,
+        // no control flow. They are NOPs when CET shadow stacks are not enabled.
+        {"rdsspd", {false, {RoleOutput}}},
+        {"rdsspq", {false, {RoleOutput}}},
+        // SLDT/SMSW/STR store a system register (the LDTR selector, the CR0
+        // machine status word, and the TR selector respectively) into a single
+        // general-purpose destination register. They are read-only with respect
+        // to system state: they do not modify any system register, perform no
+        // memory access, set no flags, and have no control-flow effect. They
+        // are non-privileged store instructions; when CR4.UMIP is enabled the
+        // kernel traps and emulates them (returning sanitized values), which is
+        // still safe. If somehow unsupported they #GP (SIGSEGV), a safe
+        // uncatchable trap.
+        {"sldt", {false, {RoleOutput}}},
+        {"smsw", {false, {RoleOutput}}},
+        {"str", {false, {RoleOutput}}},
+        // VCVTPH2PS (F16C/AVX): convert packed FP16 values in the source
+        // XMM register to packed single-precision FP values in the
+        // destination XMM/YMM register. AT&T order: src, dst. The source is
+        // read-only and the destination is write-only; no flags are modified.
+        // Only the VEX-encoded (F16C) register-to-register forms are safe;
+        // the EVEX-encoded (AVX-512) variants are not supported. Memory
+        // forms are rejected by the generic memory-operand check below.
+        {"vcvtph2ps", {false, {RoleInput, RoleOutput}}},
+        // VCVTPS2PH (F16C/AVX): convert packed single-precision FP values in the
+        // source XMM/YMM register to packed FP16 values in the destination XMM
+        // register. AT&T order: $imm8, src, dst. The imm8 selects the rounding
+        // mode; the source is read-only and the destination is write-only; no
+        // flags are modified. Only the VEX-encoded (F16C) register-to-register
+        // forms are safe; the EVEX-encoded (AVX-512) variants are not supported.
+        // Memory forms are rejected by the generic memory-operand check below.
+        {"vcvtps2ph", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VEXTRACTF128 (AVX): extract a 128-bit packed floating-point lane from
+        // a 256-bit YMM source register into a 128-bit XMM destination. AT&T
+        // order: $imm8, src, dst. The imm8 selects the low (0) or high (1)
+        // 128-bit lane; the source is read-only and the destination is
+        // write-only; no flags are modified. Only the VEX-encoded (AVX)
+        // register-to-register form is supported here; the EVEX-encoded
+        // (AVX-512) variants (VEXTRACTF32x4/F64x2/F32x8/F64x4) are not
+        // supported. Memory forms are rejected by the generic memory-operand
+        // check below.
+        {"vextractf128", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VEXTRACTI128 (AVX2): extract a 128-bit packed integer lane from a
+        // 256-bit YMM source register into a 128-bit XMM destination. AT&T
+        // order: $imm8, src, dst. Same structure as VEXTRACTF128 but for
+        // integer data. Only the VEX-encoded (AVX2) register-to-register form
+        // is supported; the EVEX-encoded (AVX-512) variants
+        // (VEXTRACTI32x4/I64x2/I32x8/I64x4) are not supported. Memory forms
+        // are rejected by the generic memory-operand check below.
+        {"vextracti128", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VINSERTF128 (AVX): insert a 128-bit packed floating-point lane from
+        // an XMM source into a 256-bit YMM destination, copying the remaining
+        // lane from a second YMM source. Intel order: dst, src1, src2, imm8.
+        // AT&T order: $imm8, src2, src1, dst. The imm8[0] selects the low (0)
+        // or high (1) 128-bit lane to receive src2; the other lane comes from
+        // src1. Both sources are read-only and the destination is write-only
+        // (all bits come from the two sources, dst is never read); no flags
+        // are modified. Only the VEX-encoded (AVX) register-to-register form is
+        // supported; the EVEX-encoded (AVX-512) variants
+        // (VINSERTF32x4/F64x2/F32x8/F64x4) are not supported. Memory forms are
+        // rejected by the generic memory-operand check below.
+        {"vinsertf128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VINSERTI128 (AVX2): insert a 128-bit packed integer lane from an XMM
+        // source into a 256-bit YMM destination, copying the remaining lane
+        // from a second YMM source. Same structure as VINSERTF128 but for
+        // integer data. Only the VEX-encoded (AVX2) register-to-register form
+        // is supported; the EVEX-encoded (AVX-512) variants
+        // (VINSERTI32x4/I64x2/I32x8/I64x4) are not supported. Memory forms are
+        // rejected by the generic memory-operand check below.
+        {"vinserti128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VPERM2F128 (AVX): permute 128-bit floating-point lanes from two YMM
+        // sources into a YMM destination under control of an imm8. Intel order:
+        // dst, src1, src2, imm8. AT&T order: $imm8, src2, src1, dst. The
+        // destination is write-only (ModRM:reg (w)); both sources are read-only;
+        // no flags are modified. Only the VEX-encoded (AVX) register-to-register
+        // form is supported; memory forms are rejected by the generic
+        // memory-operand check below.
+        {"vperm2f128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VPERM2I128 (AVX2): permute 128-bit integer lanes from two YMM sources
+        // into a YMM destination under control of an imm8. Identical operand
+        // structure and safety properties as VPERM2F128 but for integer data.
+        // Only the VEX-encoded (AVX2) register-to-register form is supported;
+        // memory forms are rejected by the generic memory-operand check below.
+        {"vperm2i128", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VPERMD (AVX2): permute doubleword elements of a YMM source using
+        // indices from a second YMM source, storing the result in a YMM
+        // destination. Intel order: dst, src1(idx), src2. AT&T order: src2,
+        // src1, dst. The destination is write-only (ModRM:reg (w)); both sources
+        // are read-only; no flags are modified. Only the VEX-encoded (AVX2)
+        // register-to-register form is supported; the EVEX (AVX-512) forms and
+        // memory forms are rejected (the latter by the generic memory-operand
+        // check below).
+        {"vpermd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMILPD (AVX): permute in-lane pairs of double-precision values.
+        // Two register-only forms: the variable form
+        //   VPERMILPD xmm1, xmm2, xmm3/m128
+        // (Intel order: dst, data, control) and the immediate form
+        //   VPERMILPD xmm1, xmm2/m128, imm8
+        // (Intel order: dst, data, imm8). AT&T order reverses both to
+        // {control/imm8, data, dst}. The destination is write-only
+        // (ModRM:reg (w)); sources are read-only; no flags are modified. Only
+        // the VEX-encoded (AVX) register-to-register forms are supported; the
+        // EVEX (AVX-512) forms and memory forms are rejected (the latter by the
+        // generic memory-operand check below).
+        {"vpermilpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMILPS (AVX): permute in-lane single-precision values. Identical
+        // operand structure and safety properties as VPERMILPD but for 32-bit
+        // elements. Both register-only AVX forms (variable and immediate) are
+        // supported; EVEX (AVX-512) and memory forms are rejected below.
+        {"vpermilps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMPD (AVX2): permute double-precision values across a full YMM
+        // destination under control of an imm8. AVX2 provides only the
+        // immediate form
+        //   VPERMPD ymm1, ymm2/m256, imm8
+        // (Intel order: dst, data, imm8). AT&T order: $imm8, data, dst. The
+        // destination is write-only; the source is read-only; no flags are
+        // modified. Only the VEX-encoded (AVX2) register-to-register form is
+        // supported; EVEX (AVX-512) forms and memory forms are rejected below.
+        {"vpermpd", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMPS (AVX2): permute single-precision values using indices from a
+        // second YMM source. AVX2 provides only the variable form
+        //   VPERMPS ymm1, ymm2(idx), ymm3/m256(data)
+        // (Intel order: dst, idx, data). AT&T order: data, idx, dst. The
+        // destination is write-only; both sources are read-only; no flags are
+        // modified. Only the VEX-encoded (AVX2) register-to-register form is
+        // supported; EVEX (AVX-512) forms and memory forms are rejected below.
+        {"vpermps", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VPERMQ (AVX2): permute quadword values across a full YMM destination
+        // under control of an imm8. Identical operand structure and safety
+        // properties as VPERMPD but for 64-bit integer elements. Only the
+        // VEX-encoded (AVX2) register-to-register immediate form is supported;
+        // EVEX (AVX-512) forms and memory forms are rejected below.
+        {"vpermq", {false, {RoleInput, RoleInput, RoleOutput}}},
+        // VFIXUPIMM{PD,PS,SD,SS} (AVX-512): fix up special floating-point
+        // values using a lookup table. Intel order: dst, src1, src2, imm8.
+        // AT&T order: $imm8, src2, src1, dst. The imm8 is an exception-
+        // reporting specifier; with imm8=0 no MXCSR flags are updated. Even
+        // with nonzero imm8, MXCSR exception mask bits are ignored (all
+        // exceptions are masked), so the instruction never traps - it only
+        // updates the MXCSR.IE/ZE status flags (a benign register effect,
+        // the same kind comiss/ucomiss already produce). The opmask {k1}/{z}
+        // and {sae} decorators are optional; without them the destination is
+        // write-only (all elements written). The register-only forms need no
+        // memory access. Memory forms and masked forms (which append
+        // decorators to the destination operand) are rejected by the generic
+        // memory-operand classification below.
+        {"vfixupimmpd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vfixupimmps", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vfixupimmsd", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        {"vfixupimmss", {false, {RoleInput, RoleInput, RoleInput, RoleOutput}}},
+        // VTESTPD/VTESTPS (AVX): bitwise test of packed double/single precision
+        // floating-point values. Intel order: xmm1, xmm2/m128. Both operands are
+        // read-only (no destination register is written); only ZF and CF are
+        // modified. Register-to-register forms are available; memory forms are
+        // rejected by the generic memory-operand check below. AT&T order reverses
+        // the two sources. Analogous to PTEST.
+        {"vtestpd", {true, {RoleInput, RoleInput}}},
+        {"vtestps", {true, {RoleInput, RoleInput}}},
+      };
+
+      StringRef base = m;
+      // Only strip a trailing size suffix when the stripped base is present in
+      // the allowlist. This handles instructions like imull/imulq and the cvt*2dq
+      // family, while keeping base names that happen to end in b/w/l/q (e.g. imul).
+      if (!base.empty() &&
+          (base.back() == 'b' || base.back() == 'w' ||
+           base.back() == 'l' || base.back() == 'q')) {
+        StringRef stripped = base.drop_back();
+        if (info.count(stripped.str()))
+          base = stripped;
+      }
+
+      auto it = info.find(base.str());
+      if (it == info.end())
+        return false;
+      baseMnemonic = base.str();
+      setsFlags = it->second.first;
+      roles = it->second.second;
+      return true;
+    };
+
+    // Split asm string into lines on \n and ;.
+    std::string AsmStr = IA->getAsmString();
+    std::vector<std::string> lines;
+    {
+      std::string cur;
+      for (char c : AsmStr) {
+        if (c == '\n' || c == ';') {
+          lines.push_back(trim(cur));
+          cur.clear();
+        } else
+          cur += c;
+      }
+      lines.push_back(trim(cur));
+    }
+
+    enum OperandKind { OKReg, OKPlaceholder, OKImmediate, OKMemory, OKError };
+
+    // Parse a $N or ${N} operand placeholder starting at s[pos] (s[pos] must be '$').
+    // On success, returns true and sets placeholderIndex to the operand index and
+    // consumed to the number of characters consumed (including '$').  On failure,
+    // returns false.  If the '$' begins a malformed placeholder, error is set.
+    auto parsePlaceholder = [&](const std::string& s, size_t pos,
+                                int& placeholderIndex, size_t& consumed,
+                                size_t numConstraints,
+                                std::string& error) -> bool {
+      placeholderIndex = -1;
+      consumed = 0;
+      error.clear();
+      if (pos >= s.size() || s[pos] != '$')
+        return false;
+      size_t i = pos + 1;
+      if (i < s.size() && s[i] == '{') {
+        size_t end = s.find('}', i);
+        if (end == std::string::npos) {
+          error = "malformed operand placeholder";
+          return false;
+        }
+        std::string inner = s.substr(i + 1, end - i - 1);
+        size_t colon = inner.find(':');
+        if (colon != std::string::npos)
+          inner = inner.substr(0, colon);
+        if (inner.empty()) {
+          error = "empty operand placeholder";
+          return false;
+        }
+        bool allDigits = true;
+        for (char c : inner) {
+          if (!std::isdigit(static_cast<unsigned char>(c))) {
+            allDigits = false;
+            break;
+          }
+        }
+        if (!allDigits) {
+          error = "unknown operand name in inline asm: " + inner;
+          return false;
+        }
+        unsigned long long idx = 0;
+        for (char c : inner) {
+          idx = idx * 10 + static_cast<unsigned long long>(c - '0');
+          if (idx > static_cast<unsigned long long>(INT_MAX)) {
+            error = "operand placeholder index too large";
+            return false;
+          }
+        }
+        if (idx >= numConstraints) {
+          error = "operand placeholder out of range";
+          return false;
+        }
+        placeholderIndex = static_cast<int>(idx);
+        consumed = end - pos + 1;
+        return true;
+      }
+      if (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+        size_t numStart = i;
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i])))
+          ++i;
+        unsigned long long idx = 0;
+        for (size_t j = numStart; j < i; ++j) {
+          idx = idx * 10 + static_cast<unsigned long long>(s[j] - '0');
+          if (idx > static_cast<unsigned long long>(INT_MAX)) {
+            error = "operand placeholder index too large";
+            return false;
+          }
+        }
+        if (idx >= numConstraints) {
+          error = "operand placeholder out of range";
+          return false;
+        }
+        placeholderIndex = static_cast<int>(idx);
+        consumed = i - pos;
+        return true;
+      }
+      return false;
+    };
+
+    auto classifyOperand = [&](const std::string& op, int& placeholderIndex,
+                               std::string& family,
+                               size_t numConstraints,
+                               std::string& error) -> OperandKind {
+      placeholderIndex = -1;
+      family.clear();
+      error.clear();
+      if (op.empty())
+        return OKMemory;
+      if (op[0] == '%') {
+        StringRef reg = StringRef(op).drop_front(1);
+        // A numeric %N reference is an operand placeholder, not a register.
+        bool allDigits = !reg.empty();
+        for (char c : reg) {
+          if (!std::isdigit(static_cast<unsigned char>(c))) {
+            allDigits = false;
+            break;
+          }
+        }
+        if (allDigits) {
+          unsigned long long idx = 0;
+          for (char c : reg) {
+            idx = idx * 10 + static_cast<unsigned long long>(c - '0');
+            if (idx > static_cast<unsigned long long>(INT_MAX)) {
+              error = "operand placeholder index too large: " + op;
+              return OKError;
+            }
+          }
+          if (idx >= numConstraints) {
+            error = "operand placeholder out of range: " + op;
+            return OKError;
+          }
+          placeholderIndex = static_cast<int>(idx);
+          return OKPlaceholder;
+        }
+        family = getRegFamily(reg);
+        if (family.empty())
+          return OKMemory;
+        return OKReg;
+      }
+      if (op[0] == '$') {
+        if (op.size() >= 2 && op[1] == '$')
+          return OKImmediate;
+        size_t consumed = 0;
+        std::string placeholderError;
+        bool isBrace = op.size() >= 2 && op[1] == '{';
+        if (parsePlaceholder(op, 0, placeholderIndex, consumed, numConstraints,
+                             placeholderError)) {
+          if (consumed == op.size())
+            return OKPlaceholder;
+          // A brace-style placeholder must occupy the whole operand;
+          // trailing characters are a malformed placeholder.
+          if (isBrace) {
+            error = "malformed operand placeholder: " + op;
+            return OKError;
+          }
+          return OKImmediate;
+        }
+        if (!placeholderError.empty()) {
+          error = placeholderError + ": " + op;
+          return OKError;
+        }
+        return OKImmediate;
+      }
+      return OKMemory;
+    };
+
+    // Detect whether a placeholder (%N, $N, or ${N}) starts at s[pos].
+    // On success, returns true with placeholderIndex set and consumed set to the
+    // number of characters consumed.  On failure, returns false; error is only set
+    // when the character at pos begins a syntactically malformed or out-of-range
+    // placeholder.  Escaped '$$' is treated as a literal and returns false.
+    auto classifyOperandAt = [&](const std::string& s, size_t pos,
+                                 int& placeholderIndex, size_t& consumed,
+                                 size_t numConstraints,
+                                 std::string& error) -> bool {
+      placeholderIndex = -1;
+      consumed = 0;
+      error.clear();
+      if (pos >= s.size())
+        return false;
+      if (s[pos] == '%') {
+        size_t i = pos + 1;
+        // Recognize register-size modifiers like %b0, %w0, %k0.
+        if (i < s.size() &&
+            (s[i] == 'b' || s[i] == 'h' || s[i] == 'w' || s[i] == 'k' ||
+             s[i] == 'q'))
+          ++i;
+        if (i >= s.size() ||
+            !std::isdigit(static_cast<unsigned char>(s[i])))
+          return false;
+        unsigned long long idx = 0;
+        while (i < s.size() &&
+               std::isdigit(static_cast<unsigned char>(s[i]))) {
+          idx = idx * 10 + static_cast<unsigned long long>(s[i] - '0');
+          if (idx > static_cast<unsigned long long>(INT_MAX)) {
+            error = "operand placeholder index too large";
+            return false;
+          }
+          ++i;
+        }
+        if (idx >= numConstraints) {
+          error = "operand placeholder out of range";
+          return false;
+        }
+        placeholderIndex = static_cast<int>(idx);
+        consumed = i - pos;
+        return true;
+      }
+      if (s[pos] == '$') {
+        // Escaped '$$' is a literal dollar sign, not a placeholder.
+        if (pos + 1 < s.size() && s[pos + 1] == '$')
+          return false;
+        return parsePlaceholder(s, pos, placeholderIndex, consumed,
+                                numConstraints, error);
+      }
+      return false;
+    };
+
+    bool AnySetsFlags = false;
+
+    auto isControlOrDebugRegOperand = [&](const std::string& op) -> bool {
+      if (op.size() < 4 || op[0] != '%')
+        return false;
+      char kind = static_cast<char>(std::tolower(static_cast<unsigned char>(op[1])));
+      if (kind != 'c' && kind != 'd')
+        return false;
+      char second = static_cast<char>(std::tolower(static_cast<unsigned char>(op[2])));
+      if (kind == 'c' && second != 'r')
+        return false;
+      if (kind == 'd' && second != 'b')
+        return false;
+      for (size_t i = 3; i < op.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(op[i])))
+          return false;
+      }
+      return true;
+    };
+
+    // Validate a memory-addressing expression operand (one that contains
+    // parentheses or brackets) such as LEA's source, a multi-byte NOP's
+    // operand, or a PREFETCH hint's operand. Such operands are purely
+    // syntactic from a memory-safety standpoint: the CPU computes the
+    // effective address from the expression but either performs no load/store
+    // at all (LEA, NOP) or performs a non-faulting hint access that has no
+    // observable effect on program behavior and cannot trap (PREFETCH, whose
+    // only exception is #UD for a LOCK prefix). Every operand placeholder in
+    // the expression must refer to an input register constraint; literal
+    // registers are permitted because reading an undeclared register is
+    // harmless. `what` is used to build human-readable error messages.
+    auto validateAddressingExpr = [&](const std::string& expr,
+                                      const std::string& what) -> bool {
+      for (size_t i = 0; i < expr.size(); ) {
+        int ph = -1;
+        size_t consumed = 0;
+        std::string placeholderError;
+        if (!classifyOperandAt(expr, i, ph, consumed,
+                               numOperandConstraints, placeholderError)) {
+          if (!placeholderError.empty()) {
+            Reason = placeholderError;
+            return false;
+          }
+          ++i;
+          continue;
+        }
+        if (!Constraints[ph].IsRegister) {
+          Reason = what + " operand placeholder refers to non-register constraint";
+          return false;
+        }
+        if (Constraints[ph].Kind != ParsedConstraint::Input) {
+          Reason = what + " operand placeholder must refer to an input register";
+          return false;
+        }
+        i += consumed;
+      }
+      return true;
+    };
+
+    for (const std::string& rawLine : lines) {
+      std::string line = trim(rawLine);
+      if (line.empty())
+        continue;
+
+      size_t sp = line.find_first_of(" \t\r\v\f");
+      std::string mnemonic = toLowerStr(trim(line.substr(0, sp)));
+      std::string rest = (sp == std::string::npos) ? "" : trim(line.substr(sp));
+
+      if (mnemonic.empty()) {
+        Reason = "missing mnemonic in asm line";
+        return false;
+      }
+
+      std::string baseMnemonic;
+      bool setsFlags = false;
+      std::vector<OperandRole> roles;
+      if (!parseMnemonic(mnemonic, baseMnemonic, setsFlags, roles)) {
+        Reason = "unsupported mnemonic for safe inline asm: " + mnemonic;
+        return false;
+      }
+
+      std::vector<std::string> operands;
+      {
+        std::string cur;
+        int depth = 0;
+        bool inBracePlaceholder = false;
+        for (size_t i = 0; i < rest.size(); ++i) {
+          char c = rest[i];
+          if (c == '(' || c == '[') {
+            ++depth;
+          } else if (c == ')' || c == ']') {
+            if (depth <= 0) {
+              Reason = "malformed/unbalanced bracketing in asm operands: " + rest;
+              return false;
+            }
+            --depth;
+          } else if (c == '{' && i > 0 && rest[i - 1] == '$') {
+            ++depth;
+            inBracePlaceholder = true;
+          } else if (c == '}' && inBracePlaceholder) {
+            if (depth <= 0) {
+              Reason = "malformed/unbalanced brace placeholder in asm operands: " + rest;
+              return false;
+            }
+            --depth;
+            inBracePlaceholder = false;
+          } else if (c == ',' && depth == 0) {
+            operands.push_back(trim(cur));
+            cur.clear();
+            continue;
+          }
+          cur += c;
+        }
+        operands.push_back(trim(cur));
+      }
+      while (!operands.empty() && operands.back().empty())
+        operands.pop_back();
+
+      // MOVSD is an overloaded mnemonic: with XMM operands it is the SSE scalar
+      // move (safe), but with no operands it is the string move instruction
+      // (unsafe because it accesses [RSI]/[RDI]). Reject the no-operand form.
+      if (baseMnemonic == "movsd" && operands.empty()) {
+        Reason = "movsd with no operands is the string move instruction, which is not allowed in safe inline asm";
+        return false;
+      }
+
+      // CMPSD is an overloaded mnemonic: with XMM operands it is the SSE scalar
+      // compare (safe), but with no operands it is the string compare instruction
+      // (unsafe because it accesses [RSI]/[RDI]). Reject the no-operand form.
+      if (baseMnemonic == "cmpsd" && operands.empty()) {
+        Reason = "cmpsd with no operands is the string compare instruction and accesses memory";
+        return false;
+      }
+
+      // MOV is overloaded: the general-purpose register move is safe, but the
+      // control-register and debug-register forms are privileged and have
+      // side effects. Reject those variants explicitly.
+      if (baseMnemonic == "mov") {
+        for (const std::string& op : operands) {
+          if (isControlOrDebugRegOperand(op)) {
+            Reason = "mov to/from control or debug registers is not allowed in safe inline asm: " + op;
+            return false;
+          }
+        }
+      }
+
+      auto isOutputOrClobber = [&](const std::string& family) -> bool {
+        return OutputFamilies.count(family) || ClobberFamilies.count(family);
+      };
+
+      // PCMPESTRI/PCMPISTRI write the result index to ECX and set the arithmetic
+      // flags. Their three explicit operands (xmm1, xmm2, imm8) are all inputs;
+      // PCMPESTRI also reads EAX/RAX and EDX/RDX implicitly, but reading
+      // registers is harmless. The output ECX must be declared as an output or
+      // clobber, and the flags require a "cc" clobber (checked below). Fall
+      // through to the generic operand validation for the explicit operands.
+      if (baseMnemonic == "pcmpestri" || baseMnemonic == "pcmpistri") {
+        if (!isOutputOrClobber("cx")) {
+          Reason = baseMnemonic + " output ecx not covered by output constraint or clobber";
+          return false;
+        }
+      }
+
+      // PCMPESTRM/PCMPISTRM write the result mask to XMM0 and set the arithmetic
+      // flags. Their three explicit operands (xmm1, xmm2, imm8) are all inputs;
+      // PCMPESTRM also reads EAX/RAX and EDX/RDX implicitly, but reading
+      // registers is harmless. The output XMM0 must be declared as an output or
+      // clobber, and the flags require a "cc" clobber (checked below). Fall
+      // through to the generic operand validation for the explicit operands.
+      if (baseMnemonic == "pcmpestrm" || baseMnemonic == "pcmpistrm") {
+        if (!isOutputOrClobber("xmm0")) {
+          Reason = baseMnemonic + " output xmm0 not covered by output constraint or clobber";
+          return false;
+        }
+      }
+
+      if (baseMnemonic == "cpuid") {
+        if (!operands.empty()) {
+          Reason = "cpuid takes no operands";
+          return false;
+        }
+        // cpuid reads eax/ecx as inputs, but reading an undeclared register is
+        // harmless once the rest of the asm has been verified effect-free.
+        // Every register it writes must be declared as an output or clobber.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "cpuid output eax not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("bx")) {
+          Reason = "cpuid output ebx not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("cx")) {
+          Reason = "cpuid output ecx not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("dx")) {
+          Reason = "cpuid output edx not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "xgetbv") {
+        if (!operands.empty()) {
+          Reason = "xgetbv takes no operands";
+          return false;
+        }
+        if (!InputFamilies.count("cx")) {
+          Reason = "xgetbv input ecx not covered by input constraint";
+          return false;
+        }
+        if (!OutputFamilies.count("ax")) {
+          Reason = "xgetbv output eax not covered by output constraint";
+          return false;
+        }
+        if (!OutputFamilies.count("dx")) {
+          Reason = "xgetbv output edx not covered by output constraint";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cbw" || baseMnemonic == "cwde" ||
+          baseMnemonic == "cdqe") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These sign-extend into ax/eax/rax. Reading the source register is
+        // harmless, but the destination must be declared as an output or clobber.
+        if (!isOutputOrClobber("ax")) {
+          Reason = baseMnemonic + " output ax not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cwd" || baseMnemonic == "cdq" ||
+          baseMnemonic == "cqo") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These sign-extend into dx:ax/edx:eax/rdx:rax. Reading the source
+        // register is harmless, but the destination (dx) must be declared as an
+        // output or clobber.
+        if (!isOutputOrClobber("dx")) {
+          Reason = baseMnemonic + " output dx not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "lahf") {
+        if (!operands.empty()) {
+          Reason = "lahf takes no operands";
+          return false;
+        }
+        // LAHF loads AH from EFLAGS (SF, ZF, AF, PF, CF). Reading the flags is
+        // harmless, but the destination (ah, part of the ax family) must be
+        // declared as an output or clobber.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "lahf output ah not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "sahf") {
+        if (!operands.empty()) {
+          Reason = "sahf takes no operands";
+          return false;
+        }
+        // SAHF loads EFLAGS (SF, ZF, AF, PF, CF) from AH. Reading AH is
+        // harmless, but the instruction sets the arithmetic flags, so the "cc"
+        // clobber is required.
+        if (!HasCCClobber) {
+          Reason = "sahf sets the condition codes; \"cc\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cld") {
+        if (!operands.empty()) {
+          Reason = "cld takes no operands";
+          return false;
+        }
+        // CLD clears the direction flag. Reading the direction flag is
+        // harmless, but the instruction modifies the direction flag, so the
+        // "dirflag" clobber is required.
+        if (!HasDirFlagClobber) {
+          Reason = "cld modifies the direction flag; \"dirflag\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "rdtsc") {
+        if (!operands.empty()) {
+          Reason = "rdtsc takes no operands";
+          return false;
+        }
+        // RDTSC reads the time-stamp counter into EDX:EAX. Reading the TSC is
+        // harmless, but both EAX and EDX must be declared as outputs/clobbers.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "rdtsc output eax not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("dx")) {
+          Reason = "rdtsc output edx not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "rdtscp") {
+        if (!operands.empty()) {
+          Reason = "rdtscp takes no operands";
+          return false;
+        }
+        // RDTSCP reads the TSC into EDX:EAX and IA32_TSC_AUX into ECX. Reading
+        // is harmless, but EAX, EDX, and ECX must be declared as outputs/clobbers.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "rdtscp output eax not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("dx")) {
+          Reason = "rdtscp output edx not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("cx")) {
+          Reason = "rdtscp output ecx not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "rdpkru") {
+        if (!operands.empty()) {
+          Reason = "rdpkru takes no operands";
+          return false;
+        }
+        // RDPKRU reads ECX (must be 0), writes the PKRU value to EAX, and clears
+        // EDX. Reading ECX is harmless, but EAX and EDX must be declared as
+        // outputs/clobbers. If ECX != 0 the instruction #GP faults (SIGSEGV),
+        // which is a safe uncatchable trap.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "rdpkru output eax not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber("dx")) {
+          Reason = "rdpkru output edx not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "vzeroupper" || baseMnemonic == "vzeroall") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // VZEROUPPER zeros the upper 128 bits of YMM0-YMM15; VZEROALL zeros all
+        // 256 bits of YMM0-YMM15. Neither instruction accesses memory, modifies
+        // flags, or has any control-flow effect -- they only write to the vector
+        // registers. Because they unconditionally write ALL of YMM0-YMM15, every
+        // one of those registers must be declared as a clobber (or output) so
+        // that the compiler knows the values have been destroyed. The XMM (low
+        // 128-bit) halves are preserved by VZEROUPPER, but inline-asm clobbers
+        // are whole-register, so clobbering the full YMM is the conservative and
+        // only available option. If the CPU lacks AVX the instruction #UDs
+        // (SIGILL), a safe uncatchable trap.
+        for (int i = 0; i < 16; ++i) {
+          std::string ymm = "ymm" + std::to_string(i);
+          if (!isOutputOrClobber(ymm)) {
+            Reason = baseMnemonic + " modifies " + ymm +
+                     "; it must be declared as a clobber or output";
+            return false;
+          }
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fabs" || baseMnemonic == "fchs") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These read the source from ST(0) and write the result to ST(0).
+        // Reading ST(0) is harmless, but the destination must be declared as an
+        // output or clobber.
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = baseMnemonic + " output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fcos" || baseMnemonic == "fsin" ||
+          baseMnemonic == "fsqrt") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // fcos/fsin/fsqrt read the source from ST(0) and write the result to ST(0).
+        // They also set the FPU condition flags (C1/C2 for fcos/fsin, C1 for
+        // fsqrt). Reading ST(0) is harmless, but the destination and fpsr must be
+        // declared as outputs/clobbers.
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = baseMnemonic + " output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "frndint") {
+        if (!operands.empty()) {
+          Reason = "frndint takes no operands";
+          return false;
+        }
+        // frndint reads the source from ST(0) and writes the rounded result to
+        // ST(0). It also sets the FPU condition flags (C1). Reading ST(0) is
+        // harmless, but the destination and fpsr must be declared as
+        // outputs/clobbers.
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = "frndint output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = "frndint modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fprem" || baseMnemonic == "fprem1") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // fprem/fprem1 read ST(0) and ST(1) and write the remainder to ST(0).
+        // They also set the FPU condition flags (C0/C1/C2/C3). Reading
+        // ST(0)/ST(1) is harmless, but the destination and fpsr must be
+        // declared as outputs/clobbers.
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = baseMnemonic + " output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fscale") {
+        if (!operands.empty()) {
+          Reason = "fscale takes no operands";
+          return false;
+        }
+        // fscale reads ST(0) and ST(1) and writes the scaled result to ST(0).
+        // It also sets the FPU condition flags (C1). Reading ST(0)/ST(1) is
+        // harmless, but the destination and fpsr must be declared as
+        // outputs/clobbers.
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = "fscale output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = "fscale modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fnstsw" || baseMnemonic == "fstsw") {
+        if (operands.size() > 1) {
+          Reason = baseMnemonic + " expects 0 or 1 operands";
+          return false;
+        }
+        // fnstsw/fstsw store the FPU status word to AX (or memory). Only the
+        // explicit AX destination form is allowed in safe inline asm.
+        const ParsedConstraint* axOutput = nullptr;
+        int axOutputOperandIndex = -1;
+        int operandIndex = 0;
+        for (const auto& pc : Constraints) {
+          if (pc.Kind == ParsedConstraint::Output) {
+            if (pc.Family != "ax") {
+              Reason = baseMnemonic + " output constraint must be ax";
+              return false;
+            }
+            if (axOutput) {
+              Reason = baseMnemonic + " expects exactly one output constraint";
+              return false;
+            }
+            axOutput = &pc;
+            axOutputOperandIndex = operandIndex;
+          }
+          if (pc.Kind != ParsedConstraint::Clobber)
+            ++operandIndex;
+        }
+        bool hasAxClobber = ClobberFamilies.count("ax") != 0;
+        if (!axOutput && !hasAxClobber) {
+          Reason = baseMnemonic + " requires an ax output constraint or ax clobber";
+          return false;
+        }
+        if (!operands.empty()) {
+          const std::string& op = operands[0];
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(op, ph, family, numOperandConstraints,
+                                             operandError);
+          switch (kind) {
+          case OKMemory:
+            Reason = "unsupported operand in safe inline asm: " + op;
+            return false;
+          case OKError:
+            Reason = operandError;
+            return false;
+          case OKImmediate:
+            Reason = "immediate operand not allowed in " + baseMnemonic + ": " + op;
+            return false;
+          case OKReg:
+            if (family != "ax") {
+              Reason = baseMnemonic + " operand must be ax";
+              return false;
+            }
+            break;
+          case OKPlaceholder:
+            if (!axOutput) {
+              Reason = baseMnemonic + " operand placeholder requires an ax output constraint";
+              return false;
+            }
+            if (ph != axOutputOperandIndex) {
+              Reason = baseMnemonic + " operand placeholder must refer to the ax output constraint";
+              return false;
+            }
+            break;
+          }
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fclex" || baseMnemonic == "fnclex") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // These clear the x87 floating-point exception flags in the floating-point
+        // status register. The user must declare the fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fninit") {
+        if (!operands.empty()) {
+          Reason = "fninit takes no operands";
+          return false;
+        }
+        // fninit initializes the x87 FPU, resetting the control word, status
+        // word, tag word, and pointer registers. The user must declare the fpsr
+        // clobber.
+        if (!HasFPSRClobber) {
+          Reason = "fninit modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fincstp") {
+        if (!operands.empty()) {
+          Reason = "fincstp takes no operands";
+          return false;
+        }
+        // fincstp increments the x87 stack-top pointer (TOP field of the
+        // floating-point status register). The user must declare the fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = "fincstp modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fcom" || baseMnemonic == "fucom") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // fcom/fucom read ST(0) and ST(1) and set the FPU condition flags in
+        // the floating-point status register. The user must declare the fpsr
+        // clobber.
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "ftst") {
+        if (!operands.empty()) {
+          Reason = "ftst takes no operands";
+          return false;
+        }
+        // ftst reads ST(0) and compares it with 0.0, setting the FPU condition
+        // flags in the floating-point status register. The user must declare the
+        // fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = "ftst modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fxam") {
+        if (!operands.empty()) {
+          Reason = "fxam takes no operands";
+          return false;
+        }
+        // fxam reads ST(0) and reports its class in the FPU condition flags
+        // (C0/C1/C2/C3) in the floating-point status register. It does not
+        // modify ST(0). The user must declare the fpsr clobber.
+        if (!HasFPSRClobber) {
+          Reason = "fxam modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fxch") {
+        if (operands.size() > 1) {
+          Reason = "fxch expects 0 or 1 operands";
+          return false;
+        }
+        // fxch exchanges ST(0) with ST(1) (no operand) or with ST(i). Both
+        // registers are read and written, so each register touched must be
+        // covered by an output constraint or clobber. The instruction also
+        // modifies the FPU condition flags (C1 is set to 0; C0/C2/C3 are
+        // undefined), so the fpsr clobber is required.
+        std::string otherFamily = "st(1)";
+        if (!operands.empty()) {
+          const std::string& op = operands[0];
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(op, ph, family, numOperandConstraints,
+                                             operandError);
+          switch (kind) {
+          case OKMemory:
+            Reason = "unsupported operand in safe inline asm: " + op;
+            return false;
+          case OKError:
+            Reason = operandError;
+            return false;
+          case OKImmediate:
+            Reason = "immediate operand not allowed in fxch: " + op;
+            return false;
+          case OKReg:
+            if (!isX87Family(family)) {
+              Reason = "fxch operand must be an x87 register: " + op;
+              return false;
+            }
+            otherFamily = family;
+            break;
+          case OKPlaceholder:
+            Reason = "operand placeholder not allowed in fxch: " + op;
+            return false;
+          }
+        }
+        if (!isOutputOrClobber("st(0)")) {
+          Reason = "fxch output st(0) not covered by output constraint or clobber";
+          return false;
+        }
+        if (!isOutputOrClobber(otherFamily)) {
+          Reason = "fxch output " + otherFamily + " not covered by output constraint or clobber";
+          return false;
+        }
+        if (!HasFPSRClobber) {
+          Reason = "fxch modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "fcomi" || baseMnemonic == "fucomi") {
+        if (!operands.empty()) {
+          Reason = baseMnemonic + " takes no operands";
+          return false;
+        }
+        // fcomi/fucomi read ST(0) and ST(i) and set the integer condition codes.
+        // The user must declare the cc clobber.
+        if (!HasCCClobber) {
+          Reason = baseMnemonic + " sets the condition codes; \"cc\" clobber is required";
+          return false;
+        }
+        continue;
+      }
+
+      auto isX87RegOperand = [&](const std::string& op) -> bool {
+        if (op.size() < 3 || op[0] != '%' || op[1] != 's' || op[2] != 't')
+          return false;
+        if (op.size() == 3)
+          return true;
+        if (op.size() < 5 || op[3] != '(' || op.back() != ')')
+          return false;
+        for (size_t i = 4; i + 1 < op.size(); ++i) {
+          if (!std::isdigit(static_cast<unsigned char>(op[i])))
+            return false;
+        }
+        return true;
+      };
+
+      if (baseMnemonic == "fdiv" || baseMnemonic == "fdivr" ||
+          baseMnemonic == "fmul" || baseMnemonic == "fsub" ||
+          baseMnemonic == "fsubr") {
+        // Only the explicit-operand forms of FDIV/FDIVR/FMUL/FSUB/FSUBR are supported.
+        // The no-operand popping forms and the popping suffixed forms (FDIVP,
+        // FDIVRP, FMULP, FSUBP, FSUBRP) manipulate the x87 register stack and are rejected.
+        if (operands.empty()) {
+          Reason = baseMnemonic + " with no operands pops the x87 register stack and is not supported";
+          return false;
+        }
+        // All forms modify the floating-point status register (exception flags
+        // and/or C1).
+        if (!HasFPSRClobber) {
+          Reason = baseMnemonic + " modifies the floating-point status register; \"fpsr\" clobber is required";
+          return false;
+        }
+        // Normalize one-operand forms to two-operand forms.
+        std::vector<std::string> effectiveOperands = operands;
+        if (effectiveOperands.size() == 1) {
+          effectiveOperands.push_back("%st");
+        } else if (effectiveOperands.size() != 2) {
+          Reason = baseMnemonic + " expects 1 or 2 operands";
+          return false;
+        }
+        // These instructions use src,dst operand ordering in AT&T syntax.
+        std::vector<OperandRole> fdivRoles = {RoleInput, RoleBoth};
+        for (size_t i = 0; i < effectiveOperands.size(); ++i) {
+          const std::string& op = effectiveOperands[i];
+          if (!isX87RegOperand(op) && op.find_first_of("()[]") != std::string::npos) {
+            Reason = "memory/indirect operand not allowed in safe inline asm: " + op;
+            return false;
+          }
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(op, ph, family, numOperandConstraints,
+                                             operandError);
+          switch (kind) {
+          case OKMemory:
+            Reason = "unsupported operand in safe inline asm: " + op;
+            return false;
+          case OKError:
+            Reason = operandError;
+            return false;
+          case OKImmediate:
+            Reason = "immediate operand not allowed in " + baseMnemonic + ": " + op;
+            return false;
+          case OKReg:
+            if (!isX87Family(family)) {
+              Reason = baseMnemonic + " operands must be x87 registers: " + op;
+              return false;
+            }
+            if (fdivRoles[i] == RoleBoth) {
+              if (!OutputFamilies.count(family) && !ClobberFamilies.count(family)) {
+                Reason = "literal register " + op + " not covered by output constraint or clobber";
+                return false;
+              }
+            }
+            break;
+          case OKPlaceholder:
+            Reason = "operand placeholder not allowed in " + baseMnemonic + ": " + op;
+            return false;
+          }
+        }
+        continue;
+      }
+
+      if (baseMnemonic == "cmpxchg") {
+        // cmpxchg compares the accumulator (ax) against the destination and
+        // writes ax as well as the destination. The destination is covered by
+        // the generic operand checks, but the implicit ax write must be
+        // declared.
+        if (!isOutputOrClobber("ax")) {
+          Reason = "cmpxchg output/clobber ax not covered by output constraint or clobber";
+          return false;
+        }
+      }
+
+      if (baseMnemonic == "div") {
+        // div divides the implicit dividend in ax (or dx:ax) by the explicit
+        // operand. The quotient goes to ax and the remainder to dx (for sizes
+        // larger than byte). Reading the implicit dividend registers is
+        // harmless, but every register written must be declared as an output
+        // or clobber. div also leaves the condition codes undefined.
+        if (operands.size() != 1) {
+          Reason = "div expects one operand";
+          return false;
+        }
+        {
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(operands[0], ph, family,
+                                             numOperandConstraints,
+                                             operandError);
+          if (kind == OKImmediate) {
+            Reason = "immediate operand not allowed in one-operand div: " +
+                     operands[0];
+            return false;
+          }
+        }
+        int size = 0;
+        if (mnemonic.size() > 3)
+          size = inferSizeFromSuffix(mnemonic.back());
+        if (size == 0 && !operands[0].empty() && operands[0][0] == '%')
+          size = inferRegSize(operands[0].substr(1));
+        if (!isOutputOrClobber("ax")) {
+          Reason = "div output/clobber ax not covered by output constraint or clobber";
+          return false;
+        }
+        if (size == 0 || size > 8) {
+          if (!isOutputOrClobber("dx")) {
+            Reason = "div output/clobber dx not covered by output constraint or clobber";
+            return false;
+          }
+        }
+      }
+
+      if (baseMnemonic == "mul") {
+        // mul multiplies the implicit accumulator (AL/AX/EAX/RAX) by the
+        // explicit operand. The product goes to AX (byte) or DX:AX/EDX:EAX/
+        // RDX:RAX (larger sizes). Every register written must be declared as
+        // an output or clobber. mul also leaves the condition codes undefined.
+        if (operands.size() != 1) {
+          Reason = "mul expects one operand";
+          return false;
+        }
+        {
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(operands[0], ph, family,
+                                             numOperandConstraints,
+                                             operandError);
+          if (kind == OKImmediate) {
+            Reason = "immediate operand not allowed in one-operand mul: " +
+                     operands[0];
+            return false;
+          }
+        }
+        int size = 0;
+        if (mnemonic.size() > 3)
+          size = inferSizeFromSuffix(mnemonic.back());
+        if (size == 0 && !operands[0].empty() && operands[0][0] == '%')
+          size = inferRegSize(operands[0].substr(1));
+        if (!isOutputOrClobber("ax")) {
+          Reason = "mul output/clobber ax not covered by output constraint or clobber";
+          return false;
+        }
+        if (size == 0 || size > 8) {
+          if (!isOutputOrClobber("dx")) {
+            Reason = "mul output/clobber dx not covered by output constraint or clobber";
+            return false;
+          }
+        }
+      }
+
+      if (baseMnemonic == "imul") {
+        if (operands.size() != 1 && operands.size() != 2 &&
+            operands.size() != 3) {
+          Reason = "imul expects 1, 2, or 3 operands";
+          return false;
+        }
+        if (operands.size() == 1) {
+          // One-operand IMUL reads the accumulator and the explicit operand,
+          // and writes AX (byte) or DX:AX/EDX:EAX/RDX:RAX (larger sizes).
+          roles = {RoleInput};
+          {
+            int ph = -1;
+            std::string family;
+            std::string operandError;
+            OperandKind kind = classifyOperand(operands[0], ph, family,
+                                               numOperandConstraints,
+                                               operandError);
+            if (kind == OKImmediate) {
+              Reason = "immediate operand not allowed in one-operand imul: " +
+                       operands[0];
+              return false;
+            }
+          }
+          int size = 0;
+          if (mnemonic.size() > 4)
+            size = inferSizeFromSuffix(mnemonic.back());
+          if (size == 0 && !operands[0].empty() && operands[0][0] == '%')
+            size = inferRegSize(operands[0].substr(1));
+          if (!isOutputOrClobber("ax")) {
+            Reason = "imul output/clobber ax not covered by output constraint or clobber";
+            return false;
+          }
+          if (size == 0 || size > 8) {
+            if (!isOutputOrClobber("dx")) {
+              Reason = "imul output/clobber dx not covered by output constraint or clobber";
+              return false;
+            }
+          }
+        } else if (operands.size() == 2) {
+          // imul src, dst: dst is read/written.
+          roles = {RoleInput, RoleBoth};
+        } else if (operands.size() == 3) {
+          // imul imm, src, dst.
+          roles = {RoleInput, RoleInput, RoleBoth};
+        }
+      }
+
+      if (baseMnemonic == "sar" || baseMnemonic == "shr" ||
+          baseMnemonic == "shl" || baseMnemonic == "sal" ||
+          baseMnemonic == "rcl" || baseMnemonic == "rcr" ||
+          baseMnemonic == "rol" || baseMnemonic == "ror") {
+        if (operands.size() == 1)
+          roles = {RoleBoth};
+      }
+
+      if (baseMnemonic == "nop" && !operands.empty()) {
+        // Multi-byte NOP encodings (e.g. "nop (%rax)", "nopq (%rax)") take a
+        // memory-addressing expression as an operand but do NOT actually access
+        // memory - the operand is purely syntactic, exactly like LEA's source.
+        // The CPU computes the effective address but performs no load/store.
+        // Validate the addressing expression here and skip the generic
+        // operand/memory checks (which would otherwise reject the parentheses).
+        // The bare "nop" (no operands) is handled by the normal flow below.
+        if (operands.size() != 1) {
+          Reason = "nop expects 0 or 1 operands";
+          return false;
+        }
+        const std::string& src = operands[0];
+        if (src.find_first_of("()[]") == std::string::npos) {
+          Reason = "nop operand must be a memory-addressing expression";
+          return false;
+        }
+        // The addressing expression may use input register placeholders
+        // (%N, $N, or ${N}), just like LEA's source. Literal registers (e.g.
+        // %rax) are permitted since nop does not read or write them.
+        if (!validateAddressingExpr(src, "nop"))
+          return false;
+        continue;
+      }
+
+      if (baseMnemonic == "prefetchw" || baseMnemonic == "prefetcht0" ||
+          baseMnemonic == "prefetcht1" || baseMnemonic == "prefetcht2" ||
+          baseMnemonic == "prefetchnta") {
+        // PREFETCH* instructions take a single m8 memory-addressing
+        // expression but perform no real load/store: they are non-faulting
+        // cache hints that do not affect program behavior (the only exception
+        // is #UD for a LOCK prefix, which Fil-C treats as safe). The
+        // addressing expression is purely syntactic, exactly like LEA's
+        // source: the CPU computes the effective address from it but no
+        // bounds-checked access occurs. Users supply the address as an
+        // integer register, e.g.:
+        //   asm volatile("prefetchw (%0)" : : "r"((intptr_t)ptr));
+        //
+        // FIXME: the address currently must be passed as an integer because
+        // handleInlineAsm rejects pointer operands (and pointer return types)
+        // before calling validateSafeInlineAsm. Eventually we should unify
+        // the pointer-operand handling in handleInlineAsm (used for blank
+        // inline asm, which takes pains to pass both the raw pointer and the
+        // capability through to the asm) with the non-pointer-operand
+        // handling here, so that a pointer-typed operand could be used
+        // directly without the (intptr_t) cast.
+        if (operands.size() != 1) {
+          Reason = baseMnemonic + " expects 1 operand";
+          return false;
+        }
+        const std::string& src = operands[0];
+        if (src.find_first_of("()[]") == std::string::npos) {
+          Reason = baseMnemonic + " operand must be a memory-addressing expression";
+          return false;
+        }
+        if (!validateAddressingExpr(src, baseMnemonic))
+          return false;
+        continue;
+      }
+
+      if (operands.size() != roles.size()) {
+        Reason = mnemonic + " expects " + std::to_string(roles.size()) + " operands";
+        return false;
+      }
+
+      if (baseMnemonic == "lea") {
+        // LEA computes an effective address from a memory-addressing expression
+        // but does not access memory. The source operand may contain parentheses
+        // or brackets, which are otherwise rejected as memory operands. Validate
+        // the addressing expression and destination here, then skip the generic
+        // operand checks for this instruction.
+
+        // Destination must be a register or placeholder; it cannot be a memory operand.
+        const std::string& dst = operands[1];
+        if (dst.find_first_of("()[]") != std::string::npos) {
+          Reason = "lea destination cannot be a memory operand";
+          return false;
+        }
+
+        // Source addressing expression may use input register placeholders
+        // (%N, $N, or ${N}).
+        if (!validateAddressingExpr(operands[0], "lea source"))
+          return false;
+
+        // Validate the destination operand.
+        {
+          int ph = -1;
+          std::string family;
+          std::string operandError;
+          OperandKind kind = classifyOperand(dst, ph, family, numOperandConstraints,
+                                             operandError);
+          switch (kind) {
+          case OKMemory:
+            Reason = "lea destination cannot be a memory operand";
+            return false;
+          case OKError:
+            Reason = operandError;
+            return false;
+          case OKImmediate:
+            Reason = "lea destination cannot be an immediate";
+            return false;
+          case OKReg:
+            if (!OutputFamilies.count(family) && !ClobberFamilies.count(family)) {
+              Reason = "lea destination register not covered by output constraint or clobber";
+              return false;
+            }
+            break;
+          case OKPlaceholder:
+            if (ph < 0 || static_cast<size_t>(ph) >= numOperandConstraints) {
+              Reason = "lea destination operand placeholder out of range";
+              return false;
+            }
+            if (!Constraints[ph].IsRegister) {
+              Reason = "lea destination operand placeholder refers to non-register constraint";
+              return false;
+            }
+            if (Constraints[ph].Kind != ParsedConstraint::Output) {
+              Reason = "lea destination operand placeholder must refer to an output register";
+              return false;
+            }
+            break;
+          }
+        }
+
+        continue;
+      }
+
+      if (setsFlags)
+        AnySetsFlags = true;
+
+      for (size_t i = 0; i < operands.size(); ++i) {
+        const std::string& op = operands[i];
+        if (!isX87RegOperand(op) && op.find_first_of("()[]") != std::string::npos) {
+          Reason = "memory/indirect operand not allowed in safe inline asm: " + op;
+          return false;
+        }
+        int ph = -1;
+        std::string family;
+        std::string operandError;
+        OperandKind kind = classifyOperand(op, ph, family, numOperandConstraints,
+                                           operandError);
+        switch (kind) {
+        case OKMemory:
+          Reason = "unsupported operand in safe inline asm: " + op;
+          return false;
+        case OKError:
+          Reason = operandError;
+          return false;
+        case OKImmediate:
+          break;
+        case OKReg: {
+          if (i >= roles.size()) {
+            Reason = "unexpected register operand position";
+            return false;
+          }
+          OperandRole role = roles[i];
+          // Reading an arbitrary register is safe: the asm is otherwise
+          // effect-free, so it merely sees whatever value happened to be there.
+          // Writing a register requires it to be declared as an output or clobber.
+          if (role == RoleOutput || role == RoleBoth) {
+            if (!OutputFamilies.count(family) && !ClobberFamilies.count(family)) {
+              Reason = "literal register " + op + " not covered by output constraint or clobber";
+              return false;
+            }
+          }
+          break;
+        }
+        case OKPlaceholder:
+          if (ph < 0 || static_cast<size_t>(ph) >= numOperandConstraints) {
+            Reason = "operand placeholder out of range: " + op;
+            return false;
+          }
+          if (!Constraints[ph].IsRegister) {
+            Reason = "operand placeholder refers to non-register constraint: " + op;
+            return false;
+          }
+          if ((roles[i] == RoleOutput || roles[i] == RoleBoth) &&
+              Constraints[ph].Kind != ParsedConstraint::Output) {
+            Reason = "operand placeholder used as output but constraint is input-only: " + op;
+            return false;
+          }
+          // Variable shift/rotate count must be supplied in CL/CX/ECX/RCX.
+          // For the classic 2-operand shifts/rotates the sole RoleInput operand
+          // is the count. For SHLD/SHRD there are two inputs (count then src);
+          // only the first operand (i == 0) is the count.
+          bool countNeedsCL = false;
+          if (roles[i] == RoleInput) {
+            if (baseMnemonic == "sar" || baseMnemonic == "shr" ||
+                baseMnemonic == "shl" || baseMnemonic == "sal" ||
+                baseMnemonic == "rcl" || baseMnemonic == "rcr" ||
+                baseMnemonic == "rol" || baseMnemonic == "ror")
+              countNeedsCL = true;
+            else if ((baseMnemonic == "shld" || baseMnemonic == "shrd") &&
+                     i == 0)
+              countNeedsCL = true;
+          }
+          if (countNeedsCL) {
+            if (Constraints[ph].Family != "cx") {
+              Reason = "variable shift/rotate count requires cl/cx/ecx/rcx input constraint";
+              return false;
+            }
+            if (!InputFamilies.count("cx")) {
+              Reason = "variable shift/rotate count requires cl/cx/ecx/rcx input constraint";
+              return false;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    if (AnySetsFlags && !HasCCClobber) {
+      Reason = "assembly sets flags but \"cc\" clobber is missing";
+      return false;
+    }
+
+    return true;
+  }
+
   bool handleInlineAsm(CallBase* CI, std::string& Reason) {
     if (verbose)
       errs() << "Dealing with inline asm call: " << *CI << "\n";
-    
+
     InlineAsm* IA = cast<InlineAsm>(CI->getCalledOperand());
-    if (IA->getAsmString() != "") {
-      Reason = "nontrivial assembly, cannot analyze";
-      return false;
+    bool IsEmptyAsm = true;
+    for (char c : IA->getAsmString()) {
+      if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+        IsEmptyAsm = false;
+        break;
+      }
     }
-    
+
+    if (!IsEmptyAsm) {
+      if (IA->getDialect() != InlineAsm::AD_ATT) {
+        Reason = "only AT&T dialect inline assembly is supported";
+        return false;
+      }
+      if (hasPtrs(CI->getType())) {
+        Reason = "inline assembly with pointer return type is not supported";
+        return false;
+      }
+      for (size_t Index = CI->arg_size(); Index--;) {
+        if (hasPtrs(CI->getArgOperand(Index)->getType())) {
+          Reason = "inline assembly with pointer argument is not supported";
+          return false;
+        }
+      }
+      if (!validateSafeInlineAsm(CI, IA, Reason))
+        return false;
+      if (verbose)
+        errs() << "Passing through safe inline asm call.\n";
+      return true;
+    }
+
     // If the inline asm doesn't deal in pointers, then we can just pass it through.
     if (!hasPtrs(CI->getType())) {
       bool hasPtrArg = false;
@@ -6867,6 +11266,385 @@ class Pizlonator {
     CI->eraseFromParent();
     return true;
   }
+
+  FunctionType* fastFunctionTypeForSignature(const std::vector<Type*>& NormalizedArgTypes,
+                                             Type* NormalizedRetType) {
+    std::vector<Type*> ArgTypes;
+    ArgTypes.push_back(RawPtrTy); // thread
+    ArgTypes.push_back(RawPtrTy); // callee function object
+    for (Type* T : NormalizedArgTypes)
+      ArgTypes.push_back(toFlightType(T));
+    std::vector<Type*> RetTypes;
+    RetTypes.push_back(Int1Ty); // has_exception
+    iterateReturnType(NormalizedRetType, [&] (Type* T) -> void {
+      RetTypes.push_back(toFlightType(T));
+    });
+    return FunctionType::get(StructType::get(C, RetTypes), ArgTypes, false);
+  }
+
+  std::vector<Type*> argTypesForDirectInfos(const std::vector<ArgInfo>& AIs) {
+    std::vector<Type*> NormalizedArgTypes;
+    for (ArgInfo AI : AIs) {
+      assert(AI.AK == ArgKind::Direct);
+      assert(normalizeArgType(AI.T) == AI.T);
+      NormalizedArgTypes.push_back(AI.T);
+    }
+    return NormalizedArgTypes;
+  }
+
+  FunctionType* fastFunctionTypeForSignature(const std::vector<ArgInfo>& AIs,
+                                             Type* NormalizedRetType) {
+    return fastFunctionTypeForSignature(argTypesForDirectInfos(AIs), NormalizedRetType);
+  }
+
+  Value* genericEntrypointForFunctionPayload(Value* FunctionPayload, Instruction* Before) {
+    Instruction* GenericEntrypointPtr = GetElementPtrInst::Create(
+      FunctionPayloadTy, FunctionPayload,
+      { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 1) },
+      "filc_generic_entrypoint_ptr", Before);
+    GenericEntrypointPtr->setDebugLoc(Before->getDebugLoc());
+    Instruction* GenericEntrypoint = new LoadInst(
+      RawPtrTy, GenericEntrypointPtr, "filc_generic_entrypoint_load", Before);
+    GenericEntrypoint->setDebugLoc(Before->getDebugLoc());
+    return GenericEntrypoint;
+  }
+
+  Value* signatureForFunctionPayload(Value* FunctionPayload, Instruction* Before) {
+    Instruction* SignaturePtr = GetElementPtrInst::Create(
+      FunctionPayloadTy, FunctionPayload,
+      { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 2) },
+      "filc_signature_ptr", Before);
+    SignaturePtr->setDebugLoc(Before->getDebugLoc());
+    Instruction* Signature = new LoadInst(Int64Ty, SignaturePtr, "filc_signature_load", Before);
+    Signature->setDebugLoc(Before->getDebugLoc());
+    return Signature;
+  }
+
+  Value* fastEntrypointForFunctionPayload(Value* FunctionPayload, Instruction* Before) {
+    Instruction* FastEntrypointPtr = GetElementPtrInst::Create(
+      FunctionPayloadTy, FunctionPayload,
+      { ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 0) },
+      "filc_fast_entrypoint_ptr", Before);
+    FastEntrypointPtr->setDebugLoc(Before->getDebugLoc());
+    Instruction* FastEntrypoint = new LoadInst(
+      RawPtrTy, FastEntrypointPtr, "filc_fast_entrypoint_load", Before);
+    FastEntrypoint->setDebugLoc(Before->getDebugLoc());
+    return FastEntrypoint;
+  }
+
+  Value* callGenericFromFastThunk(Value* CalleeLower, Function* Result,
+                                  const std::vector<ArgInfo>& AIs, Type* NormalizedRetType,
+                                  Instruction* Before) {
+    assert(Result->getFunctionType()->getNumParams() == AIs.size() + 2);
+    std::vector<Value*> Args;
+    for (size_t Idx = 0; Idx < AIs.size(); ++Idx) {
+      assert(AIs[Idx].AK == ArgKind::Direct);
+      assert(toFlightType(AIs[Idx].T) == Result->getArg(Idx + 2)->getType());
+      Args.push_back(Result->getArg(Idx + 2));
+    }
+    Value* ArgSize;
+    if (!AIs.empty())
+      ArgSize = storeCC(AIs, Args, Before, DebugLoc());
+    else
+      ArgSize = ConstantInt::get(IntPtrTy, 0);
+    Instruction* TheCall = CallInst::Create(
+      PizlonatedFuncTy, genericEntrypointForFunctionPayload(CalleeLower, Before),
+      { MyThread, CalleeLower, ArgSize },
+      "filc_generic_call", Before);
+    Instruction* HasException = ExtractValueInst::Create(
+      Int1Ty, TheCall, { 0 }, "filc_has_exception", Before);
+    Instruction* FastResult = InsertValueInst::Create(
+      UndefValue::get(Result->getFunctionType()->getReturnType()), HasException,
+      { 0 }, "filc_insert_has_exception", Before);
+    Instruction* ElseTerm = SplitBlockAndInsertIfElse(
+      expectFalse(HasException, Before), Before, false);
+    Instruction* RetSize = ExtractValueInst::Create(
+      IntPtrTy, TheCall, { 1 }, "filc_ret_size", ElseTerm);
+    Value* FastValueResult = FastResult;
+    if (NormalizedRetType != VoidTy) {
+      Value* GenericResult = loadCC(
+        NormalizedRetType, RetSize, CCRetsCheckFailure, ElseTerm, DebugLoc());
+      FastValueResult = insertAndNormalizeReturn(
+        NormalizedRetType, GenericResult, FastResult, ElseTerm);
+    }
+    PHINode* FastResultPHI = PHINode::Create(
+      Result->getFunctionType()->getReturnType(), 2, "filc_result_value_phi", Before);
+    FastResultPHI->addIncoming(FastResult, FastResult->getParent());
+    FastResultPHI->addIncoming(FastValueResult, ElseTerm->getParent());
+    return FastResultPHI;
+  }
+
+  Function* callerEntrypointThunk(uint64_t Signature, const std::vector<ArgInfo>& AIs,
+                                  Type* NormalizedRetType) {
+    assert(Signature != GenericSignature);
+    assert(computeSignature(AIs, NormalizedRetType) == Signature);
+
+    if (CallerEntrypointThunks.count(Signature))
+      return CallerEntrypointThunks[Signature];
+
+    std::ostringstream buf;
+    buf << "pizlonated1ET" << Signature;
+
+    FunctionType* FuncTy = fastFunctionTypeForSignature(AIs, NormalizedRetType);
+    FunctionCallee Callee = M.getOrInsertFunction(buf.str(), FuncTy);
+    assert(Callee.getFunctionType() == FuncTy);
+    Function* Result = cast<Function>(Callee.getCallee());
+    assert(Result->isDeclaration());
+    assert(Result->getFunctionType() == FuncTy);
+    Result->setLinkage(GlobalValue::LinkOnceODRLinkage);
+    Result->addFnAttr(Attribute::NoInline);
+    Result->addFnAttr(Attribute::NoUnwind);
+
+    Value* OldMyThread = MyThread;
+    Function* OldOldF = OldF;
+    Function* OldNewF = NewF;
+    MyThread = Result->getArg(0);
+    OldF = nullptr;
+    NewF = Result;
+    
+    Value* CalleeLower = Result->getArg(1);
+
+    BasicBlock* RootB = BasicBlock::Create(C, "filc_caller_entrypoint_thunk_root", Result);
+    ReturnInst* Return = ReturnInst::Create(C, UndefValue::get(FuncTy->getReturnType()), RootB);
+
+    Return->getOperandUse(0) =
+      callGenericFromFastThunk(CalleeLower, Result, AIs, NormalizedRetType, Return);
+    
+    MyThread = OldMyThread;
+    OldF = OldOldF;
+    NewF = OldNewF;
+    
+    CallerEntrypointThunks[Signature] = Result;
+    return Result;
+  }
+  
+  Function* calleeEntrypointThunk(uint64_t Signature, const std::vector<ArgInfo>& AIs,
+                                  Type* NormalizedRetType) {
+    assert(Signature != GenericSignature);
+    assert(computeSignature(AIs, NormalizedRetType) == Signature);
+
+    if (CalleeEntrypointThunks.count(Signature))
+      return CalleeEntrypointThunks[Signature];
+
+    std::ostringstream buf;
+    buf << "pizlonated2ET" << Signature;
+
+    FunctionType* FuncTy = fastFunctionTypeForSignature(AIs, NormalizedRetType);
+    FunctionCallee Callee = M.getOrInsertFunction(buf.str(), PizlonatedFuncTy);
+    assert(Callee.getFunctionType() == PizlonatedFuncTy);
+    Function* Result = cast<Function>(Callee.getCallee());
+    assert(Result->isDeclaration());
+    Result->setLinkage(GlobalValue::LinkOnceODRLinkage);
+    Result->addFnAttr(Attribute::NoInline);
+    Result->addFnAttr(Attribute::NoUnwind);
+
+    Value* OldMyThread = MyThread;
+    Function* OldOldF = OldF;
+    Function* OldNewF = NewF;
+    MyThread = Result->getArg(0);
+    OldF = nullptr;
+    NewF = Result;
+    
+    Value* CalleeLower = Result->getArg(1);
+    Value* ArgSize = Result->getArg(2);
+
+    BasicBlock* RootB = BasicBlock::Create(C, "filc_callee_entrypoint_thunk_root", Result);
+    ReturnInst* Return = ReturnInst::Create(C, UndefValue::get(FuncTy->getReturnType()), RootB);
+
+    std::vector<Value*> IncomingArgs;
+    if (!AIs.empty())
+      IncomingArgs = loadCC(AIs, ArgSize, CCArgsCheckFailure, Return, DebugLoc());
+    assert(IncomingArgs.size() == AIs.size());
+    std::vector<Value*> Args;
+    Args.push_back(MyThread);
+    Args.push_back(CalleeLower);
+    for (size_t Idx = 0; Idx < AIs.size(); ++Idx) {
+      assert(AIs[Idx].AK == ArgKind::Direct);
+      Args.push_back(IncomingArgs[Idx]);
+    }
+    Instruction* TheCall = CallInst::Create(
+      FuncTy, fastEntrypointForFunctionPayload(CalleeLower, Return), Args, "filc_fast_call", Return);
+    Instruction* HasException = ExtractValueInst::Create(
+      Int1Ty, TheCall, { 0 }, "filc_has_exception", Return);
+    Instruction* GenericResult = InsertValueInst::Create(
+      UndefValue::get(PizlonatedReturnValueTy), HasException, { 0 }, "filc_insert_has_exception",
+      Return);
+    Instruction* ElseTerm = SplitBlockAndInsertIfElse(
+      expectFalse(HasException, Return), Return, false);
+    Value* RetSize;
+    if (NormalizedRetType == VoidTy)
+      RetSize = storeCC(IntPtrTy, ConstantInt::get(IntPtrTy, 0), ElseTerm, DebugLoc());
+    else {
+      RetSize = storeCC(
+        NormalizedRetType, extractAndDenormalizeReturn(NormalizedRetType, TheCall, ElseTerm),
+        ElseTerm, DebugLoc());
+    }
+    Instruction* GenericValueResult =
+      InsertValueInst::Create(GenericResult, RetSize, { 1 }, "filc_insert_ret_size", ElseTerm);
+    PHINode* GenericResultPHI = PHINode::Create(
+      PizlonatedReturnValueTy, 2, "filc_result_value_phi", Return);
+    GenericResultPHI->addIncoming(GenericResult, GenericResult->getParent());
+    GenericResultPHI->addIncoming(GenericValueResult, GenericValueResult->getParent());
+    Return->getOperandUse(0) = GenericResultPHI;
+    
+    MyThread = OldMyThread;
+    OldF = OldOldF;
+    NewF = OldNewF;
+    
+    CalleeEntrypointThunks[Signature] = Result;
+    return Result;
+  }
+
+  Value* checkFunctionAndGetLower(Value* CalledOperand, Instruction* Before) {
+    Value* CalledLower = flightPtrLower(CalledOperand, Before);
+    ICmpInst* NullLower = new ICmpInst(
+      Before, ICmpInst::ICMP_EQ, CalledLower, RawNull, "filc_null_called_lower");
+    NullLower->setDebugLoc(Before->getDebugLoc());
+    Instruction* NewBlockTerm = SplitBlockAndInsertIfThen(
+      expectFalse(NullLower, Before), Before, true);
+    BasicBlock* NewBlock = NewBlockTerm->getParent();
+    CallInst::Create(
+      CheckFunctionCallFail, { CalledOperand }, "", NewBlockTerm)
+      ->setDebugLoc(Before->getDebugLoc());
+    ICmpInst* AtAuxPtr = new ICmpInst(
+      Before, ICmpInst::ICMP_EQ, flightPtrPtr(CalledOperand, Before),
+      auxPtrForLower(CalledLower, Before), "filc_call_at_lower");
+    AtAuxPtr->setDebugLoc(Before->getDebugLoc());
+    SplitBlockAndInsertIfElse(
+      expectTrue(AtAuxPtr, Before), Before, false, nullptr, nullptr, nullptr, NewBlock);
+    BinaryOperator* Masked = BinaryOperator::Create(
+      Instruction::And, flagsForLower(CalledLower, Before),
+      ConstantInt::get(IntPtrTy, SpecialTypeMask << ObjectFlagsSpecialShift),
+      "filc_call_mask_special_type", Before);
+    Masked->setDebugLoc(Before->getDebugLoc());
+    ICmpInst* IsFunction = new ICmpInst(
+      Before, ICmpInst::ICMP_EQ, Masked,
+      ConstantInt::get(IntPtrTy, SpecialTypeFunction << ObjectFlagsSpecialShift),
+      "filc_call_is_function");
+    IsFunction->setDebugLoc(Before->getDebugLoc());
+    SplitBlockAndInsertIfElse(
+      expectTrue(IsFunction, Before), Before, false, nullptr, nullptr, nullptr, NewBlock);
+    return CalledLower;
+  }
+
+  Value* knownTargetCallsiteThunk(Function* F, uint64_t Signature, const std::vector<ArgInfo>& AIs,
+                                  Type* NormalizedRetType, Instruction* Before) {
+    assert(computeSignature(AIs, NormalizedRetType) == Signature);
+
+    // In the case of linkonce, which is used for C++ inline functions, we will have a definition in
+    // the local module.
+    if (FunctionToSignature.count(F)) {
+      assert(FunctionToHiddenFunction.count(F));
+      Function* Result = FunctionToHiddenFunction[F];
+      if (FunctionToSignature[F] == Signature) {
+        assert(F->getLinkage() == GlobalValue::ExternalLinkage ||
+               F->getLinkage() == GlobalValue::InternalLinkage ||
+               F->getLinkage() == GlobalValue::PrivateLinkage ||
+               F->getLinkage() == GlobalValue::LinkOnceAnyLinkage ||
+               F->getLinkage() == GlobalValue::WeakAnyLinkage);
+        if ((F->getLinkage() == GlobalValue::LinkOnceAnyLinkage ||
+             F->getLinkage() == GlobalValue::WeakAnyLinkage)
+            && GlobalToComdat.count(F)) {
+          Instruction* IsNull = new ICmpInst(
+            Before, ICmpInst::ICMP_EQ, Result, RawNull, "filc_global_is_null");
+          IsNull->setDebugLoc(Before->getDebugLoc());
+          Instruction* ThenTerm = SplitBlockAndInsertIfThen(
+            expectFalse(IsNull, Before), Before, true);
+          CallInst::Create(
+            ComdatLinkFail, { getString(getFunctionName(F)), ConstantInt::get(Int64Ty, Signature) },
+            "", ThenTerm)
+            ->setDebugLoc(Before->getDebugLoc());
+        }
+        return Result;
+      }
+    }
+
+    NameAndSignature Key(std::string(F->getName()), Signature);
+    if (KnownTargetCallsiteThunks.count(Key))
+      return KnownTargetCallsiteThunks[Key];
+
+    std::ostringstream buf;
+    buf << "pizlonatedFI" << Signature << "_" << std::string(F->getName());
+    FunctionType* FuncTy;
+    if (Signature == GenericSignature)
+      FuncTy = PizlonatedFuncTy;
+    else
+      FuncTy = fastFunctionTypeForSignature(AIs, NormalizedRetType);
+    Function* Result = M.getFunction(buf.str());
+    if (Result) {
+      assert(!F->isDeclaration());
+      assert(Result->getFunctionType() == FuncTy);
+      assert(!Result->isDeclaration());
+    } else {
+      FunctionCallee ResultCallee = M.getOrInsertFunction(buf.str(), FuncTy);
+      assert(ResultCallee.getFunctionType() == FuncTy);
+      Result = cast<Function>(ResultCallee.getCallee());
+      assert(Result->isDeclaration());
+      switch (F->getLinkage()) {
+      case GlobalValue::ExternalLinkage:
+      case GlobalValue::LinkOnceAnyLinkage:
+      case GlobalValue::WeakAnyLinkage:
+      case GlobalValue::ExternalWeakLinkage:
+        Result->setLinkage(GlobalValue::WeakAnyLinkage);
+        Result->setVisibility(GlobalValue::HiddenVisibility);
+        break;
+      case GlobalValue::InternalLinkage:
+      case GlobalValue::PrivateLinkage:
+        Result->setLinkage(F->getLinkage());
+        break;
+      default:
+        llvm_unreachable("Invalid linkage type");
+        break;
+      }
+      Result->addFnAttr(Attribute::NoInline);
+      Result->addFnAttr(Attribute::NoUnwind);
+      
+      Value* OldMyThread = MyThread;
+      Function* OldOldF = OldF;
+      Function* OldNewF = NewF;
+      MyThread = Result->getArg(0);
+      OldF = nullptr;
+      NewF = Result;
+
+      BasicBlock* RootB = BasicBlock::Create(C, "filc_callee_entrypoint_thunk_root", Result);
+      ReturnInst* Return = ReturnInst::Create(C, UndefValue::get(FuncTy->getReturnType()), RootB);
+      
+      Value* Callee = constantToFlightValue(F, Return);
+      Value* CalledLower = checkFunctionAndGetLower(Callee, Return);
+      if (Signature == GenericSignature) {
+        Return->getOperandUse(0) = CallInst::Create(
+          PizlonatedFuncTy, genericEntrypointForFunctionPayload(CalledLower, Return),
+          { MyThread, CalledLower, Result->getArg(2) },
+          "filc_generic_call", Return);
+      } else {
+        Instruction* SignatureMatches = new ICmpInst(
+          Return, ICmpInst::ICMP_EQ, signatureForFunctionPayload(CalledLower, Return),
+          ConstantInt::get(Int64Ty, Signature), "filc_signature_matches");
+        Instruction* ThenTerm = SplitBlockAndInsertIfThen(
+          expectTrue(SignatureMatches, Return), Return, true);
+        std::vector<Value*> FastArgs;
+        FastArgs.push_back(MyThread);
+        FastArgs.push_back(CalledLower);
+        for (unsigned Idx = 2; Idx < FuncTy->getNumParams(); ++Idx)
+          FastArgs.push_back(Result->getArg(Idx));
+        Instruction* FastCall = CallInst::Create(
+          fastFunctionTypeForSignature(AIs, NormalizedRetType),
+          fastEntrypointForFunctionPayload(CalledLower, ThenTerm),
+          FastArgs, "filc_fast_call", ThenTerm);
+        ReplaceInstWithInst(ThenTerm, ReturnInst::Create(C, FastCall));
+        
+        Return->getOperandUse(0) =
+          callGenericFromFastThunk(CalledLower, Result, AIs, NormalizedRetType, Return);
+      }
+    
+      MyThread = OldMyThread;
+      OldF = OldOldF;
+      NewF = OldNewF;
+    }
+    
+    KnownTargetCallsiteThunks[Key] = Result;
+    return Result;
+  }
   
   // This lowers the instruction "in place", so all references to it are fixed up after this runs.
   void lowerInstruction(Instruction *I) {
@@ -6879,6 +11657,211 @@ class Pizlonator {
           P->getOperandUse(Index), P->getIncomingBlock(Index)->getTerminator());
       }
       P->mutateType(toFlightType(P->getType()));
+      return;
+    }
+
+    if (CallBase* CI = dyn_cast<CallBase>(I)) {
+      assert(isa<CallInst>(CI) || isa<InvokeInst>(CI));
+
+      // FIXME: It would be cool to emit a direct call to the function, if:
+      // - We know who the callee is.
+      // - The original called signature according to the call instruction matches the original
+      //   function type of the callee.
+      // - The callee is a definition in this module, so we can call the hidden function.
+      //
+      // The trouble with this is that to make this totally effective:
+      // - We'd want to eliminate the constant lowering of the callee, so we don't end up with a call
+      //   to the pizlonated_getter.
+      // - We'd want to call a version of the hidden function that "just" takes the arguments, without
+      //   any CC shenanigans.
+      //
+      // To achieve the latter requirement, I'd probably want to emit all functions as a collection of
+      // three functions:
+      // - Hidden function that is the actual implementation. It takes its arguments and a frame
+      //   pointer. It expects the caller to set up its frame and do all argument/return checking.
+      // - Hidden function that uses the Fil-C CC and sets up the frame, then calls the
+      //   implementation.
+      // - Hidden function that uses a direct CC and sets up the frame, then calls the implementation.
+      //
+      // We can rely on the implementation to get inlined into the other functions whenever either of
+      // these things is true:
+      // 1. The implementation is small.
+      // 2. Only the Fil-C CC, or only the direct CC, version are used.
+      //
+      // But this risks suboptimal codegen if the implementation isn't inlined. Yuck! The trick is that
+      // we want the Fil-C CC shenanigans to happen with the frame already set up, so we can't simply
+      // have the Fil-C CC version wrap the direct version.
+      
+      if (CI->isInlineAsm()) {
+        std::string Reason = "";
+        
+        lowerConstantOperands(CI);
+        
+        if (handleInlineAsm(CI, Reason))
+          return;
+
+        assert(!Reason.empty());
+        
+        assert(isa<CallInst>(CI));
+        std::string str;
+        raw_string_ostream outs(str);
+        outs << "cannot handle inline asm (" << Reason << "): " << *CI;
+        CallInst::Create(Error, { getString(str), getOrigin(I->getDebugLoc()) }, "", I)
+          ->setDebugLoc(I->getDebugLoc());
+        if (I->getType() != VoidTy) {
+          // We need to produce something to RAUW the call with, but it cannot be a constant, since
+          // that would upset lowerConstant.
+          Type* LowT = toFlightType(I->getType());
+          LoadInst* LI = new LoadInst(LowT, RawNull, "filc_fake_load", I);
+          LI->setDebugLoc(I->getDebugLoc());
+          CI->replaceAllUsesWith(LI);
+        }
+        CI->eraseFromParent();
+        return;
+      }
+
+      for (unsigned Index = CI->getNumOperands(); Index--;) {
+        if (&CI->getOperandUse(Index) == &CI->getCalledOperandUse())
+          continue;
+        lowerConstantOperand(CI->getOperandUse(Index), CI);
+      }
+      
+      if (verbose)
+        errs() << "Dealing with called operand: " << *CI->getCalledOperand() << "\n";
+
+      FunctionType *FT = CI->getFunctionType();
+      assert(InstTypeVectors.count(CI));
+      std::vector<Type*> ArgTypes = InstTypeVectors[CI];
+      assert(ArgTypes.size() == CI->arg_size());
+      std::vector<ArgInfo> AIs;
+      std::vector<Value*> Vs;
+      for (size_t Idx = 0; Idx < CI->arg_size(); ++Idx) {
+        if (CI->isByValArgument(Idx)) {
+          AIs.push_back(ArgInfo(CI->getParamByValType(Idx),
+                                ArgKind::ByVal,
+                                std::max(DL.getABITypeAlign(CI->getParamByValType(Idx)),
+                                         CI->getParamAlign(Idx).valueOrOne())));
+          Vs.push_back(CI->getArgOperand(Idx));
+        } else {
+          assert(!CI->isPassPointeeByValueArgument(Idx));
+          Type* ArgType = normalizeArgType(ArgTypes[Idx]);
+          AIs.push_back(ArgInfo(ArgType, ArgKind::Direct, DL.getABITypeAlign(ArgType)));
+          Vs.push_back(convertToNormalizedArgType(ArgTypes[Idx], CI->getArgOperand(Idx), CI));
+        }
+      }
+      assert(AIs.size() == Vs.size());
+      Type* NormalizedRetType = normalizeRetType(FT->getReturnType());
+      uint64_t Signature = computeSignature(AIs, NormalizedRetType);
+      Value* ArgSize = nullptr;
+      if (Signature == GenericSignature)
+        ArgSize = storeCC(AIs, Vs, CI, CI->getDebugLoc());
+
+      bool CanCatch;
+      LandingPadInst* LPI;
+      if (isa<CallInst>(CI)) {
+        CanCatch = true;
+        LPI = nullptr;
+      } else {
+        CanCatch = true;
+        assert(LPIs.count(cast<InvokeInst>(CI)));
+        LPI = LPIs[cast<InvokeInst>(CI)];
+      }
+
+      storeOrigin(getOrigin(CI->getDebugLoc(), CanCatch, LPI), CI);
+
+      CallInst* TheCall = nullptr;
+      Instruction* RetSize = nullptr;
+
+      auto CallGeneric = [&] (Value* CalledLower, Value* Callee) {
+        TheCall = CallInst::Create(
+          PizlonatedFuncTy, Callee,
+          { MyThread, CalledLower, ArgSize },
+          "filc_generic_call", CI);
+        RetSize = ExtractValueInst::Create(
+          IntPtrTy, TheCall, { 1 }, "filc_ret_size", CI);
+        RetSize->setDebugLoc(CI->getDebugLoc());
+      };
+
+      auto CallFast = [&] (Value* CalledLower, Value* Callee) {
+        std::vector<Value*> Args;
+        Args.push_back(MyThread);
+        Args.push_back(CalledLower);
+        for (Value* V : Vs)
+          Args.push_back(V);
+        TheCall = CallInst::Create(
+          fastFunctionTypeForSignature(AIs, NormalizedRetType), Callee, Args,
+          "filc_fast_call", CI);
+        RetSize = nullptr;
+      };
+      
+      if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
+        assert(!shouldPassThrough(F));
+
+        Value* Callee = knownTargetCallsiteThunk(F, Signature, AIs, NormalizedRetType, CI);
+        
+        if (Signature == GenericSignature)
+          CallGeneric(UndefValue::get(RawPtrTy), Callee);
+        else
+          CallFast(UndefValue::get(RawPtrTy), Callee);
+      } else {
+        lowerConstantOperand(CI->getCalledOperandUse(), CI);
+
+        Value* CalledLower = checkFunctionAndGetLower(CI->getCalledOperand(), CI);
+
+        assert(!CI->hasOperandBundles());
+        if (Signature == GenericSignature)
+          CallGeneric(CalledLower, genericEntrypointForFunctionPayload(CalledLower, CI));
+        else {
+          Instruction* SignatureMatches = new ICmpInst(
+            CI, ICmpInst::ICMP_EQ, signatureForFunctionPayload(CalledLower, CI),
+            ConstantInt::get(Int64Ty, Signature), "filc_signature_matches");
+          SignatureMatches->setDebugLoc(CI->getDebugLoc());
+          Instruction* ThenTerm = SplitBlockAndInsertIfThen(
+            expectTrue(SignatureMatches, CI), CI, false);
+          Value* FastEntrypoint = fastEntrypointForFunctionPayload(CalledLower, ThenTerm);
+          PHINode* Entrypoint = PHINode::Create(RawPtrTy, 2, "filc_entrypoint_phi", CI);
+          Entrypoint->addIncoming(FastEntrypoint, ThenTerm->getParent());
+          Entrypoint->addIncoming(callerEntrypointThunk(Signature, AIs, NormalizedRetType),
+                                  SignatureMatches->getParent());
+          CallFast(CalledLower, Entrypoint);
+        }
+      }
+      
+      TheCall->setDebugLoc(CI->getDebugLoc());
+      Instruction* HasException = ExtractValueInst::Create(
+        Int1Ty, TheCall, { 0 }, "filc_has_exception", CI);
+      HasException->setDebugLoc(CI->getDebugLoc());
+
+      if (isa<CallInst>(CI) && CanCatch) {
+        SplitBlockAndInsertIfThen(
+          expectFalse(HasException, CI), CI, false, nullptr, nullptr, nullptr, ResumeB);
+      } else if (InvokeInst* II = dyn_cast<InvokeInst>(CI)) {
+        BranchInst::Create(
+          II->getUnwindDest(), II->getNormalDest(), expectFalse(HasException, II), II)
+          ->setDebugLoc(II->getDebugLoc());
+      }
+      
+      Instruction* PostInsertionPt;
+      if (isa<CallInst>(CI))
+        PostInsertionPt = CI;
+      else
+        PostInsertionPt = &*cast<InvokeInst>(CI)->getNormalDest()->getFirstInsertionPt();
+
+      if (FT->getReturnType() != VoidTy) {
+        if (Signature == GenericSignature) {
+          CI->replaceAllUsesWith(
+            denormalizeReturn(
+              FT->getReturnType(),
+              loadCC(NormalizedRetType, RetSize, CCRetsCheckFailure, PostInsertionPt,
+                     CI->getDebugLoc()),
+              PostInsertionPt));
+        } else {
+          CI->replaceAllUsesWith(
+            extractAndDenormalizeReturn(FT->getReturnType(), TheCall, PostInsertionPt));
+        }
+      }
+
+      CI->eraseFromParent();
       return;
     }
 
@@ -6922,8 +11905,8 @@ class Pizlonator {
       Type *T = LI->getType();
       Value* HighP = LI->getPointerOperand();
       Value* Result = loadValueRecurseAfterCheck(
-        T, flightPtrPtr(HighP, LI), auxPtrForOperand(HighP, LI, 0, LI), LI->isVolatile(),
-        LI->getAlign(), LI->getOrdering(), LI->getSyncScopeID(), MemoryKind::Heap, LI);
+        T, accessDataForOperand(HighP, LI, 0, LI).MAD, LI->isVolatile(),
+        LI->getAlign(), LI->getOrdering(), LI->getSyncScopeID(), LI);
       LI->replaceAllUsesWith(Result);
       LI->eraseFromParent();
       return;
@@ -6932,9 +11915,8 @@ class Pizlonator {
     if (StoreInst* SI = dyn_cast<StoreInst>(I)) {
       Value* HighP = SI->getPointerOperand();
       storeValueRecurseAfterCheck(
-        InstTypes[SI], SI->getValueOperand(), flightPtrPtr(HighP, SI),
-        auxPtrForOperand(HighP, SI, 0, SI).P, SI->isVolatile(), SI->getAlign(),
-        SI->getOrdering(), SI->getSyncScopeID(), MemoryKind::Heap, SI);
+        InstTypes[SI], SI->getValueOperand(), accessDataForOperand(HighP, SI, 0, SI).MAD,
+        SI->isVolatile(), SI->getAlign(), SI->getOrdering(), SI->getSyncScopeID(), SI);
       SI->eraseFromParent();
       return;
     }
@@ -6993,6 +11975,8 @@ class Pizlonator {
     if (GetElementPtrInst* GI = dyn_cast<GetElementPtrInst>(I)) {
       Value* HighP = GI->getOperand(0);
       GI->getOperandUse(0) = flightPtrPtr(HighP, GI);
+      if (GI->isInBounds())
+        errs() << "GI is in bounds: " << *GI << "\n";
       assert(!GI->isInBounds()); // Should have been cleared by dropUB().
       hackRAUW(GI, [&] () { return flightPtrWithPtr(HighP, GI, GI->getNextNode()); });
       return;
@@ -7036,163 +12020,6 @@ class Pizlonator {
       return;
     }
 
-    if (CallBase* CI = dyn_cast<CallBase>(I)) {
-      assert(isa<CallInst>(CI) || isa<InvokeInst>(CI));
-
-      // FIXME: It would be cool to emit a direct call to the function, if:
-      // - We know who the callee is.
-      // - The original called signature according to the call instruction matches the original
-      //   function type of the callee.
-      // - The callee is a definition in this module, so we can call the hidden function.
-      //
-      // The trouble with this is that to make this totally effective:
-      // - We'd want to eliminate the constant lowering of the callee, so we don't end up with a call
-      //   to the pizlonated_getter.
-      // - We'd want to call a version of the hidden function that "just" takes the arguments, without
-      //   any CC shenanigans.
-      //
-      // To achieve the latter requirement, I'd probably want to emit all functions as a collection of
-      // three functions:
-      // - Hidden function that is the actual implementation. It takes its arguments and a frame
-      //   pointer. It expects the caller to set up its frame and do all argument/return checking.
-      // - Hidden function that uses the Fil-C CC and sets up the frame, then calls the
-      //   implementation.
-      // - Hidden function that uses a direct CC and sets up the frame, then calls the implementation.
-      //
-      // We can rely on the implementation to get inlined into the other functions whenever either of
-      // these things is true:
-      // 1. The implementation is small.
-      // 2. Only the Fil-C CC, or only the direct CC, version are used.
-      //
-      // But this risks suboptimal codegen if the implementation isn't inlined. Yuck! The trick is that
-      // we want the Fil-C CC shenanigans to happen with the frame already set up, so we can't simply
-      // have the Fil-C CC version wrap the direct version.
-      
-      if (CI->isInlineAsm()) {
-        std::string Reason = "";
-
-        if (handleInlineAsm(CI, Reason))
-          return;
-
-        assert(!Reason.empty());
-        
-        assert(isa<CallInst>(CI));
-        std::string str;
-        raw_string_ostream outs(str);
-        outs << "cannot handle inline asm (" << Reason << "): " << *CI;
-        CallInst::Create(Error, { getString(str), getOrigin(I->getDebugLoc()) }, "", I)
-          ->setDebugLoc(I->getDebugLoc());
-        if (I->getType() != VoidTy) {
-          // We need to produce something to RAUW the call with, but it cannot be a constant, since
-          // that would upset lowerConstant.
-          Type* LowT = toFlightType(I->getType());
-          LoadInst* LI = new LoadInst(LowT, RawNull, "filc_fake_load", I);
-          LI->setDebugLoc(I->getDebugLoc());
-          CI->replaceAllUsesWith(LI);
-        }
-        CI->eraseFromParent();
-        return;
-      }
-
-      if (verbose)
-        errs() << "Dealing with called operand: " << *CI->getCalledOperand() << "\n";
-
-      if (Function* F = dyn_cast<Function>(CI->getCalledOperand()))
-        assert(!shouldPassThrough(F));
-
-      FunctionType *FT = CI->getFunctionType();
-      Value* ArgSize;
-      if (CI->arg_size()) {
-        assert(InstTypeVectors.count(CI));
-        std::vector<ArgInfo> AIs = argInfosForCall(CI);
-        std::vector<Value*> Vs;
-        for (size_t Index = 0; Index < CI->arg_size(); Index++)
-          Vs.push_back(CI->getArgOperand(Index));
-        ArgSize = storeCC(AIs, Vs, CI, CI->getDebugLoc());
-      } else
-        ArgSize = ConstantInt::get(IntPtrTy, 0);
-
-      bool CanCatch;
-      LandingPadInst* LPI;
-      if (isa<CallInst>(CI)) {
-        CanCatch = true;
-        LPI = nullptr;
-      } else {
-        CanCatch = true;
-        assert(LPIs.count(cast<InvokeInst>(CI)));
-        LPI = LPIs[cast<InvokeInst>(CI)];
-      }
-
-      storeOrigin(getOrigin(CI->getDebugLoc(), CanCatch, LPI), CI);
-
-      Value* CalledLower = flightPtrLower(CI->getCalledOperand(), CI);
-      ICmpInst* NullLower = new ICmpInst(
-        CI, ICmpInst::ICMP_EQ, CalledLower, RawNull, "filc_null_called_lower");
-      NullLower->setDebugLoc(CI->getDebugLoc());
-      Instruction* NewBlockTerm = SplitBlockAndInsertIfThen(expectFalse(NullLower, CI), CI, true);
-      BasicBlock* NewBlock = NewBlockTerm->getParent();
-      CallInst::Create(
-        CheckFunctionCallFail, { CI->getCalledOperand() }, "", NewBlockTerm)
-        ->setDebugLoc(CI->getDebugLoc());
-      ICmpInst* AtAuxPtr = new ICmpInst(
-        CI, ICmpInst::ICMP_EQ, flightPtrPtr(CI->getCalledOperand(), CI),
-        auxPtrForLower(CalledLower, CI), "filc_call_at_lower");
-      AtAuxPtr->setDebugLoc(CI->getDebugLoc());
-      SplitBlockAndInsertIfElse(
-        expectTrue(AtAuxPtr, CI), CI, false, nullptr, nullptr, nullptr, NewBlock);
-      BinaryOperator* Masked = BinaryOperator::Create(
-        Instruction::And, flagsForLower(CalledLower, CI),
-        ConstantInt::get(IntPtrTy, SpecialTypeMask << ObjectFlagsSpecialShift),
-        "filc_call_mask_special_type", CI);
-      Masked->setDebugLoc(CI->getDebugLoc());
-      ICmpInst* IsFunction = new ICmpInst(
-        CI, ICmpInst::ICMP_EQ, Masked,
-        ConstantInt::get(IntPtrTy, SpecialTypeFunction << ObjectFlagsSpecialShift),
-        "filc_call_is_function");
-      IsFunction->setDebugLoc(CI->getDebugLoc());
-      SplitBlockAndInsertIfElse(
-        expectTrue(IsFunction, CI), CI, false, nullptr, nullptr, nullptr, NewBlock);
-
-      assert(!CI->hasOperandBundles());
-      CallInst* TheCall = CallInst::Create(
-        PizlonatedFuncTy, flightPtrPtr(CI->getCalledOperand(), CI),
-        { MyThread,
-          flightPtrLower(CI->getCalledOperand(), CI),
-          ArgSize },
-        "filc_call", CI);
-      TheCall->setDebugLoc(CI->getDebugLoc());
-      Instruction* HasException = ExtractValueInst::Create(
-        Int1Ty, TheCall, { 0 }, "filc_has_exception", CI);
-      HasException->setDebugLoc(CI->getDebugLoc());
-      Instruction* RetSize = ExtractValueInst::Create(
-        IntPtrTy, TheCall, { 1 }, "filc_ret_size", CI);
-      RetSize->setDebugLoc(CI->getDebugLoc());
-
-      if (isa<CallInst>(CI) && CanCatch) {
-        SplitBlockAndInsertIfThen(
-          expectFalse(HasException, CI), CI, false, nullptr, nullptr, nullptr, ResumeB);
-      } else if (InvokeInst* II = dyn_cast<InvokeInst>(CI)) {
-        BranchInst::Create(
-          II->getUnwindDest(), II->getNormalDest(), expectFalse(HasException, II), II)
-          ->setDebugLoc(II->getDebugLoc());
-      }
-      
-      Instruction* PostInsertionPt;
-      if (isa<CallInst>(CI))
-        PostInsertionPt = CI;
-      else
-        PostInsertionPt = &*cast<InvokeInst>(CI)->getNormalDest()->getFirstInsertionPt();
-
-      if (FT->getReturnType() != VoidTy) {
-        CI->replaceAllUsesWith(
-          loadCC(FT->getReturnType(), RetSize, CCRetsCheckFailure, PostInsertionPt,
-                 CI->getDebugLoc()));
-      }
-
-      CI->eraseFromParent();
-      return;
-    }
-
     if (VAArgInst* VI = dyn_cast<VAArgInst>(I)) {
       Type* T = VI->getType();
       Type* CanonicalT = T;
@@ -7213,8 +12040,8 @@ class Pizlonator {
         RawPtrTy, Call, { 1 }, "filc_ptr_pair_aux_ptr", VI);
       P->setDebugLoc(VI->getDebugLoc());
       Value* Load = loadValueRecurseAfterCheck(
-        CanonicalT, P, AuxP, AuxP, false, DL.getABITypeAlign(CanonicalT),
-        AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::Heap, VI);
+        CanonicalT, MemoryAccessData(nullptr, P, AuxP, AuxP, MemoryKind::Heap), false,
+        DL.getABITypeAlign(CanonicalT), AtomicOrdering::NotAtomic, SyncScope::System, VI);
       VI->replaceAllUsesWith(Load);
       VI->eraseFromParent();
       return;
@@ -7368,15 +12195,14 @@ class Pizlonator {
     assert(MyThread);
     Value* GEP = threadStackLimitPtr(MyThread, InsertBefore);
     CallInst* CI = CallInst::Create(StackCheckAsm, { GEP }, "", InsertBefore);
-    CI->addParamAttr(0, Attribute::get(C, Attribute::ElementType, RawPtrTy));
+    if (Arch == Triple::x86_64)
+      CI->addParamAttr(0, Attribute::get(C, Attribute::ElementType, RawPtrTy));
   }
 
   Value* flightPtrForLocalFunction(Function* F, Instruction* InsertBefore) {
-    Function* NewF = FunctionToHiddenFunction[F];
     Constant* Lower = FunctionToLower[F];
-    assert(NewF);
     assert(Lower);
-    return createFlightPtr(Lower, NewF, InsertBefore);
+    return createFlightPtr(Lower, Lower, InsertBefore);
   }
 
   void lowerIndirectBrForFunction(Function& F) {
@@ -7527,7 +12353,7 @@ class Pizlonator {
     }
   }
   
-  void undefineAvailableExternally() {
+  void lockDownLinkage() {
     for (GlobalVariable& G : M.globals()) {
       if (G.getLinkage() == GlobalValue::AvailableExternallyLinkage) {
         G.setInitializer(nullptr);
@@ -7540,9 +12366,26 @@ class Pizlonator {
         F.setIsMaterializable(false);
       }
     }
-    /* FIXME: Should be able to do something for these. */
-    for (GlobalAlias& G : M.aliases())
+
+    for (GlobalValue& G : M.global_values()) {
+      /* FIXME: Should be able to do something for AvailableExternally GlobalAliases and IFuncs. */
       assert(G.getLinkage() != GlobalValue::AvailableExternallyLinkage);
+
+      /* FIXME: Should be possible to handle apppending linkage eventually. */
+      assert(G.getLinkage() != GlobalValue::AppendingLinkage ||
+             G.getName() == "llvm.global_ctors" ||
+             G.getName() == "llvm.global_dtors" ||
+             G.getName() == "llvm.used" ||
+             G.getName() == "llvm.compiler.used");
+
+      /* FIXME: Don't even know what this is? */
+      assert(G.getLinkage() != GlobalValue::CommonLinkage);
+
+      if (G.getLinkage() == GlobalValue::LinkOnceODRLinkage)
+        G.setLinkage(GlobalValue::LinkOnceAnyLinkage);
+      else if (G.getLinkage() == GlobalValue::WeakODRLinkage)
+        G.setLinkage(GlobalValue::WeakAnyLinkage);
+    }
   }
 
   void expandConstantExprOperands(Instruction* I) {
@@ -7555,7 +12398,8 @@ class Pizlonator {
       
       Use& U = I->getOperandUse(Index);
       if (ConstantExpr* CE = dyn_cast<ConstantExpr>(U)) {
-        Instruction* NewI = CE->getAsInstruction(InsertBefore);
+        Instruction* NewI = getAsInstruction(CE);
+        NewI->insertBefore(InsertBefore);
         expandConstantExprOperands(NewI);
         U = NewI;
       }
@@ -7578,6 +12422,9 @@ class Pizlonator {
   }
 
   void inferPointerAsIntLaunderingForFunction(Function& F) {
+    if (verbose)
+      errs() << "Inferring pointer-as-int laundering in:\n" << F << "\n";
+    
     // If an inttoptr's inputs unambiguously lead to a single ptrtoint, then we can take that
     // ptrtoint's capability.
     //
@@ -7728,7 +12575,7 @@ class Pizlonator {
     
     for (Function& F : M.functions()) {
       for (BasicBlock& BB : F) {
-        LandingPadInst* LPI = dyn_cast<LandingPadInst>(BB.getFirstNonPHI());
+        LandingPadInst* LPI = BB.getLandingPadInst();
         if (LPI)
           LPIs.push_back(LPI);
       }
@@ -7777,8 +12624,9 @@ class Pizlonator {
           FilterTy = StructType::get(this->C, ArrayRef<Type*>(Int32Ty));
           FilterCS = ConstantStruct::get(FilterTy, ConstantInt::get(Int32Ty, 0));
         }
-        Constant* LowC = new GlobalVariable(
+        GlobalVariable* LowC = new GlobalVariable(
           M, FilterTy, true, GlobalValue::PrivateLinkage, FilterCS, "filc_eh_filter");
+        LowC->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
         TypeOrFilterToAction[C] = -(NumFilters++ + 1);
         LowTypesAndFilters.push_back(LowC);
       }
@@ -7794,8 +12642,10 @@ class Pizlonator {
         TypeTableTy,
         { ConstantInt::get(Int32Ty, NumTypes),
           ConstantArray::get(TypeTableArrayTy, LowTypesAndFilters) });
-      TypeTableC = new GlobalVariable(
+      GlobalVariable* TypeTableG = new GlobalVariable(
         M, TypeTableTy, true, GlobalValue::PrivateLinkage, TypeTableCS, "filc_type_table");
+      TypeTableG->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+      TypeTableC = TypeTableG;
     }
 
     for (LandingPadInst* LPI : LPIs) {
@@ -7819,6 +12669,7 @@ class Pizlonator {
         { TypeTableC, ConstantInt::get(Int32Ty, Actions.size()), ConstantDataArray::get(C, Actions) });
       EHDatas[EHDataKey(LPI)] = new GlobalVariable(
         M, EHDataTy, true, GlobalValue::PrivateLinkage, EHDataCS, "filc_eh_data");
+      EHDatas[EHDataKey(LPI)]->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
       if (verbose)
         errs() << "For " << *LPI << " created eh data: " << *EHDatas[EHDataKey(LPI)] << "\n";
     }
@@ -7938,6 +12789,15 @@ class Pizlonator {
             Dummy->replaceAllUsesWith(NewGA);
           continue;
         }
+        if (Tok.Str == ".filc_unsafe_export") {
+          std::string Name = MAT.getNextSpecific(MATokenKind::Identifier).Str;
+          MAT.getNextSpecific(MATokenKind::EndLine);
+          GlobalValue* GV = getGlobal(Name);
+          assert(isa<GlobalVariable>(GV));
+          assert(!GV->isThreadLocal());
+          UnsafeExportGVs.insert(cast<GlobalVariable>(GV));
+          continue;
+        }
         if (Tok.Str == ".filc_rename") {
           std::string OldName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
           MAT.getNextSpecific(MATokenKind::Comma);
@@ -7959,7 +12819,7 @@ class Pizlonator {
           }
           continue;
         }
-        if (Tok.Str == ".filc_symver") {
+        if (Tok.Str == ".symver" || Tok.Str == ".filc_symver") {
           std::string LocalName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
           MAT.getNextSpecific(MATokenKind::Comma);
           std::string VersionedName = MAT.getNextSpecific(MATokenKind::Identifier).Str;
@@ -7978,7 +12838,391 @@ class Pizlonator {
     M.setModuleInlineAsm(NewModuleAsm.str());
   }
 
+  LifetimeMarker analyzeLifetimeMarker(Value* V) {
+    LifetimeIntrinsic* LI = dyn_cast<LifetimeIntrinsic>(V);
+    if (!LI)
+      return LifetimeMarker();
+
+    AllocaInst* AI = dyn_cast<AllocaInst>(LI->getArgOperand(1));
+    if (!AI)
+      return LifetimeMarker();
+
+    if (!allocaHasSizeForUs(AI))
+      return LifetimeMarker();
+
+    ConstantInt* MarkerSize = dyn_cast<ConstantInt>(LI->getArgOperand(0));
+    if (!MarkerSize)
+      return LifetimeMarker();
+
+    int64_t MarkerSizeInt = MarkerSize->getSExtValue();
+    if (MarkerSizeInt != -1 && static_cast<uint64_t>(MarkerSizeInt) != originalAllocaSize(AI))
+      return LifetimeMarker();
+
+    switch (LI->getIntrinsicID()) {
+    case Intrinsic::lifetime_start:
+      return LifetimeMarker(AI, LifetimeMarkerKind::Start);
+    case Intrinsic::lifetime_end:
+      return LifetimeMarker(AI, LifetimeMarkerKind::End);
+    default:
+      llvm_unreachable("Bad lifetime marker");
+      return LifetimeMarker();
+    }
+  }
+
+  void findNonescapingAllocasInFunction(Function& F) {
+    if (F.isDeclaration())
+      return;
+
+    if (verbose) {
+      errs() << "Finding nonescaping allocas in:\n";
+      errs() << F;
+    }
+
+    if (F.callsFunctionThatReturnsTwice()) {
+      // Punt on this analysis because we currently don't have a story for how we would soundly handle
+      // GC of pointers inside of nonescaping allocas if you longjmped.
+      //
+      // Note that it's the kind of thing that maybe just works or is easy to fix. I just didn't want
+      // to get bogged down by this case when implementing the nonescaping alloca optimization.
+      for (BasicBlock& BB : F) {
+        for (Instruction& I : BB) {
+          if (AllocaInst* AI = dyn_cast<AllocaInst>(&I))
+            AllocaKinds[AI] = PointerKind::Escaping;
+        }
+      }
+      if (verbose)
+        errs() << "Giving up due to call to functions that returns twice\n.";
+      return;
+    }
+
+    std::unordered_set<AllocaInst*> Allocas;
+
+    for (BasicBlock& BB : F) {
+      for (Instruction& I : BB) {
+        if (AllocaInst* AI = dyn_cast<AllocaInst>(&I)) {
+          // Non-static allocas might reexecute any number of times, so I don't think they can
+          // qualify for this analysis. With enough effort, they could probably be made to. But then
+          // we'd have other problems, like having to find a way to detect stack overflow.
+          //
+          // FIXME: Is the size limit I'm picking for the largest alloca we'll escape analyze sensible?
+          // Maybe it should be a smaller size?
+          if (verbose) {
+            errs() << "Considering " << AI->getName() << "\n";
+            errs() << "    Is static: " << AI->isStaticAlloca() << "\n";
+            errs() << "    Has size for us: " << allocaHasSizeForUs(AI) << "\n";
+            if (allocaHasSizeForUs(AI))
+              errs() << "    Size: " << originalAllocaSize(AI) << "\n";
+          }
+          if (AI->isStaticAlloca() && allocaHasSizeForUs(AI)
+              && originalAllocaSize(AI) <= MaxBytesBetweenPollchecks) {
+            bool HasLifetimeStart = false;
+            bool HasLifetimeEnd = false;
+            for (User* U : AI->users()) {
+              if (verbose)
+                errs() << "    Considering user: " << *U << "\n";
+              if (LifetimeMarker LM = analyzeLifetimeMarker(U)) {
+                if (verbose)
+                  errs() << "    Is lifetime marker.\n";
+                assert(LM.AI == AI);
+                switch (LM.LMK) {
+                case LifetimeMarkerKind::Start:
+                  HasLifetimeStart = true;
+                  break;
+                case LifetimeMarkerKind::End:
+                  HasLifetimeEnd = true;
+                  break;
+                }
+              }
+            }
+            if (HasLifetimeStart == HasLifetimeEnd) {
+              if (verbose)
+                errs() << "Going to try to see if " << AI->getName() << " is nonescaping.\n";
+              AllocaKinds[AI] = PointerKind::LocalNaked;
+              if (!HasLifetimeStart)
+                AlwaysLive.insert(AI);
+              Allocas.insert(AI);
+              continue;
+            }
+          }
+
+          if (verbose)
+            errs() << "Assuming that " << AI->getName() << " is escaping.\n";
+          AllocaKinds[AI] = PointerKind::Escaping;
+        }
+      }
+    }
+
+    // Do our own stack lifetime analysis. We do this, instead of using StackLifetime, because when we
+    // go to transform the nonescaping allocas we need to preserve the stack lifetime markers across
+    // the pizlonation lowering. To do that, we have to confine ourselves to understanding just exactly
+    // those lifetime markers that we would then know how to pizlonate.
+    //
+    // Also, I kinda suspect this lifetime analysis is faster. And it's less code. Vive
+    // l'interprétation abstraite!
+
+    std::unordered_map<BasicBlock*, std::unordered_map<AllocaInst*, LifetimeState>> LifetimeAtTail;
+    for (BasicBlock& BB : F) {
+      LifetimeState LS;
+      if (!BB.getTerminator()->getNumSuccessors())
+        LS = LifetimeState::Zombie;
+      else
+        LS = LifetimeState::Undetermined;
+      for (AllocaInst* AI : Allocas) {
+        if (!AlwaysLive.count(AI))
+          LifetimeAtTail[&BB][AI] = LS;
+      }
+    }
+    
+    auto ExecuteLifetime = [&] (std::unordered_map<AllocaInst*, LifetimeState>& Lifetime,
+                                Instruction* I) {
+      LifetimeMarker LM = analyzeLifetimeMarker(I);
+      if (!LM)
+        return;
+      assert(Lifetime.count(LM.AI) == Allocas.count(LM.AI));
+      if (!Lifetime.count(LM.AI))
+        return;
+      switch (LM.LMK) {
+      case LifetimeMarkerKind::Start:
+        Lifetime[LM.AI] = LifetimeState::Zombie;
+        break;
+      case LifetimeMarkerKind::End:
+        Lifetime[LM.AI] = LifetimeState::Live;
+        break;
+      }
+    };
+    
+    std::vector<BasicBlock*> Blocks;
+    for (BasicBlock& BB : F)
+      Blocks.push_back(&BB);
+    bool Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (size_t Index = Blocks.size(); Index--;) {
+        BasicBlock* BB = Blocks[Index];
+        std::unordered_map<AllocaInst*, LifetimeState> Lifetime = LifetimeAtTail[BB];
+        if (verbose) {
+          errs() << "Liveness at tail of " << BB->getName() << ":";
+          for (auto& Pair : Lifetime)
+            errs() << " " << Pair.first->getName() << "=" << Pair.second;
+          errs() << "\n";
+        }
+        for (auto It = BB->rbegin(); It != BB->rend(); ++It) {
+          Instruction* I = &*It;
+          ExecuteLifetime(Lifetime, I);
+        }
+        if (verbose) {
+          errs() << "Liveness at head of " << BB->getName() << ":";
+          for (auto& Pair : Lifetime)
+            errs() << " " << Pair.first->getName() << "=" << Pair.second;
+          errs() << "\n";
+        }
+        if (pred_empty(BB)) {
+          for (auto& Pair : Lifetime) {
+            AllocaInst* AI = Pair.first;
+            LifetimeState LS = Pair.second;
+            if (LS == LifetimeState::Live)
+              AllocaKinds[AI] = PointerKind::Escaping;
+          }
+        }
+        for (BasicBlock* PBB : predecessors(BB)) {
+          for (auto& Pair : Lifetime) {
+            AllocaInst* AI = Pair.first;
+            LifetimeState LS = Pair.second;
+            LifetimeState MergedLS = mergeLifetimeState(LifetimeAtTail[PBB][AI], LS);
+            if (MergedLS != LifetimeAtTail[PBB][AI]) {
+              Changed = true;
+              LifetimeAtTail[PBB][AI] = MergedLS;
+            }
+          }
+        }
+      }
+    }
+
+    auto mergeKind = [&] (Value* P, PointerKind Kind) -> bool {
+      P = underlyingPtr(P).P;
+      AllocaInst* AI = dyn_cast<AllocaInst>(P);
+      if (!AI)
+        return false;
+      if (!Allocas.count(AI))
+        return false;
+      PointerKind OldKind = AllocaKinds[AI];
+      PointerKind NewKind = mergePointerKinds(OldKind, Kind);
+      if (OldKind == NewKind)
+        return false;
+      AllocaKinds[AI] = NewKind;
+      return true;
+    };
+
+    std::vector<CallBase*> MemmovesToReconsider;
+    for (BasicBlock& BB : F) {
+      std::unordered_map<AllocaInst*, LifetimeState> Lifetime = LifetimeAtTail[&BB];
+      for (auto It = BB.rbegin(); It != BB.rend(); ++It) {
+        Instruction* I = &*It;
+        if (verbose)
+          errs() << "Escaping analysis considering " << *I << "\n";
+        
+        if (isa<LifetimeIntrinsic>(I)) {
+          ExecuteLifetime(Lifetime, I);
+          continue;
+        }
+        
+        if (CallBase* CI = dyn_cast<CallBase>(I)) {
+          if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
+            FunctionType* FT = CI->getFunctionType();
+            if (F->getName() == "zhas_union" && isHasUnionFT(FT))
+              continue;
+          }
+        }
+
+        for (Value* V : I->operands()) {
+          PtrAndRandom PAR = underlyingPtr(V);
+          AllocaInst* AI = dyn_cast<AllocaInst>(PAR.P);
+          if (AI && Allocas.count(AI)) {
+            if (AllocaKinds[AI] != PointerKind::Escaping &&
+                Lifetime[AI] != LifetimeState::Live && !AlwaysLive.count(AI)) {
+              if (verbose)
+                errs() << "Escaping " << AI->getName() << " because it's used and not live.\n";
+              AllocaKinds[AI] = PointerKind::Escaping;
+            } else if (PAR.R == PtrRandomness::Random) {
+              if (verbose)
+                errs() << "Making explicit " << AI->getName() << " because it's random accessed.\n";
+              AllocaKinds[AI] = mergePointerKinds(AllocaKinds[AI], PointerKind::LocalExplicit);
+            }
+          }
+        }
+        
+        if (isa<GetElementPtrInst>(I))
+          continue;
+
+        if (isInlineableMemmoveCall(I)) {
+          MemmovesToReconsider.push_back(cast<CallBase>(I));
+          continue;
+        }
+
+        if (isNonescapingMemmoveCall(I)) {
+          if (verbose) {
+            errs() << "Making explicit " << cast<CallBase>(I)->getArgOperand(0)->getName() << " and "
+                   << cast<CallBase>(I)->getArgOperand(1)->getName() << " because they're random "
+                   << "accessed.\n";
+          }
+          mergeKind(cast<CallBase>(I)->getArgOperand(0), PointerKind::LocalExplicit);
+          mergeKind(cast<CallBase>(I)->getArgOperand(1), PointerKind::LocalExplicit);
+          continue;
+        }
+
+        if (LoadInst* LI = dyn_cast<LoadInst>(I)) {
+          if (!LI->isVolatile())
+            continue;
+        }
+        
+        if (StoreInst* SI = dyn_cast<StoreInst>(I)) {
+          if (!SI->isVolatile()) {
+            if (verbose)
+              errs() << "Escaping " << SI->getValueOperand()->getName() << " because it's stored.\n";
+            mergeKind(SI->getValueOperand(), PointerKind::Escaping);
+            continue;
+          }
+        }
+
+        // FIXME: We could include AtomicRMW and CAS instructions here.
+        
+        for (Value* V : I->operands()) {
+          if (verbose)
+            errs() << "Escaping " << V->getName() << " because it's used in a shady way.\n";
+          mergeKind(V, PointerKind::Escaping);
+        }
+      }
+    }
+
+    Changed = true;
+    while (Changed) {
+      Changed = false;
+      for (CallBase* CI : MemmovesToReconsider) {
+        // If the destination does not escape, then we can emit inline code for memmoves, and so
+        // it's fine if the memmove operands are naked.
+        if (underlyingPointerKind(CI->getArgOperand(0)) != PointerKind::Escaping)
+          continue;
+        // If the destination does escape but the size of the memmove is small enough for us to emit
+        // the slow path code, then it's fine if the memmove operands are naked.
+        if (cast<ConstantInt>(CI->getArgOperand(2))->getZExtValue() <= InlineMemmoveDstSizeLimit)
+          continue;
+        // We're memmoving to an escaping destination with a size that the inline memmove slow path
+        // cannot handle on the destination side. So, force the source to be explicit. This is still
+        // nonescaping, but it just means that the alloca really is stack allocated.
+        Changed |= mergeKind(CI->getArgOperand(1), PointerKind::LocalExplicit);
+      }
+    }
+
+    if (verbose) {
+      errs() << "Escape analysis result:";
+      for (auto& Pair : AllocaKinds)
+        errs() << " " << Pair.first->getName() << "=" << Pair.second;
+      errs() << "\n";
+    }
+  }
+
+  void findNonescapingAllocas() {
+    for (Function& F : M.functions())
+      findNonescapingAllocasInFunction(F);
+  }
+
   void removeIrrelevantIntrinsics() {
+    for (Function& F : M) {
+      if (F.isDeclaration())
+        continue;
+      for (BasicBlock& BB : F) {
+        std::vector<Instruction*> ToErase;
+        for (Instruction& I : BB) {
+          if (I.DebugMarker)
+            I.DebugMarker->eraseFromParent();
+          CallBase* CI = dyn_cast<CallBase>(&I);
+          if (!CI)
+            continue;
+          Function* Callee = dyn_cast<Function>(CI->getCalledOperand());
+          if (!Callee || !Callee->isIntrinsic())
+            continue;
+          bool ShouldErase = false;
+          switch (Callee->getIntrinsicID()) {
+          case Intrinsic::stackrestore:
+          case Intrinsic::assume:
+          case Intrinsic::dbg_declare:
+          case Intrinsic::dbg_value:
+          case Intrinsic::dbg_assign:
+          case Intrinsic::dbg_label:
+          case Intrinsic::donothing:
+          case Intrinsic::experimental_noalias_scope_decl:
+          case Intrinsic::invariant_start:
+          case Intrinsic::invariant_end:
+            ShouldErase = true;
+            break;
+          case Intrinsic::launder_invariant_group:
+          case Intrinsic::strip_invariant_group:
+            CI->replaceAllUsesWith(CI->getArgOperand(0));
+            ShouldErase = true;
+            break;
+          case Intrinsic::stacksave:
+            CI->replaceAllUsesWith(RawNull);
+            ShouldErase = true;
+            break;
+          default:
+            break;
+          }
+          if (ShouldErase) {
+            if (InvokeInst* II = dyn_cast<InvokeInst>(CI))
+              BranchInst::Create(II->getNormalDest(), CI)->setDebugLoc(CI->getDebugLoc());
+            ToErase.push_back(CI);
+          }
+        }
+        for (Instruction* I : ToErase) {
+          if (verbose)
+            errs() << "Removing " << *I << "\n";
+          I->eraseFromParent();
+        }
+      }
+    }
+  }
+
+  void removeLifetimeIntrinsics() {
     for (Function& F : M) {
       if (F.isDeclaration())
         continue;
@@ -7995,22 +13239,11 @@ class Pizlonator {
           switch (Callee->getIntrinsicID()) {
           case Intrinsic::lifetime_start:
           case Intrinsic::lifetime_end:
-          case Intrinsic::stackrestore:
-          case Intrinsic::assume:
-          case Intrinsic::dbg_declare:
-          case Intrinsic::dbg_value:
-          case Intrinsic::dbg_assign:
-          case Intrinsic::dbg_label:
-          case Intrinsic::donothing:
-          case Intrinsic::experimental_noalias_scope_decl:
-          case Intrinsic::invariant_start:
-          case Intrinsic::invariant_end:
-          case Intrinsic::launder_invariant_group:
-          case Intrinsic::strip_invariant_group:
-            ShouldErase = true;
-            break;
-          case Intrinsic::stacksave:
-            CI->replaceAllUsesWith(RawNull);
+            if (LifetimeMarker LM = analyzeLifetimeMarker(CI)) {
+              assert(AllocaKinds.count(LM.AI));
+              if (AllocaKinds[LM.AI] != PointerKind::Escaping)
+                break;
+            }
             ShouldErase = true;
             break;
           default:
@@ -8036,6 +13269,9 @@ class Pizlonator {
 
     for (Instruction& I : F.getEntryBlock()) {
       if (AllocaInst* AI = dyn_cast<AllocaInst>(&I)) {
+        if (AllocaKinds[AI] != PointerKind::Escaping)
+          continue;
+        
         // For now, don't bother with AllocaInsts that flow into PHINodes. Pretty sure that doesn't
         // happen and it would be annoying to deal with.
         bool FoundPhi = false;
@@ -8125,10 +13361,11 @@ class Pizlonator {
       }
     }
 
-    auto CloneAI = [] (AllocaInst* AI, Instruction* InsertBefore) -> AllocaInst* {
+    auto CloneAI = [&] (AllocaInst* AI, Instruction* InsertBefore) -> AllocaInst* {
       AllocaInst* Result = new AllocaInst(
         AI->getAllocatedType(), AI->getAddressSpace(), AI->getArraySize(), AI->getAlign(),
         "filc_lazy_clone_" + AI->getName(), InsertBefore);
+      AllocaKinds[Result] = PointerKind::Escaping;
       Result->setDebugLoc(InsertBefore->getDebugLoc());
       return Result;
     };
@@ -8256,14 +13493,17 @@ class Pizlonator {
     }
   }
 
+  void dropUB(Instruction* I) {
+    I->dropUnknownNonDebugMetadata();
+    I->dropPoisonGeneratingAnnotations();
+    I->dropUBImplyingAttrsAndUnknownMetadata();
+  }
+
   void dropUB() {
     for (Function& F : M.functions()) {
       for (BasicBlock& BB : F) {
-        for (Instruction& I : BB) {
-          I.dropUnknownNonDebugMetadata();
-          I.dropPoisonGeneratingFlagsAndMetadata();
-          I.dropUBImplyingAttrsAndUnknownMetadata();
-        }
+        for (Instruction& I : BB)
+          dropUB(&I);
       }
     }
   }
@@ -8393,6 +13633,7 @@ public:
     assert(DL.getPointerABIAlignment(TargetAS) == 8);
     assert(!DL.isNonIntegralAddressSpace(TargetAS));
 
+    Arch = Triple(M.getTargetTriple()).getArch();
     PtrBits = DL.getPointerSizeInBits(TargetAS);
     VoidTy = Type::getVoidTy(C);
     Int1Ty = Type::getInt1Ty(C);
@@ -8410,7 +13651,8 @@ public:
     SetjmpTy = FunctionType::get(Int32Ty, RawPtrTy, false);
     SigsetjmpTy = FunctionType::get(Int32Ty, { RawPtrTy, Int32Ty }, false);
     RawNull = ConstantPointerNull::get(RawPtrTy);
-    ThreadlocalAddress = Intrinsic::getDeclaration(&M, Intrinsic::threadlocal_address, { RawPtrTy });
+    ThreadlocalAddress = Intrinsic::getOrInsertDeclaration(
+      &M, Intrinsic::threadlocal_address, { RawPtrTy });
 
     Dummy = makeDummy(Int32Ty);
 
@@ -8419,8 +13661,10 @@ public:
     if (verbose)
       errs() << "Module with indirectbr lowered:\n" << M << "\n";
     
-    undefineAvailableExternally();
+    lockDownLinkage();
     removeIrrelevantIntrinsics();
+    findNonescapingAllocas();
+    removeLifetimeIntrinsics();
     expandConstantExprs();
     inferPointerAsIntLaundering();
 
@@ -8454,13 +13698,14 @@ public:
     FlightPtrTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_flight_ptr");
     OriginNodeTy = StructType::create({ RawPtrTy, RawPtrTy, Int32Ty }, "filc_origin_node");
     FunctionOriginTy = StructType::create(
-      { OriginNodeTy, RawPtrTy, Int8Ty, Int8Ty, Int8Ty }, "filc_function_origin");
+      { OriginNodeTy, RawPtrTy, Int8Ty, Int8Ty, Int8Ty, Int32Ty }, "filc_function_origin");
     OriginTy = StructType::create({ RawPtrTy, Int32Ty, Int32Ty }, "filc_origin");
     InlineFrameTy = StructType::create({ OriginNodeTy, OriginTy }, "filc_inline_frame");
     OriginWithEHTy = StructType::create(
       { RawPtrTy, Int32Ty, Int32Ty, RawPtrTy }, "filc_origin_with_eh");
     ObjectTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_object");
     FrameTy = StructType::create({ RawPtrTy, RawPtrTy, RawPtrTy }, "filc_frame");
+    UnsafeFuncTy = FunctionType::get(IntPtrTy, true);
 
     std::vector<Type*> ThreadMembers;
     ThreadMembers.push_back(IntPtrTy); // stack_limit, index 0
@@ -8496,6 +13741,13 @@ public:
     AlignmentAndOffsetTy = StructType::create({ Int8Ty, Int8Ty }, "filc_alignment_and_offset");
     PizlonatedReturnValueTy = StructType::create({ Int1Ty, IntPtrTy }, "pizlonated_return_value");
     PtrPairTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_ptr_pair");
+    FunctionPayloadTy = StructType::create({ RawPtrTy, RawPtrTy, Int64Ty }, "filc_function");
+    FunctionObjectTy = StructType::create({ ObjectTy, FunctionPayloadTy }, "filc_function_object");
+    ClosureTy = StructType::create({
+        FunctionPayloadTy,
+        RawPtrTy, // Padding
+        FlightPtrTy
+      }, "filc_closure");
     PizlonatedFuncTy = FunctionType::get(
       PizlonatedReturnValueTy, { RawPtrTy, RawPtrTy, IntPtrTy }, false);
     PizlonatedGetterTy = FunctionType::get(FlightPtrTy, { RawPtrTy, RawPtrTy }, false);
@@ -8507,6 +13759,29 @@ public:
       assert(DSO->isDeclaration());
       DSO->replaceAllUsesWith(RawNull);
       DSO->eraseFromParent();
+    }
+
+    for (GlobalObject& G : M.global_objects()) {
+      if (Comdat* OldComdat = G.getComdat()) {
+        assert(G.getLinkage() == GlobalValue::LinkOnceAnyLinkage ||
+               G.getLinkage() == GlobalValue::WeakAnyLinkage ||
+               G.getLinkage() == GlobalValue::InternalLinkage);
+        Comdat* NewComdat;
+        if (ComdatMap.count(OldComdat))
+          NewComdat = ComdatMap[OldComdat];
+        else {
+          std::string str = ("pizlonatedC_" + OldComdat->getName()).str();
+          NewComdat = M.getOrInsertComdat(str);
+          ComdatMap[OldComdat] = NewComdat;
+        }
+        NewComdat->setSelectionKind(OldComdat->getSelectionKind());
+        GlobalToComdat[&G] = NewComdat;
+      } else if (G.hasLinkOnceLinkage()) {
+        std::string str = ("pizlonatedMC_" + G.getName()).str();
+        Comdat* NewComdat = M.getOrInsertComdat(str);
+        NewComdat->setSelectionKind(Comdat::Any);
+        GlobalToComdat[&G] = NewComdat;
+      }
     }
     
     for (GlobalVariable &G : M.globals()) {
@@ -8550,13 +13825,18 @@ public:
     if (verbose)
       errs() << "FlightNull = " << *FlightNull << "\n";
 
-    PollcheckSlow = M.getOrInsertFunction(
-      "filc_pollcheck_slow", VoidTy, RawPtrTy, RawPtrTy);
+    Pollcheck = M.getOrInsertFunction(
+      "filc_pollcheck", VoidTy, RawPtrTy, RawPtrTy);
+    Enter = M.getOrInsertFunction(
+      "filc_enter", VoidTy, RawPtrTy);
+    Exit = M.getOrInsertFunction(
+      "filc_exit", VoidTy, RawPtrTy);
     StoreBarrierForLowerSlow = M.getOrInsertFunction(
       "filc_store_barrier_for_lower_slow", VoidTy, RawPtrTy, RawPtrTy);
-    StorePtrAtomicWithPtrPairOutline = M.getOrInsertFunction(
-      "filc_store_ptr_atomic_with_ptr_pair_outline",
-      VoidTy, RawPtrTy, RawPtrTy, RawPtrTy, FlightPtrTy);
+    StorePtrAtomicOutline = M.getOrInsertFunction(
+      "filc_store_ptr_atomic_outline", VoidTy, RawPtrTy, FlightPtrTy, FlightPtrTy);
+    LoadPtrAtomicOutline = M.getOrInsertFunction(
+      "filc_load_ptr_atomic_with_manual_tracking_outline", FlightPtrTy, FlightPtrTy);
     ObjectEnsureAuxPtrOutline = M.getOrInsertFunction(
       "filc_object_ensure_aux_ptr_outline", RawPtrTy, RawPtrTy, RawPtrTy);
     ThreadEnsureCCOutlineBufferSlow = M.getOrInsertFunction(
@@ -8577,16 +13857,30 @@ public:
       "verse_local_allocator_allocate", RawPtrTy, RawPtrTy);
     FreeWithChecks = M.getOrInsertFunction(
       "filc_free_with_checks", VoidTy, FlightPtrTy);
+    LogAllocate = M.getOrInsertFunction(
+      "filc_log_allocate", VoidTy, RawPtrTy, RawPtrTy, IntPtrTy, IntPtrTy);
     CheckFunctionCallFail = M.getOrInsertFunction(
       "filc_check_function_call_fail", VoidTy, FlightPtrTy);
     CheckClosureFail = M.getOrInsertFunction(
       "filc_check_closure_fail", VoidTy, RawPtrTy, RawPtrTy);
+    ComdatLinkFail = M.getOrInsertFunction(
+      "filc_comdat_link_fail", VoidTy, RawPtrTy, Int64Ty);
     OptimizedAlignmentContradiction = M.getOrInsertFunction(
       "filc_optimized_alignment_contradiction", VoidTy, FlightPtrTy, RawPtrTy);
     OptimizedAccessCheckFail = M.getOrInsertFunction(
       "filc_optimized_access_check_fail", VoidTy, FlightPtrTy, RawPtrTy);
-    MaskedAccessCheckFail = M.getOrInsertFunction(
-      "filc_masked_access_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, Int32Ty, RawPtrTy);
+    OptimizedStackAlignmentContradiction = M.getOrInsertFunction(
+      "filc_optimized_stack_alignment_contradiction", VoidTy, IntPtrTy, IntPtrTy, RawPtrTy);
+    OptimizedStackAccessCheckFail = M.getOrInsertFunction(
+      "filc_optimized_stack_access_check_fail", VoidTy, IntPtrTy, IntPtrTy, RawPtrTy);
+    MaskedWriteCheckFail = M.getOrInsertFunction(
+      "filc_masked_write_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, RawPtrTy);
+    MaskedReadCheckFail = M.getOrInsertFunction(
+      "filc_masked_read_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, RawPtrTy);
+    CompressWriteCheckFail = M.getOrInsertFunction(
+      "filc_compress_write_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, IntPtrTy, RawPtrTy);
+    ExpandReadCheckFail = M.getOrInsertFunction(
+      "filc_expand_read_check_fail", VoidTy, FlightPtrTy, Int64Ty, IntPtrTy, IntPtrTy, RawPtrTy);
     Memset = M.getOrInsertFunction(
       "filc_memset", VoidTy, RawPtrTy, FlightPtrTy, Int32Ty, IntPtrTy, RawPtrTy);
     Memmove = M.getOrInsertFunction(
@@ -8608,6 +13902,25 @@ public:
     FinishMemmoveSmall5 = M.getOrInsertFunction(
       "filc_finish_memmove_small_5",
       PtrPairTy, RawPtrTy, FlightPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy);
+    MemmoveAlreadyCheckedStackToHeap = M.getOrInsertFunction(
+      "filc_memmove_already_checked_stack_to_heap",
+      VoidTy, RawPtrTy, FlightPtrTy, RawPtrTy, RawPtrTy, IntPtrTy, RawPtrTy);
+    MemmoveStackToHeap = M.getOrInsertFunction(
+      "filc_memmove_stack_to_heap",
+      VoidTy, RawPtrTy, FlightPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy, RawPtrTy);
+    MemmoveAlreadyCheckedHeapToStack = M.getOrInsertFunction(
+      "filc_memmove_already_checked_heap_to_stack",
+      VoidTy, RawPtrTy, RawPtrTy, RawPtrTy, FlightPtrTy, IntPtrTy);
+    MemmoveHeapToStack = M.getOrInsertFunction(
+      "filc_memmove_heap_to_stack",
+      VoidTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, FlightPtrTy, IntPtrTy, RawPtrTy);
+    MemmoveAlreadyCheckedStack = M.getOrInsertFunction(
+      "filc_memmove_already_checked_stack",
+      VoidTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
+    MemmoveStack = M.getOrInsertFunction(
+      "filc_memmove_stack",
+      VoidTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy,
+      RawPtrTy);
     GlobalInitializationStart = M.getOrInsertFunction(
       "filc_global_initialization_start", Int1Ty, RawPtrTy, RawPtrTy, RawPtrTy, RawPtrTy);
     GlobalInitializationEnd = M.getOrInsertFunction(
@@ -8626,6 +13939,8 @@ public:
       "llvm.memset.p0.i64", VoidTy, RawPtrTy, Int8Ty, IntPtrTy, Int1Ty);
     RealMemcpy = M.getOrInsertFunction(
       "llvm.memcpy.p0.p0.i64", VoidTy, RawPtrTy, RawPtrTy, IntPtrTy, Int1Ty);
+    RealMemmove = M.getOrInsertFunction(
+      "llvm.memmove.p0.p0.i64", VoidTy, RawPtrTy, RawPtrTy, IntPtrTy, Int1Ty);
     LandingPad = M.getOrInsertFunction(
       "filc_landing_pad", Int1Ty, RawPtrTy);
     ResumeUnwind = M.getOrInsertFunction(
@@ -8635,6 +13950,9 @@ public:
     PromoteAlreadyCheckedStackToHeapWithoutExiting = M.getOrInsertFunction(
       "filc_promote_already_checked_stack_to_heap_without_exiting",
       FlightPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
+    PromoteAlreadyCheckedStackToHeapWithAlignmentWithoutExiting = M.getOrInsertFunction(
+      "filc_promote_already_checked_stack_to_heap_with_alignment_without_exiting",
+      FlightPtrTy, RawPtrTy, RawPtrTy, RawPtrTy, IntPtrTy, IntPtrTy);
     DemoteWordAlignedAlreadyCheckedHeapToStackWithoutExiting = M.getOrInsertFunction(
       "filc_demote_word_aligned_already_checked_heap_to_stack_without_exiting",
       VoidTy, FlightPtrTy, RawPtrTy, RawPtrTy, IntPtrTy);
@@ -8660,19 +13978,38 @@ public:
     _Setjmp = M.getOrInsertFunction(
       "_setjmp", Int32Ty, RawPtrTy);
     cast<Function>(_Setjmp.getCallee())->addFnAttr(Attribute::ReturnsTwice);
-    ExpectI1 = Intrinsic::getDeclaration(&M, Intrinsic::expect, Int1Ty);
-    LifetimeStart = Intrinsic::getDeclaration(&M, Intrinsic::lifetime_start, { RawPtrTy });
-    LifetimeEnd = Intrinsic::getDeclaration(&M, Intrinsic::lifetime_end, { RawPtrTy });
-    StackCheckAsm = InlineAsm::get(
-      FunctionType::get(VoidTy, { RawPtrTy }, false),
-      "cmp %rsp, $0\n\t"
-      "jae filc_stack_overflow_failure@PLT",
-      "*m,~{memory},~{dirflag},~{fpsr},~{flags}",
-      /*hasSideEffects=*/true);
-    DoNothing = Intrinsic::getDeclaration(&M, Intrinsic::donothing, { });
+    ExpectI1 = Intrinsic::getOrInsertDeclaration(&M, Intrinsic::expect, Int1Ty);
+    LifetimeStart = Intrinsic::getOrInsertDeclaration(&M, Intrinsic::lifetime_start, { RawPtrTy });
+    LifetimeEnd = Intrinsic::getOrInsertDeclaration(&M, Intrinsic::lifetime_end, { RawPtrTy });
+    switch (Arch) {
+    case Triple::aarch64:
+      StackCheckAsm =
+          InlineAsm::get(FunctionType::get(RawPtrTy, {RawPtrTy}, false),
+                         "ldr $0, [$1]\n\t"
+                         "cmp sp, $0\n\t"
+                         "b.cs 1f\n\t"
+                         "b filc_stack_overflow_failure\n\t"
+                         "1:",
+                         "=r,r",
+                         /*hasSideEffects=*/true);
+      break;
+    case Triple::x86_64:
+      StackCheckAsm =
+          InlineAsm::get(FunctionType::get(VoidTy, {RawPtrTy}, false),
+                         "cmp %rsp, $0\n\t"
+                         "jae filc_stack_overflow_failure@PLT",
+                         "*m,~{memory},~{dirflag},~{fpsr},~{flags}",
+                         /*hasSideEffects=*/true);
+      break;
+    default:
+      report_fatal_error("Unknown arch");
+    }
+    DoNothing = Intrinsic::getOrInsertDeclaration(&M, Intrinsic::donothing, { });
 
     cast<Function>(OptimizedAlignmentContradiction.getCallee())->addFnAttr(Attribute::NoReturn);
     cast<Function>(OptimizedAccessCheckFail.getCallee())->addFnAttr(Attribute::NoReturn);
+    cast<Function>(OptimizedStackAlignmentContradiction.getCallee())->addFnAttr(Attribute::NoReturn);
+    cast<Function>(OptimizedStackAccessCheckFail.getCallee())->addFnAttr(Attribute::NoReturn);
 
     CurrentMarkingState = M.getOrInsertGlobal("filc_current_marking_state", Int32Ty);
 
@@ -8682,11 +14019,29 @@ public:
         errs() << "Handling global: " << G->getName() << "\n";
       Function* NewF = Function::Create(PizlonatedGetterTy, G->getLinkage(), G->getAddressSpace(),
                                         "pizlonated_" + G->getName(), &M);
+      NewF->addFnAttr(Attribute::NoUnwind);
+      if (GlobalToComdat.count(G))
+        NewF->setComdat(GlobalToComdat[G]);
       NewF->setVisibility(G->getVisibility());
       GlobalToGetter[G] = NewF;
       Getters.insert(NewF);
       ToDelete.push_back(G);
     };
+
+    auto PutImplIntoComdat = [&] (GlobalValue* OrigG, GlobalObject* NewG) {
+      assert(NewG->getLinkage() == GlobalValue::InternalLinkage ||
+             NewG->getLinkage() == GlobalValue::PrivateLinkage ||
+             NewG->getLinkage() == OrigG->getLinkage());
+      
+      if (!GlobalToComdat.count(OrigG))
+        return;
+
+      NewG->setLinkage(OrigG->getLinkage());
+      NewG->setVisibility(OrigG->getVisibility());
+      NewG->setDSOLocal(OrigG->isDSOLocal());
+      NewG->setComdat(GlobalToComdat[OrigG]);
+    };
+    
     for (GlobalVariable* G : Globals)
       HandleGlobal(G);
     for (GlobalAlias* G : Aliases)
@@ -8701,14 +14056,57 @@ public:
         continue;
       HandleGlobal(F);
       if (!F->isDeclaration()) {
+        // Couple of things going on here.
+        //
+        // - If the global is in a comdat, then we need to preserve the comdat.
+        // - If the global has fancy linkage like linkonce_odr, then we need to put the hidden
+        //   function in linkonce_odr, too.
+        // - It's most likely better in that case to create a comdat if there isn't one already, and
+        //   put the hidden function in that comdat, using whatever linkage the global had.
+        //
+        // Otherwise, we end up in situations where we inline references to the hidden function and
+        // then the hidden function gets duplicated even if the global was linkonce.
+
+        std::vector<ArgInfo> AIs = argInfosForFunction(F);
+        Type* NormalizedRetType = normalizeRetType(F->getReturnType());
+        uint64_t Signature;
+        if (usesVariadicCC(F))
+          Signature = GenericSignature;
+        else
+          Signature = computeSignature(AIs, NormalizedRetType);
+        FunctionType* ImplFuncTy;
+        if (Signature == GenericSignature)
+          ImplFuncTy = PizlonatedFuncTy;
+        else
+          ImplFuncTy = fastFunctionTypeForSignature(AIs, NormalizedRetType);
+        bool UsesCallee = usesCallee(F);
+        std::ostringstream buf;
+        buf << "pizlonatedFIP" << Signature << "_" << std::string(F->getName());
+        GlobalValue::LinkageTypes Linkage;
+        if (UsesCallee)
+          Linkage = GlobalValue::InternalLinkage;
+        else
+          Linkage = F->getLinkage();
         Function* NewF = Function::Create(
-          PizlonatedFuncTy,
-          GlobalValue::InternalLinkage, F->getAddressSpace(),
-          "Jf_" + F->getName(), &M);
+          ImplFuncTy, Linkage, F->getAddressSpace(),
+          buf.str(), &M);
         FunctionToHiddenFunction[F] = NewF;
+        if (!UsesCallee)
+          FunctionToSignature[F] = Signature;
+        NewF->setSubprogram(F->getSubprogram());
+
+        PutImplIntoComdat(F, NewF);
+
+        if (F->getLinkage() == GlobalValue::ExternalLinkage && !UsesCallee) {
+          std::ostringstream buf;
+          buf << "pizlonatedFI" << Signature << "_" << std::string(F->getName());
+          GlobalAlias::create(ImplFuncTy, 0, F->getLinkage(), buf.str(), NewF, &M);
+        }
 
         GlobalVariable* NewObjectG = new GlobalVariable(
-          M, ObjectTy, true, GlobalValue::InternalLinkage, nullptr, "Jfo_" + F->getName());
+          M, FunctionObjectTy, true, GlobalValue::InternalLinkage, nullptr,
+          "pizlonatedFO_" + F->getName());
+        PutImplIntoComdat(F, NewObjectG);
         Constant* LowerAndUpper =
           ConstantExpr::getGetElementPtr(ObjectTy, NewObjectG, ConstantInt::get(IntPtrTy, 1));
         uint16_t ObjectFlags =
@@ -8716,12 +14114,20 @@ public:
           ObjectFlagReadonly |
           (SpecialTypeFunction << ObjectFlagsSpecialShift);
         Constant* NewObjC = ConstantStruct::get(
-          ObjectTy,
-          { LowerAndUpper,
-            ConstantExpr::getGetElementPtr(
-              Int8Ty, NewF,
-              ConstantInt::get(
-                IntPtrTy, static_cast<uintptr_t>(ObjectFlags) << ObjectAuxFlagsShift)) });
+          FunctionObjectTy,
+          { ConstantStruct::get(
+              ObjectTy,
+              { LowerAndUpper,
+                ConstantExpr::getGetElementPtr(
+                  Int8Ty, LowerAndUpper,
+                  ConstantInt::get(
+                    IntPtrTy, static_cast<uintptr_t>(ObjectFlags) << ObjectAuxFlagsShift)) }),
+            ConstantStruct::get(
+              FunctionPayloadTy,
+              { Signature == GenericSignature ? RawNull : NewF,
+                Signature == GenericSignature ? NewF : calleeEntrypointThunk(
+                  Signature, AIs, NormalizedRetType),
+                ConstantInt::get(Int64Ty, Signature) }) });
         NewObjectG->setInitializer(NewObjC);
         FunctionToLower[F] = LowerAndUpper;
       }
@@ -8732,6 +14138,16 @@ public:
         errs() << " " << GV->getName();
       errs() << "\n";
     }
+
+    auto HandleThingy = [&] (Value* Thingy) -> Constant* {
+      if (Thingy == RawNull)
+        return RawNull;
+      GlobalValue* G = cast<GlobalValue>(Thingy);
+      assert(GlobalToGetter.count(G));
+      Function* Getter = GlobalToGetter[G];
+      assert(Getter);
+      return Getter;
+    };
     
     if (GlobalVariable* GlobalCtors = M.getGlobalVariable("llvm.global_ctors")) {
       ConstantArray* Array = cast<ConstantArray>(GlobalCtors->getInitializer());
@@ -8740,12 +14156,18 @@ public:
         ConstantStruct* Struct = cast<ConstantStruct>(Array->getOperand(Index));
         Function* Ctor = cast<Function>(Struct->getOperand(1));
         Function* NewF = Function::Create(
-          CtorDtorTy, GlobalValue::InternalLinkage, 0, "filc_ctor_forwarder", &M);
+          CtorDtorTy, GlobalValue::PrivateLinkage, 0, "filc_ctor_forwarder", &M);
+        NewF->addFnAttr(Attribute::NoUnwind);
+        NewF->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+        PutImplIntoComdat(Ctor, NewF);
         BasicBlock* RootBB = BasicBlock::Create(C, "filc_ctor_forwarder_root", NewF);
         ReturnInst* Return = ReturnInst::Create(C, RootBB);
         CallInst::Create(
           DeferOrRunGlobalCtor, { flightPtrForLocalFunction(Ctor, Return) }, "", Return);
-        Args.push_back(ConstantStruct::get(Struct->getType(), Struct->getOperand(0), NewF, RawNull));
+        Args.push_back(ConstantStruct::get(Struct->getType(),
+                                           Struct->getOperand(0),
+                                           NewF,
+                                           HandleThingy(Struct->getOperand(2))));
       }
       GlobalCtors->setInitializer(ConstantArray::get(Array->getType(), Args));
     }
@@ -8759,11 +14181,17 @@ public:
         ConstantStruct* Struct = cast<ConstantStruct>(Array->getOperand(Index));
         Function* Dtor = cast<Function>(Struct->getOperand(1));
         Function* NewF = Function::Create(
-          CtorDtorTy, GlobalValue::InternalLinkage, 0, "filc_dtor_forwarder", &M);
+          CtorDtorTy, GlobalValue::PrivateLinkage, 0, "filc_dtor_forwarder", &M);
+        NewF->addFnAttr(Attribute::NoUnwind);
+        NewF->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+        PutImplIntoComdat(Dtor, NewF);
         BasicBlock* RootBB = BasicBlock::Create(C, "filc_dtor_forwarder_root", NewF);
         ReturnInst* Return = ReturnInst::Create(C, RootBB);
         CallInst::Create(RunGlobalDtor, { flightPtrForLocalFunction(Dtor, Return) }, "", Return);
-        Args.push_back(ConstantStruct::get(Struct->getType(), Struct->getOperand(0), NewF, RawNull));
+        Args.push_back(ConstantStruct::get(Struct->getType(),
+                                           Struct->getOperand(0),
+                                           NewF,
+                                           HandleThingy(Struct->getOperand(2))));
       }
       GlobalDtors->setInitializer(ConstantArray::get(Array->getType(), Args));
     }
@@ -8803,12 +14231,17 @@ public:
       
       if (G->isThreadLocal()) {
         Function* SlowF = Function::Create(ThreadLocalEnsureTy, GlobalValue::PrivateLinkage,
-                                           G->getAddressSpace(), "filc_getter_slow", &M);
+                                           G->getAddressSpace(), "pizlonatedGS_" + G->getName(), &M);
+        SlowF->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+        SlowF->addFnAttr(Attribute::NoUnwind);
+        PutImplIntoComdat(G, SlowF);
         SlowF->addFnAttr(Attribute::NoInline);
       
         GlobalVariable* NewG = new GlobalVariable(
           M, RawPtrTy, false, G->getLinkage(), G->isDeclaration() ? nullptr : RawNull,
-          "filc_tptr_" + G->getName(), nullptr, G->getThreadLocalMode());
+          "pizlonatedTP_" + G->getName(), nullptr, G->getThreadLocalMode());
+        if (GlobalToComdat.count(G))
+          NewG->setComdat(GlobalToComdat[G]);
 
         assert(!MyThread);
         MyThread = SlowF->getArg(0);
@@ -8826,10 +14259,13 @@ public:
         else
           AuxP = RawNull;
         Return->getOperandUse(0) = Lower;
-        Value* Const = constantToFlightValue(G->getInitializer(), Return);
-        storeValueRecurseAfterCheck(
-          G->getValueType(), Const, Lower, AuxP, false, Align(Alignment), AtomicOrdering::NotAtomic,
-          SyncScope::System, MemoryKind::ThreadLocalInit, Return);
+        if (!isa<ConstantAggregateZero, ConstantPointerNull>(G->getInitializer())) {
+          Value* Const = constantToFlightValue(G->getInitializer(), Return);
+          storeValueRecurseAfterCheck(
+            G->getValueType(), Const,
+            MemoryAccessData(nullptr, Lower, AuxP, AuxP, MemoryKind::ThreadLocalInit),
+            false, Align(Alignment), AtomicOrdering::NotAtomic, SyncScope::System, Return);
+        }
         new StoreInst(Lower, NewG, Return);
 
         MyThread = NewF->getArg(0);
@@ -8852,8 +14288,11 @@ public:
       }
 
       Function* SlowF = Function::Create(PizlonatedGetterTy, GlobalValue::PrivateLinkage,
-                                         G->getAddressSpace(), "filc_getter_slow", &M);
+                                         G->getAddressSpace(), "pizlonatedGS_" + G->getName(), &M);
+      SlowF->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
+      SlowF->addFnAttr(Attribute::NoUnwind);
       SlowF->addFnAttr(Attribute::NoInline);
+      PutImplIntoComdat(G, SlowF);
       
       Constant* NewC = paddedConstant(
         constantToRestConstantWithPtrPlaceholders(G->getInitializer()));
@@ -8871,7 +14310,8 @@ public:
         ArrayType* AuxTy = ArrayType::get(RawPtrTy, CSize / WordSize);
         AuxG = new GlobalVariable(
           M, AuxTy, IsConstant, GlobalValue::InternalLinkage, ConstantAggregateZero::get(AuxTy),
-          "Jga_" + G->getName());
+          "pizlonatedDA_" + G->getName());
+        PutImplIntoComdat(G, AuxG);
         AuxPtr = AuxG;
       } else {
         AuxG = nullptr;
@@ -8893,7 +14333,8 @@ public:
       StructType* ObjectGTy = StructType::get(C, ObjectGTyFields);
 
       GlobalVariable* NewDataG = new GlobalVariable(
-        M, ObjectGTy, IsConstant, GlobalValue::InternalLinkage, nullptr, "Jgo_" + G->getName());
+        M, ObjectGTy, IsConstant, GlobalValue::InternalLinkage, nullptr, "pizlonatedDO_" + G->getName());
+      PutImplIntoComdat(G, NewDataG);
 
       uint16_t ObjectFlags = ObjectFlagGlobal;
       if (AuxG)
@@ -8920,12 +14361,17 @@ public:
 
       Constant* NewDataPayloadC = ConstantExpr::getGetElementPtr(
         Int8Ty, NewDataG, ConstantInt::get(IntPtrTy, ObjectSize + AlignmentOffset));
+
+      if (UnsafeExportGVs.count(G))
+        UnsafeExports.push_back(UnsafeExport(G->getName().str(), NewDataPayloadC));
+      
       Constant* NewDataObjectC = ConstantExpr::getGetElementPtr(
         Int8Ty, NewDataG, ConstantInt::get(IntPtrTy, AlignmentOffset));
       
       GlobalVariable* NewPtrG = new GlobalVariable(
         M, FlightPtrTy, false, GlobalValue::PrivateLinkage, FlightNull,
-        "filc_gptr_" + G->getName());
+        "pizlonatedGP_" + G->getName());
+      PutImplIntoComdat(G, NewPtrG);
       NewPtrG->setAlignment(Align(FlightPtrAlign));
       
       BasicBlock* RootBB = BasicBlock::Create(C, "filc_global_getter_root", NewF);
@@ -9000,8 +14446,9 @@ public:
       } else {
         Value* C = constantToFlightValue(G->getInitializer(), Return);
         storeValueRecurseAfterCheck(
-          G->getInitializer()->getType(), C, NewDataPayloadC, AuxPtr, false, Align(Alignment),
-          AtomicOrdering::NotAtomic, SyncScope::System, MemoryKind::GlobalInit, Return);
+          G->getInitializer()->getType(), C,
+          MemoryAccessData(nullptr, NewDataPayloadC, AuxPtr, AuxPtr, MemoryKind::GlobalInit), false,
+          Align(Alignment), AtomicOrdering::NotAtomic, SyncScope::System, Return);
       }
       
       CallInst::Create(GlobalInitializationEnd, { MyThread }, "", Return);
@@ -9053,7 +14500,10 @@ public:
         InstTypes.clear();
         InstTypeVectors.clear();
         CanonicalPtrAuxBaseVars.clear();
-        AuxBaseVarOperands.clear();
+        PtrOperandDatas.clear();
+        LocalAllocaDatas.clear();
+
+        UsesVariadicCC = usesVariadicCC(F);
 
         SmallVector<std::pair<const BasicBlock*, const BasicBlock*>> BackEdges;
         FindFunctionBackedges(*F, BackEdges);
@@ -9076,34 +14526,29 @@ public:
         scheduleChecks(Blocks, BackEdgePreds);
         // Snapshot the instructions before we do crazy stuff.
         std::vector<Instruction*> Instructions;
+        std::vector<AllocaInst*> LocalAllocas;
         for (BasicBlock* BB : Blocks) {
           for (Instruction& I : *BB) {
+            PointerKind PK = pointerKindDirect(&I);
+            if (PK != PointerKind::Escaping) {
+              assert(PK == PointerKind::LocalExplicit || PK == PointerKind::LocalNaked);
+              assert(BB == Blocks[0]);
+              LocalAllocas.push_back(cast<AllocaInst>(&I));
+              continue;
+            }
             Instructions.push_back(&I);
             captureTypesIfNecessary(&I);
           }
 
           if (BackEdgePreds.count(BB)) {
             DebugLoc DL = BB->getTerminator()->getDebugLoc();
-            Value* StatePtr = threadStatePtr(MyThread, BB->getTerminator());
-            LoadInst* StateLoad = new LoadInst(
-              Int8Ty, StatePtr, "filc_thread_state_load", BB->getTerminator());
-            StateLoad->setDebugLoc(DL);
-            BinaryOperator* Masked = BinaryOperator::Create(
-              Instruction::And, StateLoad,
-              ConstantInt::get(
-                Int8Ty,
-                ThreadStateCheckRequested | ThreadStateStopRequested | ThreadStateDeferredSignal),
-              "filc_thread_state_masked", BB->getTerminator());
-            Masked->setDebugLoc(DL);
-            ICmpInst* PollcheckNotNeeded = new ICmpInst(
-              BB->getTerminator(), ICmpInst::ICMP_EQ, Masked, ConstantInt::get(Int8Ty, 0),
-              "filc_pollcheck_not_needed");
-            Masked->setDebugLoc(DL);
-            Instruction* NewTerm =
-              SplitBlockAndInsertIfElse(
-                expectTrue(PollcheckNotNeeded, BB->getTerminator()), BB->getTerminator(), false);
-            CallInst::Create(
-              PollcheckSlow, { MyThread, getOrigin(DL) }, "", NewTerm)->setDebugLoc(DL);
+            // Pollchecks consist of a load and conditional branch to slow path.
+            // We temporarily represent pollchecks as unconditional and add the
+            // condition in the DeleteRedundantPollchecks pass that runs after
+            // optimizations.
+            CallInst::Create(Pollcheck, {MyThread, getOrigin(DL)}, "",
+                             BB->getTerminator())
+                ->setDebugLoc(DL);
           }
         }
 
@@ -9113,36 +14558,99 @@ public:
         SplitBlock(RootB, InsertionPoint);
         Instruction* AllocaInsertionPoint = RootB->getTerminator();
 
+        for (AllocaInst* AI : LocalAllocas) {
+          PointerKind PK = pointerKindDirect(AI);
+          assert(PK != PointerKind::Escaping);
+          assert(PK == PointerKind::LocalExplicit || PK == PointerKind::LocalNaked);
+          LocalAllocaData LAD;
+          LAD.Explicit = PK == PointerKind::LocalExplicit;
+          LAD.OrigAI = AI;
+          LAD.Size = alignedAllocaSize(AI);
+          if (verbose)
+            errs() << "LAD size for " << AI->getName() << " = " << LAD.Size << "\n";
+          assert(!(LAD.Size % WordSize));
+          LAD.Payload = new AllocaInst(
+            Int8Ty, 0, ConstantInt::get(IntPtrTy, LAD.Size),
+            Align(std::max(GCMinAlign,
+                           std::max(DL.getABITypeAlign(AI->getAllocatedType()).value(),
+                                    AI->getAlign().value()))),
+            "filc_local_payload", AllocaInsertionPoint);
+          LAD.Payload->setDebugLoc(AI->getDebugLoc());
+          LAD.AuxAlloca = new AllocaInst(
+            Int8Ty, 0, ConstantInt::get(IntPtrTy, LAD.Size + (LAD.Explicit ? WordSize : 0)),
+            Align(WordSize), "filc_local_aux", AllocaInsertionPoint);
+          LAD.AuxAlloca->setDebugLoc(AI->getDebugLoc());
+          if (LAD.Explicit) {
+            LAD.Aux = GetElementPtrInst::Create(
+              RawPtrTy, LAD.AuxAlloca, { ConstantInt::get(IntPtrTy, 1) }, "filc_aux_lowers",
+              AllocaInsertionPoint);
+            LAD.Aux->setDebugLoc(AI->getDebugLoc());
+          } else
+            LAD.Aux = LAD.AuxAlloca;
+          LocalAllocaDatas[AI] = LAD;
+        }
+
         ReturnB = BasicBlock::Create(C, "filc_return_block", NewF);
         if (F->getReturnType() != VoidTy) {
           ReturnPhi = PHINode::Create(
             toFlightType(F->getReturnType()), 1, "filc_return_value", ReturnB);
         }
 
-        ReallyReturnB = BasicBlock::Create(C, "filc_really_return_block", NewF);
-        BranchInst* ReturnBranch = BranchInst::Create(ReallyReturnB, ReturnB);
-        RetSizePhi = PHINode::Create(IntPtrTy, 1, "filc_ret_size", ReallyReturnB);
-        Instruction* ReturnValue = InsertValueInst::Create(
-          UndefValue::get(PizlonatedReturnValueTy), ConstantInt::getFalse(Int1Ty), { 0 },
-          "filc_insert_has_exception", ReallyReturnB);
-        ReturnValue = InsertValueInst::Create(
-          ReturnValue, RetSizePhi, { 1 }, "filc_insert_ret_size", ReallyReturnB);
-        ReturnInst* Return = ReturnInst::Create(C, ReturnValue, ReallyReturnB);
+        std::vector<ArgInfo> AIs = argInfosForFunction(F);
+        Type* NormalizedRetType = normalizeRetType(F->getReturnType());
+        uint64_t Signature;
+        if (UsesVariadicCC)
+          Signature = GenericSignature;
+        else
+          Signature = computeSignature(AIs, NormalizedRetType);
+        FunctionType* ImplFuncTy;
+        if (Signature == GenericSignature)
+          ImplFuncTy = PizlonatedFuncTy;
+        else
+          ImplFuncTy = fastFunctionTypeForSignature(AIs, NormalizedRetType);
+        assert(ImplFuncTy == NewF->getFunctionType());
 
-        if (F->getReturnType() != VoidTy) {
-          Type* T = F->getReturnType();
-          RetSizePhi->addIncoming(storeCC(T, ReturnPhi, ReturnBranch, DebugLoc()), ReturnB);
-        } else {
-          RetSizePhi->addIncoming(
+        ReturnInst* Return;
+        if (Signature == GenericSignature) {
+          assert(ImplFuncTy == PizlonatedFuncTy);
+          ReallyReturnB = BasicBlock::Create(C, "filc_really_return_block", NewF);
+          BranchInst* ReturnBranch = BranchInst::Create(ReallyReturnB, ReturnB);
+          RetSizePhi = PHINode::Create(IntPtrTy, 1, "filc_ret_size", ReallyReturnB);
+          Instruction* ReturnValue = InsertValueInst::Create(
+            UndefValue::get(PizlonatedReturnValueTy), ConstantInt::getFalse(Int1Ty), { 0 },
+            "filc_insert_has_exception", ReallyReturnB);
+          ReturnValue = InsertValueInst::Create(
+            ReturnValue, RetSizePhi, { 1 }, "filc_insert_ret_size", ReallyReturnB);
+          Return = ReturnInst::Create(C, ReturnValue, ReallyReturnB);
+          
+          if (F->getReturnType() != VoidTy) {
+            Type* T = F->getReturnType();
+            RetSizePhi->addIncoming(storeCC(T, ReturnPhi, ReturnBranch, DebugLoc()), ReturnB);
+          } else {
+            RetSizePhi->addIncoming(
               storeCC(IntPtrTy, ConstantInt::get(IntPtrTy, 0), ReturnBranch, DebugLoc()), ReturnB);
+          }
+        } else {
+          assert(!UsesVariadicCC);
+          ReallyReturnB = nullptr;
+          RetSizePhi = nullptr;
+          Return = ReturnInst::Create(
+            C, UndefValue::get(ImplFuncTy->getReturnType()), ReturnB);
+          Instruction* ReturnValue = InsertValueInst::Create(
+            UndefValue::get(ImplFuncTy->getReturnType()), ConstantInt::getFalse(Int1Ty), { 0 },
+            "filc_insert_has_exception", Return);
+          if (F->getReturnType() == VoidTy)
+            Return->getOperandUse(0) = ReturnValue;
+          else {
+            Return->getOperandUse(0) = insertAndNormalizeReturn(
+              F->getReturnType(), ReturnPhi, ReturnValue, Return);
+          }
         }
 
         ResumeB = BasicBlock::Create(C, "filc_resume_block", NewF);
-        ReturnValue = InsertValueInst::Create(
-          UndefValue::get(PizlonatedReturnValueTy), ConstantInt::getTrue(Int1Ty), { 0 },
+        Instruction* ReturnValue = InsertValueInst::Create(
+          UndefValue::get(ImplFuncTy->getReturnType()), ConstantInt::getTrue(Int1Ty), { 0 },
           "filc_insert_has_exception", ResumeB);
-        ReturnValue = InsertValueInst::Create(
-          ReturnValue, ConstantInt::get(IntPtrTy, 0), { 1 }, "filc_insert_ret_size", ResumeB);
         ReturnInst* ResumeReturn = ReturnInst::Create(C, ReturnValue, ResumeB);
 
         StructType* MyFrameTy = StructType::get(
@@ -9166,6 +14674,16 @@ public:
         for (size_t FrameIndex = FrameSize; FrameIndex--;)
           recordLowerAtIndex(RawNull, FrameIndex, InsertionPoint);
 
+        for (AllocaInst* AI : LocalAllocas) {
+          if (!AlwaysLive.count(AI))
+            continue;
+          PointerKind PK = pointerKindDirect(AI);
+          assert(PK != PointerKind::Escaping);
+          assert(PK == PointerKind::LocalExplicit || PK == PointerKind::LocalNaked);
+          LocalAllocaData LAD = LocalAllocaDatas[AI];
+          initializeNonescapingAlloca(LAD, InsertionPoint);
+        }
+        
         auto PopFrame = [&] (Instruction* Return) {
           new StoreInst(
             new LoadInst(
@@ -9182,20 +14700,34 @@ public:
 
         size_t LastOffset = 0;
         if (F->getFunctionType()->getNumParams()) {
-          std::vector<ArgInfo> AIs = argInfosForFunction(F);
-          LastOffset = argsSize(AIs);
-          std::vector<Value*> Vs = loadCC(
-            AIs, NewF->getArg(2), CCArgsCheckFailure, InsertionPoint, DebugLoc());
-          for (unsigned Index = 0; Index < F->getFunctionType()->getNumParams(); ++Index) {
-            Value* V = Vs[Index];
-            if (AIs[Index].AK == ArgKind::ByVal) {
-              recordLowers(F->getArg(Index), F->getArg(Index)->getType(), V, InsertionPoint);
-              Args.push_back(V);
-            } else
-              Args.push_back(V);
+          if (Signature == GenericSignature) {
+            LastOffset = argsSize(AIs);
+            std::vector<Value*> Vs = loadCC(
+              AIs, NewF->getArg(2), CCArgsCheckFailure, InsertionPoint, DebugLoc());
+            for (unsigned Index = 0; Index < F->getFunctionType()->getNumParams(); ++Index) {
+              Value* V = Vs[Index];
+              if (AIs[Index].AK == ArgKind::ByVal) {
+                recordLowers(F->getArg(Index), F->getArg(Index)->getType(), V, InsertionPoint);
+                Args.push_back(V);
+              } else {
+                Args.push_back(convertFromNormalizedArgType(
+                                 F->getArg(Index)->getType(), V, InsertionPoint));
+              }
+            }
+          } else {
+            assert(NewF->getFunctionType()->getNumParams()
+                   == F->getFunctionType()->getNumParams() + 2);
+            for (unsigned Index = 0; Index < F->getFunctionType()->getNumParams(); ++Index) {
+              assert(AIs[Index].AK == ArgKind::Direct);
+              Args.push_back(convertFromNormalizedArgType(
+                               F->getArg(Index)->getType(),
+                               NewF->getArg(2 + Index),
+                               InsertionPoint));
+            }
           }
         }
         if (UsesVastartOrZargs) {
+          assert(Signature == GenericSignature);
           // Do this after we have recorded all the args for GC, so it's safe to have a pollcheck.
           Value* SnapshottedArgsPtr = CallInst::Create(
             PromoteArgsToHeap, { MyThread, NewF->getArg(2) }, "filc_promote_args", InsertionPoint);
@@ -9235,12 +14767,24 @@ public:
             recordLowers(I, I->getNextNode());
         }
         assert(Phis.empty());
-        captureAuxBaseVars(Instructions);
+        capturePointerOperands(Instructions);
         for (Instruction* I : Instructions)
+          emitChecksForInst(I);
+        for (Instruction* I : LocalAllocas)
           emitChecksForInst(I);
         erase_if(Instructions, [&] (Instruction* I) { return earlyLowerInstruction(I); });
         for (Instruction* I : Instructions)
           lowerInstruction(I);
+
+        for (AllocaInst* AI : LocalAllocas) {
+          LocalAllocaData LAD = LocalAllocaDatas[AI];
+          AI->replaceAllUsesWith(
+            createFlightPtr(
+              ConstantExpr::getIntToPtr(ConstantInt::get(IntPtrTy, 0xfee1dead), RawPtrTy),
+              LAD.Payload, AI));
+          AI->eraseFromParent();
+        }
+        
         MyThread = nullptr;
 
         Function* GetterF = GlobalToGetter[OldF];
@@ -9260,6 +14804,9 @@ public:
 
         if (verbose)
           errs() << "New function after getter optimization: " << *NewF << "\n";
+
+        FrameSize = SIZE_MAX;
+        NumStackAuxes = SIZE_MAX;
       }
       
       FunctionName = "<internal>";
@@ -9272,7 +14819,7 @@ public:
       int64_t Offset = 0;
       if (ConstantExpr* CE = dyn_cast<ConstantExpr>(C)) {
         assert(CE->getOpcode() == Instruction::GetElementPtr);
-        GetElementPtrInst* GEP = cast<GetElementPtrInst>(CE->getAsInstruction());
+        GetElementPtrInst* GEP = cast<GetElementPtrInst>(getAsInstruction(CE));
         APInt OffsetAP(64, 0, false);
         bool Result = GEP->accumulateConstantOffset(DLBefore, OffsetAP);
         assert(Result);
@@ -9301,7 +14848,8 @@ public:
 
       GlobalVariable* NewPtrG = new GlobalVariable(
         M, FlightPtrTy, false, GlobalValue::PrivateLinkage, FlightNull,
-        "filc_gptr_" + G->getName());
+        "pizlonatedGP_" + G->getName());
+      PutImplIntoComdat(G, NewPtrG);
       NewPtrG->setAlignment(Align(FlightPtrAlign));
       
       BasicBlock* RootBB = BasicBlock::Create(C, "filc_global_ifunc_getter_root", NewF);
@@ -9336,6 +14884,9 @@ public:
           "filc_call_ifunc_slow", Return);
     }
 
+    if (lightVerbose || verbose)
+      errs() << "Here's the pizlonated module before the final replace/delete pass:\n" << M << "\n";
+
     Dummy->deleteValue();
 
     if (verbose)
@@ -9355,6 +14906,17 @@ public:
       if (verbose)
         errs() << "Erasing " << G->getName() << "\n";
       G->eraseFromParent();
+    }
+
+    for (auto& Pair : UnsafeFuncs) {
+      assert(!M.getNamedValue(Pair.first));
+      Pair.second->replaceAllUsesWith(
+        Function::Create(UnsafeFuncTy, GlobalVariable::ExternalLinkage, 0, Pair.first, &M));
+      Pair.second->deleteValue();
+    }
+    for (UnsafeExport UE : UnsafeExports) {
+      assert(!M.getNamedValue(UE.Name));
+      GlobalAlias::create(Int8Ty, 0, GlobalVariable::ExternalLinkage, UE.Name, UE.Aliasee, &M);
     }
 
     if (lightVerbose || verbose)

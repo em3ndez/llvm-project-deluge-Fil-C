@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -30,6 +30,13 @@
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 #include <pizlonated_runtime.h>
+#include <linux/futex.h>
+#include <linux/time.h>
+
+unsigned zversion(void)
+{
+    return FILC_VERSION;
+}
 
 struct lock {
     int word;
@@ -460,14 +467,10 @@ struct futex_args {
 	volatile void* uaddr;
 	long futex_op;
 	unsigned long val;
-	const void* timeout;
+	const struct timespec* timeout;
 	volatile void* uaddr2;
 	unsigned long val3;
 };
-
-#define FUTEX_WAIT    0
-#define FUTEX_WAKE    1
-#define FUTEX_PRIVATE 128
 
 long zsys_syscall(long n, ...)
 {
@@ -488,13 +491,38 @@ long zsys_syscall(long n, ...)
         struct futex_args* args = (struct futex_args*)syscall_args;
         switch (args->futex_op) {
         case FUTEX_WAIT:
-        case FUTEX_WAIT | FUTEX_PRIVATE:
-            ZASSERT(!args->timeout);
-            zsys_futex_wait(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
+        case FUTEX_WAIT | FUTEX_PRIVATE_FLAG:
+        case FUTEX_WAIT | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT_BITSET:
+        case FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG:
+        case FUTEX_WAIT_BITSET | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME: {
+            if (args->futex_op & FUTEX_WAIT_BITSET)
+                ZASSERT(args->val3 == FUTEX_BITSET_MATCH_ANY);
+            int clock_id = (args->futex_op & FUTEX_CLOCK_REALTIME) ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+            struct timespec timeout = {};
+            if (args->timeout) {
+                if (!(args->futex_op & FUTEX_WAIT_BITSET))
+                    zsys_clock_gettime(clock_id, &timeout);
+                timeout.tv_sec += args->timeout->tv_sec;
+                timeout.tv_nsec += args->timeout->tv_nsec;
+                if (timeout.tv_nsec >= 1000000000) {
+                    timeout.tv_sec++;
+                    timeout.tv_nsec -= 1000000000;
+                }
+            }
+            int err = zsys_futex_timedwait(args->uaddr, args->val, clock_id,
+                args->timeout ? &timeout : 0, args->futex_op & FUTEX_PRIVATE_FLAG);
+            if (err > 0) {
+                zset_errno(err);
+                return -1;
+            }
             return 0;
+        }
         case FUTEX_WAKE:
-        case FUTEX_WAKE | FUTEX_PRIVATE:
-            zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
+        case FUTEX_WAKE | FUTEX_PRIVATE_FLAG:
+            zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE_FLAG);
             return 0;
         default:
             zerrorf("unsupported futex op: %d.", args->futex_op);
@@ -504,6 +532,14 @@ long zsys_syscall(long n, ...)
 
     case 217 /* SYS_getdents64 */:
         callee = zsys_getdents;
+        break;
+
+    case 238 /* SYS_set_mempolicy */:
+        callee = zsys_set_mempolicy;
+        break;
+
+    case 239 /* SYS_get_mempolicy */:
+        callee = zsys_get_mempolicy;
         break;
 
     case 444 /* SYS_landlock_create_ruleset */:
@@ -560,6 +596,58 @@ long zsys_syscall(long n, ...)
         callee = zsys_copy_file_range;
         break;
 
+    case 316 /* SYS_renameat2 */:
+        callee = zsys_renameat2;
+        break;
+
+    case 434 /* SYS_pidfd_open */:
+        callee = zsys_pidfd_open;
+        break;
+
+    case 113 /* SYS_setreuid */:
+        callee = zsys_setreuid;
+        break;
+
+    case 114 /* SYS_setregid */:
+        callee = zsys_setregid;
+        break;
+
+    case 117 /* SYS_setresuid */:
+        callee = zsys_setresuid;
+        break;
+
+    case 250 /* SYS_keyctl */:
+        callee = zsys_keyctl;
+        break;
+
+    case 203 /* SYS_sched_setaffinity */:
+        callee = zsys_sched_setaffinity;
+        break;
+
+    case 204 /* SYS_sched_getaffinity */:
+        callee = zsys_raw_sched_getaffinity;
+        break;
+
+    case 248 /* SYS_add_key */:
+        callee = zsys_add_key;
+        break;
+
+    case 249 /* SYS_request_key */:
+        callee = zsys_request_key;
+        break;
+
+    case 319 /* SYS_memfd_create */:
+        callee = zsys_memfd_create;
+        break;
+
+    case 1 /* SYS_write */:
+        callee = zsys_write;
+        break;
+
+    case 437 /* SYS_openat2 */:
+        callee = zsys_openat2;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:
@@ -580,6 +668,16 @@ void* zthread_create(void* (*callback)(void* arg), void* arg)
     void* result = 0;
     zthread_create2(callback, arg, &result, 0);
     return result;
+}
+
+void* zstack_limit(void)
+{
+    return zthread_stack_limit(zthread_self());
+}
+
+void* zstack_top(void)
+{
+    return zthread_stack_top(zthread_self());
 }
 
 int zsys_gettid(void)
@@ -611,6 +709,18 @@ void* zsys_create_module(const char* name, __SIZE_TYPE__ size)
     (void)size;
     zerror("create_module not supported.");
     return 0;
+}
+
+int zsys_query_module(const char* name, int which, void* buf, __SIZE_TYPE__ bufsize,
+    __SIZE_TYPE__* ret)
+{
+    (void)name;
+    (void)which;
+    (void)buf;
+    (void)bufsize;
+    (void)ret;
+    zerror("query_module not supported.");
+    return -1;
 }
 
 int zsys_get_kernel_syms(void* table)
@@ -676,3 +786,5 @@ void zgc_request_and_wait(void)
 {
     zgc_wait(zgc_request_fresh());
 }
+
+

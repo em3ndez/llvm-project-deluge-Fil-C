@@ -1,6 +1,7 @@
 #!/bin/sh
 #
-# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
 #
-# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
 # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
 # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
 # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -28,7 +29,7 @@
 set -e
 set -x
 
-build_name=filc-0.668.8-$OS-$ARCH
+build_name=filc-0.680-$OS-$ARCH
 
 rm -rf $build_name
 
@@ -36,21 +37,24 @@ mkdir $build_name
 cp README.md $build_name/
 cp LLVM-LICENSE.txt $build_name/
 cp libpas/LICENSE.txt $build_name/PAS-LICENSE.txt
-cp usermusl/COPYRIGHT $build_name/MUSL-LICENSE.txt
+cp projects/usermusl/COPYRIGHT $build_name/MUSL-LICENSE.txt
 
 mkdir -p $build_name/build/bin
-cp build/bin/clang-17 $build_name/build/bin/
-strip $build_name/build/bin/clang-17
+cp build/bin/clang-20 $build_name/build/bin/
+strip $build_name/build/bin/clang-20
 (cd $build_name/build/bin/ &&
-     ln -s clang-17 clang &&
-     ln -s clang-17 clang++)
+     ln -s clang-20 clang &&
+     ln -s clang-20 clang++ &&
+     ln -s clang-20 filcc &&
+     ln -s clang-20 fil++ &&
+     ln -s clang-20 filcpp)
 
 mkdir -p $build_name/build/include/
 cp -R build/include/c++ $build_name/build/include/
 mkdir -p $build_name/build/include/x86_64-unknown-linux-gnu/
 cp -R build/include/x86_64-unknown-linux-gnu/c++ $build_name/build/include/x86_64-unknown-linux-gnu/
-mkdir -p $build_name/build/lib/clang/17/
-cp -R build/lib/clang/17/include $build_name/build/lib/clang/17/
+mkdir -p $build_name/build/lib/clang/20/
+cp -R build/lib/clang/20/include $build_name/build/lib/clang/20/
 
 cp -R pizfix $build_name/
 rm -f $build_name/pizfix/etc/moduli
@@ -110,8 +114,8 @@ echo 'echo' >> setup.sh
 echo "echo \"Take a look at pizfix/stdfil-include/stdfil.h for Fil-C-specific APIs. You can\"" >> setup.sh
 echo "echo \"optionally #include <stdfil.h> if you find those APIs useful.\"" >> setup.sh
 echo 'echo' >> setup.sh
-echo "echo \"New releases are at: https://github.com/pizlonator/llvm-project-deluge/releases\"" >> setup.sh
-echo "echo \"The Fil-C Manifesto: https://github.com/pizlonator/llvm-project-deluge/blob/deluge/Manifesto.md\"" >> setup.sh
+echo "echo \"New releases are at: https://github.com/pizlonator/fil-c/releases\"" >> setup.sh
+echo "echo \"More information on the website: https://fil-c.org/\"" >> setup.sh
 echo 'echo' >> setup.sh
 echo "echo \"Have fun and thank you for trying $build_name.\"" >> setup.sh
 

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -34,6 +35,16 @@ extern "C" {
 } /* tell emacs what's up */
 #endif
 
+/* The convention is that the major version gets multiplied by 10000, and the low three digits are
+   the minor version.
+   
+   Examples:
+   
+   - If the version was 0.666 then FILC_VERSION would be 666u.
+   
+   - If the version was 1.23, then FILC_VERSION would be 10023. */
+#define FILC_VERSION 680u
+
 /* This header defines standard Fil-C APIs that are not part of C or C++ but are intended to be stable
    over time in Fil-C.
 
@@ -51,9 +62,6 @@ extern "C" {
 #error "Cannot use <stdfil.h> from Yolo-C"
 #endif
 
-/* only for times */
-typedef long clock_t;
-
 /* You shouldn't use the filc_bool type or rely on its existence; I just need it to hack around C++
    being incompatible with C in this regard. */
 #ifdef __cplusplus
@@ -61,6 +69,10 @@ typedef bool filc_bool;
 #else
 typedef _Bool filc_bool;
 #endif
+
+/* Returns the Fil-C version according to the runtime. May be different than FILC_VERSION if you build
+   against one version of Fil-C and run against a different version. */
+unsigned zversion(void);
 
 /* This prints the given message and then shuts down the program using the same shutdown codepath
    used for memory safety violatins (i.e. it's designed to really kill the process). */
@@ -74,6 +86,16 @@ void zerrorf(const char* str, ...);
         if ((exp)) \
             break; \
         zerrorf("%s:%d: %s: assertion %s failed.", __FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); \
+    } while (0)
+
+void zsafety_error(const char* str);
+void zsafety_errorf(const char* str, ...);
+
+#define ZSAFETY_CHECK(exp) do { \
+        if ((exp)) \
+            break; \
+        zsafety_errorf("%s:%d: %s: safety check %s failed.", \
+                       __FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); \
     } while (0)
 
 /* Allocate `count` bytes of zero-initialized memory. May allocate slightly more than `count`, based
@@ -176,6 +198,11 @@ void* zgc_finq_aligned_alloc(zgc_finq* finq, __SIZE_TYPE__ alignment, __SIZE_TYP
    that the type is compatible with struct foo. */
 void* zgetlower(void* ptr);
 void* zgetupper(void* ptr);
+
+/* Returns true if this is a readonly object.
+ 
+   This will return false for special objects or NULL. */
+filc_bool zis_readonly(void* ptr);
 
 /* Get the pointer's array length, which is the distance to upper in units of the ptr's static type. */
 #define zlength(ptr) ({ \
@@ -342,11 +369,8 @@ typedef struct zweak zweak;
 /* Create a new weak pointer. Weak pointers automatically become NULL if the GC was not able to
    establish that the pointed-at object is live via any chain of non-weak pointers starting from GC
    roots.
-
-   Note that if you create a weak pointer to a freed object, then it may or may not become NULL. It's
-   possible for weak pointers to freed object to never become NULL, if the GC had already repointed
-   the pointer's capability to the free singleton, since the free singleton is global and never
-   dies. */
+   
+   Weak pointers also become NULL if the pointed-at object is freed. */
 zweak* zweak_new(void* ptr);
 
 /* Get the value of the weak pointer. This returns exactly the pointer passed to `zweak_new`, or it
@@ -423,6 +447,7 @@ int zisdigit(int chr);
    functions rather than the libc ones, and it has one additional feature:
 
        - '%P', which prints the full filc_ptr (i.e. 0xptr,0xlower,0xupper,...type...).
+       - '%O', which prints the full object contents.
 
    It's not obvious that this code will do the right thing for floating point formats. But this code is
    pizlonated, so if it goes wrong, at least it'll stop your program from causing any more damage. */
@@ -581,6 +606,66 @@ void* zcall(void* callee, void* args);
 /* Returns from the calling function, passing the contents of the rets object as the return value. */
 void zreturn(void* rets);
 
+/* Performs an unsafe call to Yolo-land.
+   
+   This barely works! It's not intended for full-blown interop with Yolo code. In particular, right
+   now Fil-C code expects to live in a Fil-C runtime, which precludes the use of a Yolo libc.
+   
+   This function is mostly useful for implementing constant-time crypto libraries or other kernels
+   that need to be written in assembly.
+
+   The first argument is the Yolo symbol name of the function to be called. It must be a string
+   literal. The remaining arguments are passed along using Yolo C ABI conventions. */
+unsigned long zunsafe_call(const char* symbol_name, ...);
+
+/* Exactly like `zunsafe_call`, but for those cases where you know that the call will complete in a
+   bounded (and sufficiently short) amount of time.
+
+   In the worst case, if you call this instead of zunsafe_call, then you're just delaying GC progress.
+   It's not the end of the world. Maybe we're talking about denial of service, at worst.
+
+   This only turns into a big problem if you use zunsafe_fast_call to do something that has truly
+   unbounded execution time (like a syscall that blocks indefinitely, or an infinite loop). Otherwise
+   it's a perf pathology that you may or may not care enough to fix. */
+unsigned long zunsafe_fast_call(const char* symbol_name, ...);
+
+/* Performs either a `zunsafe_fast_call` or `zunsafe_call` depending on the `size`. */
+unsigned long zunsafe_buf_call(__SIZE_TYPE__ size, const char* symbol_name, ...);
+
+static inline void zcheck(void* ptr, __SIZE_TYPE__ size)
+{
+    if (!size)
+        return;
+    if (!zvalinbounds(ptr, size))
+        zsafety_errorf("%zu bytes are not in bounds of %P.", size, ptr);
+    if (zis_readonly(ptr))
+        zsafety_errorf("%P is readonly.", ptr);
+}
+
+static inline void zcheck_readonly(const void* ptr, __SIZE_TYPE__ size)
+{
+    if (!size)
+        return;
+    if (!zvalinbounds((void*)ptr, size))
+        zsafety_errorf("%zu bytes are not in bounds of %P.", size, ptr);
+}
+
+static inline __SIZE_TYPE__ zchecked_add(__SIZE_TYPE__ a, __SIZE_TYPE__ b)
+{
+    __SIZE_TYPE__ result;
+    if (__builtin_add_overflow(a, b, &result))
+        zsafety_errorf("%zu + %zu overflowed.", a, b);
+    return result;
+}
+
+static inline __SIZE_TYPE__ zchecked_mul(__SIZE_TYPE__ a, __SIZE_TYPE__ b)
+{
+    __SIZE_TYPE__ result;
+    if (__builtin_mul_overflow(a, b, &result))
+        zsafety_errorf("%zu * %zu overflowed.", a, b);
+    return result;
+}
+
 /* Tells you if a va_list has another argument. */
 static inline filc_bool zcan_va_arg(__builtin_va_list list)
 {
@@ -709,7 +794,16 @@ void zscavenge_synchronously(void);
 void zscavenger_suspend(void);
 void zscavenger_resume(void);
 
+/* Forces the runtime to immediately create whatever threads it needs, and to disable shutting
+   them down on demand.
+
+   This is useful if you're about to install a seccomp filter that prevents thread creation. */
+void zlock_runtime_threads(void);
+
 void zdump_stack(void);
+
+void zdump_heap(int fd);
+void zdump_stacks(void);
 
 struct zstack_frame_description;
 typedef struct zstack_frame_description zstack_frame_description;
@@ -766,6 +860,10 @@ void zstack_scan(filc_bool (*callback)(
    On Linux, this is guaranteed to be the same as gettid(), just much faster to query. */
 unsigned zthread_self_id(void);
 
+void* zstack_pointer(void);
+void* zstack_limit(void);
+void* zstack_top(void);
+
 /* X86 xgetbv intrinsic. Reads XCR0. May trap if the CPU doesn't support the xsave feature. */
 unsigned long zxgetbv(void);
 
@@ -774,6 +872,17 @@ filc_bool zis_unsafe_signal_for_kill(int signo);
 
 /* Returns true if the signal number is not supported by Fil-C for handling. */
 filc_bool zis_unsafe_signal_for_handlers(int signo);
+
+/* If you pass true, this enables quiet panics, where the Fil-C runtime does not print any output
+   in case of a Fil-C panic. */
+void zset_quiet_panic(filc_bool value);
+
+/* Tells if quiet panic mode is enabled. */
+filc_bool zget_quiet_panic(void);
+
+/* Set the process title. `title` must be a null-terminated string (otherwise you may get a panic).
+   The title may be truncated. */
+void zsetproctitle(const char* title);
 
 #ifdef __cplusplus
 }

@@ -54,6 +54,7 @@ struct pas_scavenger_data {
 
 /* This is available extern for testing and debugging only. */
 PAS_API extern bool pas_scavenger_is_enabled;
+PAS_API extern bool pas_scavenger_shutdown_enabled;
 PAS_API extern bool pas_scavenger_eligibility_notification_has_been_deferred;
 PAS_API extern pas_scavenger_state pas_scavenger_current_state;
 PAS_API extern pas_scavenger_data* pas_scavenger_data_instance;
@@ -66,6 +67,9 @@ PAS_API extern double pas_scavenger_period_in_milliseconds; /* How long to sleep
                                                                scavenges. */
 PAS_API extern uint64_t pas_scavenger_max_epoch_delta; /* How much to subtract from the current epoch
                                                           to compute the max epoch. */
+
+PAS_API extern void (*pas_scavenger_handshake_callback)(void* arg);
+PAS_API extern void* pas_scavenger_handshake_callback_arg;
 
 #if PAS_OS(DARWIN)
 /* It's legal to set this anytime. */
@@ -120,6 +124,12 @@ typedef enum {
 
 PAS_API void pas_scavenger_perform_synchronous_operation(
     pas_scavenger_synchronous_operation_kind kind);
+
+PAS_API void pas_scavenger_lock_thread(void);
+
+/* Request that the scavenger thread runs the given function. Does nothing if the scavenger is
+   suspended. */
+PAS_API void pas_scavenger_handshake(void (*callback)(void* arg), void* arg);
 
 PAS_END_EXTERN_C;
 

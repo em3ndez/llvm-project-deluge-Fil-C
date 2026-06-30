@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2025-2026 Epic Games, Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -31,6 +31,7 @@
 
 #if PAS_ENABLE_FILC
 
+#include "filc_native.h"
 #include "pas_string_stream.h"
 #include <dlfcn.h>
 
@@ -101,6 +102,31 @@ filc_ptr filc_native_zsys_dlvsym(filc_thread* my_thread, filc_ptr handle_ptr, fi
     PAS_UNUSED_PARAM(version_ptr);
     filc_internal_panic(NULL, "dlvsym not supported.");
 #endif
+}
+
+int filc_native_zsys_dladdr(filc_thread* my_thread, filc_ptr addr_ptr, filc_ptr info_ptr)
+{
+    filc_exit(my_thread);
+    Dl_info my_info;
+    int result = dladdr(filc_ptr_ptr(addr_ptr), &my_info);
+    filc_enter(my_thread);
+    if (!result) {
+        filc_set_dlerror(dlerror(), NULL);
+        return 0;
+    }
+    filc_check_write(info_ptr, sizeof(Dl_info));
+    Dl_info* info = (Dl_info*)filc_ptr_ptr(info_ptr);
+    filc_store_ptr_at(my_thread, info_ptr, &info->dli_fname,
+                      filc_strdup(my_thread, my_info.dli_fname));
+    filc_store_ptr_at(my_thread, info_ptr, &info->dli_fbase,
+                      filc_ptr_forge_invalid(my_info.dli_fbase));
+    /* FIXME: Currently, we are not able to provide information about the symbol itself. And,
+       currently the users of this API don't care (gstreamer wants the fname). */
+    filc_store_ptr_at(my_thread, info_ptr, &info->dli_sname,
+                      filc_ptr_forge_null());
+    filc_store_ptr_at(my_thread, info_ptr, &info->dli_saddr,
+                      filc_ptr_forge_null());
+    return result;
 }
 
 #endif /* PAS_ENABLE_FILC */

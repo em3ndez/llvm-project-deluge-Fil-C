@@ -1,0 +1,93 @@
+/*
+ * Copyright (C) 2017-2021 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ */
+
+#pragma once
+
+#include "BlockDirectoryInlines.h"
+#include "HeapCellType.h"
+#include "JSCast.h"
+#include "MarkedBlock.h"
+#include "MarkedSpace.h"
+#include "Subspace.h"
+
+namespace JSC {
+
+template<typename Func>
+void Subspace::forEachDirectory(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+}
+
+template<typename Func>
+void Subspace::forEachMarkedBlock(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+}
+
+template<typename Func>
+void Subspace::forEachNotEmptyMarkedBlock(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+}
+
+template<typename Func>
+void Subspace::forEachPreciseAllocation(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+}
+
+template<typename Func>
+void Subspace::forEachMarkedCell(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+}
+
+template<typename Visitor, typename Func>
+Ref<SharedTask<void(Visitor&)>> Subspace::forEachMarkedCellInParallel(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+    return createSharedTask([] (Visitor&) { });
+}
+
+template<typename Func>
+void Subspace::forEachLiveCell(const Func& func)
+{
+    UNREACHABLE_FOR_PLATFORM();
+    UNUSED_PARAM(func);
+}
+
+inline CellAttributes Subspace::attributes() const
+{
+    return m_heapCellType->attributes();
+}
+
+} // namespace JSC
+

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -92,7 +93,8 @@ static pas_system_condition collector_thread_state_cond;
 static bool collector_thread_is_running = false;
 
 #define COLLECTOR_CONTROL_REQUEST_SUSPEND 1u
-#define COLLECTOR_CONTROL_REQUEST_HANDSHAKE 2u
+#define COLLECTOR_CONTROL_REQUEST_SUSPEND_PARALLEL_WORKERS 2u
+#define COLLECTOR_CONTROL_REQUEST_HANDSHAKE 4u
 
 static unsigned collector_control_request = 0;
 
@@ -125,6 +127,8 @@ static size_t live_bytes_before_sweeping = SIZE_MAX;
 static double overall_start_time;
 static double mark_end_time;
 static double overall_end_time;
+
+static bool threads_locked = false;
 
 #define VERBOSE_EXTREME 8
 #define VERBOSE_HANDSHAKE_STACKS 7
@@ -162,6 +166,9 @@ static unsigned num_workers_finished;
 
 static unsigned num_active_markers;
 
+static void (*handshake_callback)(void* arg);
+static void* handshake_callback_arg;
+
 static unsigned parallelism_target(void)
 {
     PAS_ASSERT(fugc_number_of_cores);
@@ -190,11 +197,16 @@ static pas_thread_return_type parallel_worker_thread(void* arg)
     pas_system_mutex_lock(&collector_thread_state_lock);
     for (;;) {
         PAS_ASSERT(my_version == worker_version || my_version + 1 == worker_version);
-        double timeout = pas_get_time_in_milliseconds_for_system_condition() + 300;
-        while ((!current_worker || worker_version == my_version) && !collector_control_request
-               && pas_get_time_in_milliseconds_for_system_condition() < timeout) {
-            pas_system_condition_timed_wait(
-                &collector_thread_state_cond, &collector_thread_state_lock, timeout);
+        if (threads_locked) {
+            while ((!current_worker || worker_version == my_version) && !collector_control_request)
+                pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
+        } else {
+            double timeout = pas_get_time_in_milliseconds_for_system_condition() + 300;
+            while ((!current_worker || worker_version == my_version) && !collector_control_request
+                   && pas_get_time_in_milliseconds_for_system_condition() < timeout) {
+                pas_system_condition_timed_wait(
+                    &collector_thread_state_cond, &collector_thread_state_lock, timeout);
+            }
         }
         PAS_ASSERT(my_version == worker_version || my_version + 1 == worker_version);
         worker_function my_worker;
@@ -204,6 +216,11 @@ static pas_thread_return_type parallel_worker_thread(void* arg)
         } else
             my_worker = NULL;
         if (!my_worker || collector_control_request) {
+            if (threads_locked && !collector_control_request) {
+                PAS_ASSERT(!my_worker);
+                continue;
+            }
+            
             if (fugc_verbose >= VERBOSE_EXTREME) {
                 pas_log("[%d, %d] fugc: parallel worker stopping\n",
                         pas_getpid(), pas_gettid());
@@ -276,27 +293,33 @@ static void do_parallel_work_impl(worker_function my_worker, const char* name)
 
     if (fugc_verbose >= VERBOSE_PARALLEL)
         pas_log("[%d] fugc: doing parallel work: %s\n", pas_getpid(), name);
-    
-    unsigned target_num_workers = parallelism_target();
-    bool thread_creation_failed = false;
-    while (num_workers < target_num_workers) {
-        num_workers++;
-        uint64_t* version_ptr = (uint64_t*)bmalloc_allocate(sizeof(uint64_t));
-        *version_ptr = worker_version;
-        if (!pas_create_detached_thread_allowing_errors(parallel_worker_thread, version_ptr)) {
-            /* Thread creation may fail because the user program is already in execve(2). */
-            thread_creation_failed = true;
-            break;
-        }
-    }
 
-    if (fugc_verbose >= VERBOSE_EXTREME) {
-        pas_log("[%d] fugc: num_workers = %u, target_num_workers = %u\n",
-                pas_getpid(), num_workers, target_num_workers);
+    if (!threads_locked) {
+        unsigned target_num_workers = parallelism_target();
+        bool thread_creation_failed = false;
+        while (num_workers < target_num_workers) {
+            uint64_t* version_ptr = (uint64_t*)bmalloc_allocate(sizeof(uint64_t));
+            *version_ptr = worker_version;
+            if (!pas_create_detached_thread_allowing_errors(parallel_worker_thread, version_ptr)) {
+                /* Thread creation may fail because the user program is already in execve(2). */
+                if (fugc_verbose >= VERBOSE_PARALLEL) {
+                    pas_log("[%d] fugc: thread creation failed (num_workers = %u)\n",
+                            pas_getpid(), num_workers);
+                }
+                thread_creation_failed = true;
+                break;
+            }
+            num_workers++;
+        }
+        
+        if (fugc_verbose >= VERBOSE_EXTREME) {
+            pas_log("[%d] fugc: num_workers = %u, target_num_workers = %u\n",
+                    pas_getpid(), num_workers, target_num_workers);
+        }
+        /* It's possible for us to have more workers than our target if the heap shrank and we still
+           have workers around from last time that haven't died. */
+        PAS_ASSERT(num_workers >= target_num_workers || thread_creation_failed);
     }
-    /* It's possible for us to have more workers than our target if the heap shrank and we still have
-       workers around from last time that haven't died. */
-    PAS_ASSERT(num_workers >= target_num_workers || thread_creation_failed);
     
     current_worker = my_worker;
     num_workers_dispatched = num_workers;
@@ -382,11 +405,12 @@ static void stop_allocators_to_allocate_black_pollcheck_callback(filc_thread* th
         thread->is_allocating_black = true;
 }
 
-static void stop_allocators_pollcheck_callback(filc_thread* thread, void* arg)
+static void stop_allocators_during_post_mark_pollcheck_callback(filc_thread* thread, void* arg)
 {
     PAS_ASSERT(!arg);
-    dump_handshake(thread, "stop_allocators");
+    dump_handshake(thread, "stop_allocators_during_post_mark");
     filc_thread_stop_allocators(thread);
+    filc_thread_assert_no_grey_fibers(thread);
 }
 
 static void turn_off_allocating_black_pollcheck_callback(filc_thread* thread, void* arg)
@@ -411,6 +435,7 @@ static void after_marking_pollcheck_callback(filc_thread* thread, void* arg)
     dump_handshake(thread, "after_marking");
     filc_thread_stop_allocators(thread);
     filc_thread_sweep_mark_stack(thread);
+    filc_thread_reset_grey_fibers(thread);
 }
 
 static PAS_ALWAYS_INLINE bool donate_impl(filc_mark_stack* mark_stack, pas_lock_lock_mode mode,
@@ -481,6 +506,12 @@ static void destruct_object_callback(void* allocation, void* arg)
         filc_finalizer_queue_destruct(
             (filc_finalizer_queue*)filc_object_special_payload_with_manual_tracking(object));
         break;
+#if FILC_HAS_FIBER_CONTEXT
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
+        filc_fiber_context_destruct(
+            (filc_fiber_context*)filc_object_special_payload_with_manual_tracking(object));
+        break;
+#endif /* FILC_HAS_FIBER_CONTEXT */
     default:
         PAS_ASSERT(!"Encountered object in destructor space that should not have destructor.");
         break;
@@ -853,12 +884,15 @@ static void verify_marking(void)
     filc_thread** threads;
     size_t num_threads;
     filc_snapshot_threads(&threads, &num_threads);
-    
+
     size_t index;
+    /* See https://github.com/pizlonator/fil-c/issues/240 for why we lock the handshake lock. */
+    filc_handshake_lock_lock();
     for (index = num_threads; index--;) {
         if (filc_thread_participates_in_pollchecks(threads[index]))
             filc_thread_stop_allocators(threads[index]);
     }
+    filc_handshake_lock_unlock();
     
     filc_mark_stack verify_stack;
     filc_mark_stack_construct(&verify_stack);
@@ -934,6 +968,8 @@ static void mark_and_start_censusing(void)
 
     if (fugc_verbose >= VERBOSE_CYCLES)
         mark_end_time = pas_get_time_in_milliseconds();
+
+    PAS_ASSERT(filc_current_marking_state == filc_not_marking);
 
     /* We need the after_marking_pollcheck_callback to execute after marking no matter what, so that's
        why we don't do the set size based optimization to avoid it. */
@@ -1044,7 +1080,7 @@ static void census_and_start_reviving(void)
         finalizer_size = 0;
     else {
         verse_heap_object_set_start_iterate_before_handshake(fugc_finalizer_set);
-        filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+        filc_soft_handshake(stop_allocators_during_post_mark_pollcheck_callback, NULL);
         finalizer_size = verse_heap_object_set_start_iterate_after_handshake(fugc_finalizer_set);
     }
     finalizer_index = 0;
@@ -1132,7 +1168,7 @@ static void remark_and_start_recensusing(void)
         finalizer_size = 0;
     else {
         verse_heap_object_set_start_iterate_before_handshake(fugc_finalizer_set);
-        filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+        filc_soft_handshake(stop_allocators_during_post_mark_pollcheck_callback, NULL);
         finalizer_size = verse_heap_object_set_start_iterate_after_handshake(fugc_finalizer_set);
     }
     finalizer_index = 0;
@@ -1175,7 +1211,7 @@ static void recensus_and_start_destructing(void)
     PAS_ASSERT(destruct_size == SIZE_MAX);
     PAS_ASSERT(destruct_index == SIZE_MAX);
     verse_heap_object_set_start_iterate_before_handshake(fugc_destructor_set);
-    filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+    filc_soft_handshake(stop_allocators_during_post_mark_pollcheck_callback, NULL);
     fugc_has_unfinished_census = false;
     destruct_size = verse_heap_object_set_start_iterate_after_handshake(fugc_destructor_set);
     destruct_index = 0;
@@ -1217,7 +1253,7 @@ static void destruct_and_start_scribbling(void)
         PAS_ASSERT(scribble_size == SIZE_MAX);
         PAS_ASSERT(scribble_index == SIZE_MAX);
         verse_heap_object_set_start_iterate_before_handshake(fugc_scribble_set);
-        filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+        filc_soft_handshake(stop_allocators_during_post_mark_pollcheck_callback, NULL);
         scribble_size = verse_heap_object_set_start_iterate_after_handshake(fugc_scribble_set);
         scribble_index = 0;
     }
@@ -1276,7 +1312,7 @@ static void scribble_and_start_sweeping(void)
         filc_soft_handshake(turn_off_allocating_black_pollcheck_callback, NULL);
 
     verse_heap_start_sweep_before_handshake();
-    filc_soft_handshake(stop_allocators_pollcheck_callback, NULL);
+    filc_soft_handshake(stop_allocators_during_post_mark_pollcheck_callback, NULL);
     PAS_ASSERT(!filc_mark_stack_num_objects(&fugc_global_stack));
     filc_mark_stack_reset(&fugc_global_stack);
 
@@ -1404,9 +1440,22 @@ static pas_thread_return_type collector_thread(void* arg)
     while (!(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND)) {
         if ((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE)) {
             if (fugc_verbose >= VERBOSE_PHASES)
-                pas_log("[%d] fugc: handshaking with mutator\n", pas_getpid());
+                pas_log("[%d] fugc: handshaking\n", pas_getpid());
             pas_system_mutex_lock(&collector_thread_state_lock);
+            PAS_ASSERT((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE));
+            PAS_ASSERT(handshake_callback);
+
+            /* The current handshake protocol requires us to wait until all worker threads are
+               suspended before we handshake. */
+            while (num_worker_threads_alive() > 1) {
+                pas_system_condition_wait(&collector_thread_state_cond,
+                                          &collector_thread_state_lock);
+            }
+            
+            handshake_callback(handshake_callback_arg);
             collector_control_request &= ~COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
+            handshake_callback = NULL;
+            handshake_callback_arg = NULL;
             pas_system_condition_broadcast(&collector_thread_state_cond);
             pas_system_mutex_unlock(&collector_thread_state_lock);
         }
@@ -1561,12 +1610,15 @@ void fugc_initialize_collector(void)
 void fugc_suspend(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
+    PAS_ASSERT(!threads_locked);
     if (collector_suspend_count++) {
         pas_system_mutex_unlock(&collector_thread_state_lock);
         return;
     }
     PAS_ASSERT(collector_thread_is_running);
-    PAS_ASSERT(!(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND));
+    /* FIXME: You could imagine having these different requests running concurrently. But we don't
+       allow it right now. */
+    PAS_ASSERT(!collector_control_request);
     collector_control_request |= COLLECTOR_CONTROL_REQUEST_SUSPEND;
     pas_system_condition_broadcast(&collector_thread_state_cond);
     while (collector_thread_is_running || num_worker_threads_alive() > 1)
@@ -1577,31 +1629,49 @@ void fugc_suspend(void)
 void fugc_resume(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
+    PAS_ASSERT(!threads_locked);
     if (--collector_suspend_count) {
         pas_system_mutex_unlock(&collector_thread_state_lock);
         return;
     }
     PAS_ASSERT(!collector_thread_is_running);
-    PAS_ASSERT(collector_control_request & COLLECTOR_CONTROL_REQUEST_SUSPEND);
+    PAS_ASSERT(collector_control_request == COLLECTOR_CONTROL_REQUEST_SUSPEND);
     collector_control_request &= ~COLLECTOR_CONTROL_REQUEST_SUSPEND;
     collector_thread_is_running = true;
     create_thread();
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }
 
-void fugc_handshake(void)
+void fugc_lock_threads(void)
 {
     pas_system_mutex_lock(&collector_thread_state_lock);
-    PAS_ASSERT(completed_cycle <= requested_cycle);
-    if (requested_cycle == completed_cycle) {
-        pas_system_mutex_unlock(&collector_thread_state_lock);
-        return;
-    }
-    collector_control_request |= COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
+    /* FIXME: Maybe it's better to wait until threads are not suspended? */
+    PAS_ASSERT(!collector_suspend_count);
+    threads_locked = true;
+    pas_system_mutex_unlock(&collector_thread_state_lock);
+}
+
+void fugc_handshake(void (*callback)(void* arg), void* arg)
+{
+    PAS_ASSERT(callback);
+    pas_system_mutex_lock(&collector_thread_state_lock);
+    /* FIXME: Maybe it's better to wait until threads are not suspended? */
+    PAS_ASSERT(!collector_suspend_count);
+    /* FIXME: You could imagine having these different requests running concurrently. But we don't
+       allow it right now. */
+    PAS_ASSERT(!collector_control_request);
+    
+    collector_control_request = COLLECTOR_CONTROL_REQUEST_HANDSHAKE;
+    PAS_ASSERT(!handshake_callback);
+    PAS_ASSERT(!handshake_callback_arg);
+    handshake_callback = callback;
+    handshake_callback_arg = arg;
     pas_system_condition_broadcast(&collector_thread_state_cond);
-    while ((collector_control_request & COLLECTOR_CONTROL_REQUEST_HANDSHAKE)
-           && collector_thread_is_running)
+    while (collector_control_request == COLLECTOR_CONTROL_REQUEST_HANDSHAKE)
         pas_system_condition_wait(&collector_thread_state_cond, &collector_thread_state_lock);
+    PAS_ASSERT(!handshake_callback);
+    PAS_ASSERT(!handshake_callback_arg);
+    
     pas_system_mutex_unlock(&collector_thread_state_lock);
 }
 

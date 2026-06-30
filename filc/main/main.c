@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -25,6 +25,10 @@
 
 #include <stdlib.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef USE_LIBC
 #error "Must define USE_LIBC"
 #endif
@@ -37,6 +41,10 @@ void pizlonated_main();
 void filc_start_program(int argc, char** argv,
                         void (*pizlonated___libc_start_main)(),
                         void (*pizlonated_main)());
+
+#ifdef __cplusplus
+}
+#endif
 
 int main(int argc, char** argv)
 {

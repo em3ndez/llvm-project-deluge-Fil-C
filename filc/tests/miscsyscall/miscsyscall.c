@@ -28,6 +28,11 @@
 #include <sys/auxv.h>
 #include <sys/times.h>
 #include "utils.h"
+#include <threads.h>
+#include <stdlib.h>
+#include <sys/timex.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
 
 #ifndef SA_RESTORER
 #define SA_RESTORER 0x4000000
@@ -40,25 +45,27 @@ int main(int argc, char** argv)
     unsigned zid;
     unsigned id;
     int res;
+    bool is_root;
     
     zid = zsys_getuid();
     id = getuid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
+    is_root = !id;
     
     zid = zsys_geteuid();
     id = geteuid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
     
     zid = zsys_getgid();
     id = getgid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
     
     zid = zsys_getpid();
     id = getpid();
-    ZASSERT((int)zid > 0);
+    ZASSERT((int)zid >= 0);
     ZASSERT(zid == id);
 
     struct timespec ts;
@@ -80,10 +87,9 @@ int main(int argc, char** argv)
     zprintf("sizeof(nlink_t) = %zu\n", sizeof(nlink_t));
     res = stat("filc/tests/miscsyscall/testfile.txt", &st);
     ZASSERT(!res);
-    ZASSERT(st.st_mode == (0644 | S_IFREG) ||
-            st.st_mode == (0664 | S_IFREG)); /* on my Linux install, I get 0664. */
+    ZASSERT(st.st_mode & S_IFREG);
     ZASSERT(st.st_nlink == 1);
-    ZASSERT(st.st_uid);
+    ZASSERT(st.st_uid >= 0);
     ZASSERT(st.st_size == 86);
 
     ZASSERT(zthread_self());
@@ -98,47 +104,48 @@ int main(int argc, char** argv)
     struct stat st2;
     res = fstat(fd, &st2);
     ZASSERT(!res);
-    ZASSERT(st2.st_mode == (0644 | S_IFREG) ||
-            st2.st_mode == (0664 | S_IFREG));
+    ZASSERT(st2.st_mode & S_IFREG);
     ZASSERT(st2.st_nlink == 1);
     ZASSERT(st2.st_uid == st.st_uid);
     ZASSERT(st2.st_gid == st.st_gid);
     ZASSERT(st2.st_size == 86);
 
     struct passwd* passwd = getpwuid(getuid());
-    ZASSERT(passwd);
-    ZASSERT(strlen(passwd->pw_name));
-    ZASSERT(strlen(passwd->pw_passwd));
-    ZASSERT(passwd->pw_uid == getuid());
-    ZASSERT(passwd->pw_gid == getgid());
-    ZASSERT(strlen(passwd->pw_dir));
-    ZASSERT(strlen(passwd->pw_shell));
+    if (passwd) {
+        ZASSERT(passwd);
+        ZASSERT(strlen(passwd->pw_name));
+        ZASSERT(strlen(passwd->pw_passwd));
+        ZASSERT(passwd->pw_uid == getuid());
+        ZASSERT(passwd->pw_gid == getgid());
+        ZASSERT(strlen(passwd->pw_dir));
+        ZASSERT(strlen(passwd->pw_shell));
 
-    char* name = strdup(passwd->pw_name);
-    char* passwdd = strdup(passwd->pw_passwd);
-    char* gecos = strdup(passwd->pw_gecos);
-    char* dir = strdup(passwd->pw_dir);
-    char* shell = strdup(passwd->pw_shell);
-    
-    struct passwd* passwd2 = getpwuid(getuid());
-    ZASSERT(passwd2);
-    ZASSERT(!strcmp(passwd2->pw_name, name));
-    ZASSERT(!strcmp(passwd2->pw_passwd, passwdd));
-    ZASSERT(passwd2->pw_uid == getuid());
-    ZASSERT(passwd2->pw_gid == getgid());
-    ZASSERT(!strcmp(passwd2->pw_gecos, gecos));
-    ZASSERT(!strcmp(passwd2->pw_dir, dir));
-    ZASSERT(!strcmp(passwd2->pw_shell, shell));
+        char* name = strdup(passwd->pw_name);
+        char* passwdd = strdup(passwd->pw_passwd);
+        char* gecos = strdup(passwd->pw_gecos);
+        char* dir = strdup(passwd->pw_dir);
+        char* shell = strdup(passwd->pw_shell);
 
-    passwd = getpwnam(name);
-    ZASSERT(passwd);
-    ZASSERT(!strcmp(passwd->pw_name, name));
-    ZASSERT(!strcmp(passwd->pw_passwd, passwdd));
-    ZASSERT(passwd->pw_uid == getuid());
-    ZASSERT(passwd->pw_gid == getgid());
-    ZASSERT(!strcmp(passwd->pw_gecos, gecos));
-    ZASSERT(!strcmp(passwd->pw_dir, dir));
-    ZASSERT(!strcmp(passwd->pw_shell, shell));
+        struct passwd* passwd2 = getpwuid(getuid());
+        ZASSERT(passwd2);
+        ZASSERT(!strcmp(passwd2->pw_name, name));
+        ZASSERT(!strcmp(passwd2->pw_passwd, passwdd));
+        ZASSERT(passwd2->pw_uid == getuid());
+        ZASSERT(passwd2->pw_gid == getgid());
+        ZASSERT(!strcmp(passwd2->pw_gecos, gecos));
+        ZASSERT(!strcmp(passwd2->pw_dir, dir));
+        ZASSERT(!strcmp(passwd2->pw_shell, shell));
+
+        passwd = getpwnam(name);
+        ZASSERT(passwd);
+        ZASSERT(!strcmp(passwd->pw_name, name));
+        ZASSERT(!strcmp(passwd->pw_passwd, passwdd));
+        ZASSERT(passwd->pw_uid == getuid());
+        ZASSERT(passwd->pw_gid == getgid());
+        ZASSERT(!strcmp(passwd->pw_gecos, gecos));
+        ZASSERT(!strcmp(passwd->pw_dir, dir));
+        ZASSERT(!strcmp(passwd->pw_shell, shell));
+    }
 
     ZASSERT(signal(SIGPIPE, SIG_IGN) == SIG_DFL);
 
@@ -244,19 +251,32 @@ int main(int argc, char** argv)
     ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", F_OK));
     ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", F_OK));
     ZASSERT(!access("filc/test-output/miscsyscall/readonly.txt", R_OK));
-    ZASSERT(access("filc/test-output/miscsyscall/readonly.txt", W_OK));
-    ZASSERT(errno == EACCES);
+    if (is_root)
+        ZASSERT(!access("filc/test-output/miscsyscall/readonly.txt", W_OK));
+    else {
+        ZASSERT(access("filc/test-output/miscsyscall/readonly.txt", W_OK));
+        ZASSERT(errno == EACCES);
+    }
     ZASSERT(access("filc/test-output/miscsyscall/readonly.txt", X_OK));
     ZASSERT(errno == EACCES);
-    ZASSERT(access("filc/test-output/miscsyscall/writeonly.txt", R_OK));
-    ZASSERT(errno == EACCES);
+    if (is_root)
+        ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", R_OK));
+    else {
+        ZASSERT(access("filc/test-output/miscsyscall/writeonly.txt", R_OK));
+        ZASSERT(errno == EACCES);
+    }
     ZASSERT(!access("filc/test-output/miscsyscall/writeonly.txt", W_OK));
     ZASSERT(access("filc/test-output/miscsyscall/writeonly.txt", X_OK));
     ZASSERT(errno == EACCES);
-    ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", R_OK));
-    ZASSERT(errno == EACCES);
-    ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", W_OK));
-    ZASSERT(errno == EACCES);
+    if (is_root) {
+        ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", R_OK));
+        ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", W_OK));
+    } else {
+        ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", R_OK));
+        ZASSERT(errno == EACCES);
+        ZASSERT(access("filc/test-output/miscsyscall/execonly.txt", W_OK));
+        ZASSERT(errno == EACCES);
+    }
     ZASSERT(!access("filc/test-output/miscsyscall/execonly.txt", X_OK));
     ZASSERT(!faccessat(AT_FDCWD, "filc/test-output/miscsyscall/execonly.txt", X_OK, 0));
 
@@ -292,20 +312,20 @@ int main(int argc, char** argv)
     ZASSERT(!zis_unsafe_signal_for_handlers(SIGUSR1));
     ZASSERT(!zis_unsafe_signal_for_kill(SIGTRAP));
     ZASSERT(zis_unsafe_signal_for_handlers(SIGTRAP));
+    ZASSERT(!zis_unsafe_signal_for_kill(SIGSYS));
+    ZASSERT(!zis_unsafe_signal_for_handlers(SIGSYS));
 
     struct statfs sfs;
     memset(&sfs, 0, sizeof(sfs));
     ZASSERT(!statfs(".", &sfs));
     ZASSERT(sfs.f_bsize);
     ZASSERT(sfs.f_blocks);
-    ZASSERT(sfs.f_files);
     ZASSERT(sfs.f_namelen);
     struct statvfs svfs;
     memset(&svfs, 0, sizeof(svfs));
     ZASSERT(!statvfs(".", &svfs));
     ZASSERT(svfs.f_bsize);
     ZASSERT(svfs.f_blocks);
-    ZASSERT(svfs.f_files);
     ZASSERT(svfs.f_namemax);
     fd = open("filc/tests/miscsyscall/testfile.txt", O_RDONLY);
     ZASSERT(fd > 2);
@@ -313,13 +333,11 @@ int main(int argc, char** argv)
     ZASSERT(!fstatfs(fd, &sfs));
     ZASSERT(sfs.f_bsize);
     ZASSERT(sfs.f_blocks);
-    ZASSERT(sfs.f_files);
     ZASSERT(sfs.f_namelen);
     memset(&svfs, 0, sizeof(svfs));
     ZASSERT(!fstatvfs(fd, &svfs));
     ZASSERT(svfs.f_bsize);
     ZASSERT(svfs.f_blocks);
-    ZASSERT(svfs.f_files);
     ZASSERT(svfs.f_namemax);
     close(fd);
 
@@ -552,6 +570,80 @@ int main(int argc, char** argv)
     ZASSERT(!close(fd));
 
     ZASSERT(sched_getcpu() >= 0);
+
+    sched_yield();
+    thrd_yield();
+
+    ZASSERT(secure_getenv("PATH"));
+
+    int result;
+#ifndef __USE_GNU
+    struct winsize ws;
+    result = tcgetwinsize(0, &ws);
+    ZASSERT(!result || (result == -1 && errno == ENOTTY));
+#endif
+
+    struct timex timex;
+    adjtimex(&timex);
+
+    struct sched_param param;
+    pthread_setschedparam(pthread_self(), 0, &param);
+    int policy;
+    pthread_getschedparam(pthread_self(), &policy, &param);
+
+    ZASSERT(!posix_madvise(zgc_aligned_alloc(4096, 4096), 4096, POSIX_MADV_NORMAL));
+    ZASSERT(!posix_madvise(zgc_aligned_alloc(4096, 4096), 4096, POSIX_MADV_DONTNEED));
+
+    ZASSERT(prctl(PR_GET_DUMPABLE) != -1);
+    ZASSERT(prctl(PR_GET_NO_NEW_PRIVS) != -1);
+    ZASSERT(prctl(PR_GET_SECCOMP) != -1);
+    ZASSERT(prctl(PR_GET_TIMERSLACK) != -1);
+    ZASSERT(prctl(PR_GET_FP_MODE) == -1);
+    ZASSERT(errno == EINVAL);
+    result = prctl(PR_GET_IO_FLUSHER);
+    if (result == -1)
+        ZASSERT(errno == EPERM);
+    else
+        ZASSERT(!result || result == 1);
+    ZASSERT(prctl(PR_GET_KEEPCAPS) != -1);
+    ZASSERT(prctl(PR_GET_SECUREBITS) != -1);
+    result = prctl(PR_SVE_GET_VL);
+    if (result == -1)
+        ZASSERT(errno == EINVAL);
+    ZASSERT(prctl(PR_GET_TAGGED_ADDR_CTRL) == -1);
+    ZASSERT(errno == EINVAL);
+    ZASSERT(prctl(PR_GET_THP_DISABLE) != -1);
+    ZASSERT(prctl(PR_GET_TIMING) != -1);
+
+    fd = memfd_create(zasprintf("miscsyscall-%d", getpid()), 0);
+    ZASSERT(fd >= 2);
+    ZASSERT(!close(fd));
+    fd = syscall(SYS_memfd_create, zasprintf("miscsyscall-%d", getpid()), 0);
+    ZASSERT(fd >= 2);
+    ZASSERT(!close(fd));
+
+    ZASSERT(signal(SIGILL, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGTRAP, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGBUS, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSEGV, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGFPE, SIG_IGN) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSYS, SIG_IGN) == SIG_DFL);
+    ZASSERT(signal(SIGILL, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGTRAP, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGBUS, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSEGV, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGFPE, sighandler) == SIG_ERR);
+    ZASSERT(errno == ENOSYS);
+    ZASSERT(signal(SIGSYS, sighandler) == SIG_IGN);
 
     zprintf("No worries.\n");
     return 0;

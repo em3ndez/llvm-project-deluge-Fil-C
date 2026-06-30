@@ -18,6 +18,7 @@
 #	include "crc_x86_clmul.h"
 #endif
 
+#include <stdfil.h>
 
 #ifdef CRC64_GENERIC
 
@@ -139,7 +140,12 @@ lzma_crc64(const uint8_t *buf, size_t size, uint64_t crc)
 	if (size <= 16)
 		return crc64_generic(buf, size, crc);
 #endif
-	return crc64_func(buf, size, crc);
+
+        if (!zinbounds(zmkptr(buf, (uintptr_t)buf & -16)) ||
+            !zinbounds(zmkptr(buf, (((uintptr_t)buf + size + 15) & -16) - 1)))
+                return crc64_generic(buf, size, crc);
+
+        return crc64_func(buf, size, crc);
 
 #elif defined(CRC64_ARCH_OPTIMIZED)
 	// If arch-optimized version is used unconditionally without runtime

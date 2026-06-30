@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -61,8 +61,16 @@ long double zmath_remainderl(long double x, long double y);
 long long zmath_llrintl(long double value);
 long double zmath_log1pl(long double value);
 long double zmath_nearbyintl(long double value);
+long double zmath_acosl(long double value);
+long double zmath_atan2l(long double y, long double x);
+long double zmath_atanl(long double value);
+long double zmath_logbl(long double value);
+long double zmath_significandl(long double value);
 unsigned zmath_getcw(void);
 void zmath_setcw(unsigned cw);
+void zmath_feclearexcept(int excepts);
+int zmath_feenableexcept(int excepts);
+int zmath_fetestexcept(int excepts);
 
 #ifdef __cplusplus
 }

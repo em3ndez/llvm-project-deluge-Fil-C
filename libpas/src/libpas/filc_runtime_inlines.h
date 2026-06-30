@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2025-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -132,7 +133,7 @@ static PAS_ALWAYS_INLINE void filc_ptr_table_mark_outgoing_ptrs(filc_ptr_table* 
             PAS_ASSERT(new_free_indices_capacity > ptr_table->free_indices_capacity);
 
             uintptr_t* new_free_indices =
-                bmalloc_allocate(sizeof(uintptr_t) * new_free_indices_capacity);
+                (uintptr_t*)bmalloc_allocate(sizeof(uintptr_t) * new_free_indices_capacity);
             memcpy(new_free_indices, ptr_table->free_indices,
                    sizeof(uintptr_t) * ptr_table->num_free_indices);
 
@@ -201,7 +202,7 @@ static PAS_ALWAYS_INLINE bool filc_weak_load_barrier(filc_thread* my_thread, fil
             filc_barrier_slow(my_thread, filc_ptr_object(result));
             return true;
         case filc_terminating:
-            pas_compare_and_swap_uint32_weak(&filc_current_marking_state,
+            pas_compare_and_swap_uint32_weak((uint32_t*)&filc_current_marking_state,
                                              (unsigned)filc_terminating,
                                              (unsigned)filc_marking);
             break;
@@ -420,6 +421,125 @@ static PAS_ALWAYS_INLINE void filc_closure_mark_outgoing_ptrs(filc_closure* clos
     marker.mark_or_free_flight(stack, &closure->data_ptr);
 }
 
+static PAS_ALWAYS_INLINE void filc_mark_outgoing_ptrs_in_frames(filc_frame* top_frame,
+                                                                const filc_marker marker,
+                                                                filc_mark_stack* stack)
+{
+    static const bool verbose = false;
+    
+    filc_frame* frame;
+    for (frame = top_frame; frame; frame = frame->parent) {
+        PAS_ASSERT(frame->origin);
+        const filc_function_origin* function_origin = filc_origin_get_function_origin(frame->origin);
+        PAS_ASSERT(function_origin);
+        if (verbose) {
+            pas_log("Marking roots in frame %p for ", frame);
+            filc_origin_dump_all_inline(frame->origin, "; ", pas_log_stream);
+            pas_log(" with num_lowers_ish = %u, has_setjmps = %s, num_stack_auxes = %u\n",
+                    function_origin->base.num_lowers_ish,
+                    function_origin->has_setjmps ? "yes" : "no",
+                    function_origin->num_stack_auxes);
+        }
+        PAS_ASSERT(function_origin->base.num_lowers_ish < UINT_MAX);
+        size_t index;
+        for (index = function_origin->base.num_lowers_ish; index--;) {
+            if (verbose)
+                pas_log("Marking lower[%zu] = %p\n", index, frame->lowers[index]);
+            if (filc_function_origin_lower_index_is_stack_aux(function_origin, index)) {
+                filc_stack_aux* stack_aux = (filc_stack_aux*)frame->lowers[index];
+                if (!stack_aux) {
+                    if (verbose)
+                        pas_log("Skipping null stack aux\n");
+                    continue;
+                }
+                if (verbose) {
+                    pas_log("Marking stack aux %p with num_lowers = %zu\n",
+                            stack_aux, stack_aux->num_lowers);
+                }
+                PAS_ASSERT(stack_aux->num_lowers < UINT_MAX);
+                size_t aux_index;
+                for (aux_index = stack_aux->num_lowers; aux_index--;) {
+                    if (verbose)
+                        pas_log("Marking thread root in stack aux %p\n", stack_aux->lowers[aux_index]);
+                    marker.mark(stack, filc_object_for_lower(stack_aux->lowers[aux_index]));
+                }
+                continue;
+            }
+            if (verbose)
+                pas_log("Marking thread root %p\n", frame->lowers[index]);
+            marker.mark(stack, filc_object_for_lower(frame->lowers[index]));
+        }
+    }
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_outgoing_ptrs_in_native_frames(
+    filc_native_frame* top_native_frame,
+    const filc_marker marker,
+    filc_mark_stack* stack)
+{
+    filc_native_frame* native_frame;
+    for (native_frame = top_native_frame;
+         native_frame;
+         native_frame = native_frame->parent) {
+        size_t index;
+        for (index = native_frame->size; index--;) {
+            uintptr_t encoded_ptr = native_frame->array[index];
+            if ((encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_TRACKED_PTR) {
+                marker.mark(
+                    stack, (filc_object*)(encoded_ptr & ~FILC_NATIVE_FRAME_PTR_MASK));
+            } else {
+                PAS_TESTING_ASSERT(
+                    (encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_BMALLOC_PTR);
+            }
+        }
+    }
+}
+
+static PAS_ALWAYS_INLINE void filc_mark_outgoing_ptrs_in_allocation_roots(
+    filc_raw_ptr_array* allocation_roots,
+    const filc_marker marker)
+{
+    size_t index;
+    for (index = allocation_roots->size; index--;) {
+        void* allocation_root = allocation_roots->array[index];
+        /* Allocation roots have to have the mark bit set without being put on any mark stack, since
+           they have no outgoing references and they are not ready for scanning. */
+        marker.set_is_marked(allocation_root);
+    }
+}
+
+#if FILC_HAS_FIBER_CONTEXT
+static PAS_ALWAYS_INLINE void filc_fiber_context_mark_saved_state_holding_lock(
+    filc_fiber_context* fiber_context,
+    const filc_marker marker,
+    filc_mark_stack* stack)
+{
+    switch (fiber_context->state) {
+    case filc_fiber_context_runnable:
+        filc_mark_outgoing_ptrs_in_frames(fiber_context->top_frame, marker, stack);
+        filc_mark_outgoing_ptrs_in_native_frames(fiber_context->top_native_frame, marker, stack);
+        filc_mark_outgoing_ptrs_in_allocation_roots(&fiber_context->allocation_roots, marker);
+        break;
+    default:
+        break;
+    }
+    fiber_context->is_grey = false;
+}
+
+static PAS_ALWAYS_INLINE void filc_fiber_context_mark_outgoing_ptrs(filc_fiber_context* fiber_context,
+                                                                    const filc_marker marker,
+                                                                    filc_mark_stack* stack)
+{
+    marker.mark_or_free_flight(stack, &fiber_context->closure_ptr);
+    marker.mark_or_free_flight(stack, &fiber_context->bound_sigset_ptr);
+    marker.mark(stack, filc_object_for_special_payload(fiber_context->owning_thread));
+    marker.mark(stack, filc_object_for_special_payload(fiber_context->stack_owner));
+    pas_lock_lock(&fiber_context->lock);
+    filc_fiber_context_mark_saved_state_holding_lock(fiber_context, marker, stack);
+    pas_lock_unlock(&fiber_context->lock);
+}
+#endif /* FILC_HAS_FIBER_CONTEXT */
+
 static PAS_ALWAYS_INLINE void filc_mark_global_roots(const filc_marker marker, filc_mark_stack* stack)
 {
     size_t index;
@@ -469,66 +589,42 @@ static PAS_ALWAYS_INLINE void filc_thread_mark_roots(filc_thread* my_thread,
     
     filc_thread_assert_participates_in_pollchecks(my_thread);
 
+    filc_mark_outgoing_ptrs_in_allocation_roots(&my_thread->allocation_roots, marker);
+    filc_mark_outgoing_ptrs_in_frames(my_thread->top_frame, marker, stack);
+    filc_mark_outgoing_ptrs_in_native_frames(my_thread->top_native_frame, marker, stack);
+
     size_t index;
-    for (index = my_thread->allocation_roots.size; index--;) {
-        void* allocation_root = my_thread->allocation_roots.array[index];
-        /* Allocation roots have to have the mark bit set without being put on any mark stack, since
-           they have no outgoing references and they are not ready for scanning. */
-        marker.set_is_marked(allocation_root);
-    }
-
-    filc_frame* frame;
-    for (frame = my_thread->top_frame; frame; frame = frame->parent) {
-        PAS_ASSERT(frame->origin);
-        const filc_function_origin* function_origin = filc_origin_get_function_origin(frame->origin);
-        PAS_ASSERT(function_origin);
-        if (verbose) {
-            pas_log("Marking roots for ");
-            filc_origin_dump_all_inline(frame->origin, "; ", pas_log_stream);
-            pas_log("\n");
-        }
-        PAS_ASSERT(function_origin->base.num_lowers_ish < UINT_MAX);
-        for (index = function_origin->base.num_lowers_ish; index--;) {
-            if (verbose)
-                pas_log("Marking thread root %p\n", frame->lowers[index]);
-            marker.mark(stack, filc_object_for_lower(frame->lowers[index]));
-        }
-    }
-
-    filc_native_frame* native_frame;
-    for (native_frame = my_thread->top_native_frame;
-         native_frame;
-         native_frame = native_frame->parent) {
-        for (index = native_frame->size; index--;) {
-            uintptr_t encoded_ptr = native_frame->array[index];
-            if ((encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_TRACKED_PTR) {
-                marker.mark(
-                    stack, (filc_object*)(encoded_ptr & ~FILC_NATIVE_FRAME_PTR_MASK));
-            } else {
-                PAS_TESTING_ASSERT(
-                    (encoded_ptr & FILC_NATIVE_FRAME_PTR_MASK) == FILC_NATIVE_FRAME_BMALLOC_PTR);
-            }
-        }
-    }
-
     for (index = FILC_NUM_UNWIND_REGISTERS; index--;)
         PAS_ASSERT(filc_ptr_is_totally_null(my_thread->unwind_registers[index]));
 
     for (index = filc_object_array_num_objects(&my_thread->thread_locals); index--;)
         marker.mark(stack, filc_object_array_at(&my_thread->thread_locals, index));
+
+#if FILC_HAS_FIBER_CONTEXT
+    for (index = my_thread->grey_fibers.size; index--;) {
+        filc_fiber_context* fiber_context = (filc_fiber_context*)my_thread->grey_fibers.array[index];
+        pas_lock_lock(&fiber_context->lock);
+        if (fiber_context->is_grey)
+            filc_fiber_context_mark_saved_state_holding_lock(fiber_context, marker, stack);
+        pas_lock_unlock(&fiber_context->lock);
+    }
+    filc_raw_ptr_array_reset(&my_thread->grey_fibers);
+#endif /* FILC_HAS_FIBER_CONTEXT */
 }
 
 static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_special_ptrs(filc_object* object,
+                                                                     uintptr_t aux,
                                                                      const filc_marker marker,
                                                                      filc_mark_stack* stack)
 {
-    PAS_TESTING_ASSERT(filc_object_is_special(object));
-    filc_special_type special_type = filc_object_special_type(object);
+    filc_object_flags flags = filc_aux_get_flags(aux);
+    PAS_TESTING_ASSERT(filc_object_flags_is_special(flags));
+    filc_special_type special_type = filc_object_flags_special_type(flags);
     switch (special_type) {
     case FILC_SPECIAL_TYPE_DL_HANDLE:
         break;
     case FILC_SPECIAL_TYPE_FUNCTION:
-        if ((filc_object_get_flags(object) & FILC_OBJECT_FLAG_CLOSURE)) {
+        if (!(flags & FILC_OBJECT_FLAG_READONLY)) {
             filc_closure_mark_outgoing_ptrs(
                 (filc_closure*)filc_object_special_payload_with_manual_tracking(object),
                 marker, stack);
@@ -578,6 +674,13 @@ static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_special_ptrs(filc_object
             (filc_finalizer_queue*)filc_object_special_payload_with_manual_tracking(object),
             marker, stack);
         break;
+#if FILC_HAS_FIBER_CONTEXT
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
+        filc_fiber_context_mark_outgoing_ptrs(
+            (filc_fiber_context*)filc_object_special_payload_with_manual_tracking(object),
+            marker, stack);
+        break;
+#endif /* FILC_HAS_FIBER_CONTEXT */
     default:
         pas_log("Got a bad special ptr type: ");
         filc_special_type_dump(special_type, pas_log_stream);
@@ -661,20 +764,22 @@ static PAS_ALWAYS_INLINE void filc_object_mark_outgoing_ptrs(filc_object* object
     if (verbose)
         pas_log("Marking outgoing objects from %p\n", object);
 
-    if (PAS_UNLIKELY(filc_object_get_flags(object) & FILC_OBJECT_FLAG_WEAK_KEY))
+    uintptr_t aux = filc_object_aux(object);
+    filc_object_flags flags = filc_aux_get_flags(aux);
+    if (PAS_UNLIKELY(flags & FILC_OBJECT_FLAG_WEAK_KEY))
         filc_object_mark_weak_map_values_based_on_key(object, marker, stack);
 
-    if (PAS_UNLIKELY(filc_object_is_special(object))) {
-        filc_object_mark_outgoing_special_ptrs(object, marker, stack);
+    if (PAS_UNLIKELY(filc_object_flags_is_special(flags))) {
+        filc_object_mark_outgoing_special_ptrs(object, aux, marker, stack);
         return;
     }
 
     /* It's unusual for an object without an aux ptr to be placed on the mark stack, but we forgive
        cases like this anyway, since it might happen for globals. */
-    char* aux_ptr = filc_object_aux_ptr(object);
+    char* aux_ptr = filc_aux_get_ptr(aux);
     if (PAS_UNLIKELY(!aux_ptr))
         return;
-    if (!(filc_object_get_flags(object) & FILC_OBJECT_FLAG_GLOBAL_AUX))
+    if (!(flags & FILC_OBJECT_FLAG_GLOBAL_AUX))
         marker.set_is_marked(aux_ptr);
     /* The only way for the aux to already be marked is if it's black, but then that means that all of
        the things it points to are already marked (either black-allocated atomic boxes or things

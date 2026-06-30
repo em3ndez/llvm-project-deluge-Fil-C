@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -76,8 +76,21 @@ PAS_API void fugc_initialize_collector(void); /* Called fourth. */
 PAS_API void fugc_suspend(void);
 PAS_API void fugc_resume(void);
 
-/* Needed for munmap/mprotect support. */
-PAS_API void fugc_handshake(void);
+/* Forces the FUGC to not shut down any threads and not create new threads. */
+PAS_API void fugc_lock_threads(void);
+
+/* Causes all parallel worker threads to shut down, runs the given callback on the collector thread,
+   and then lets the collector proceed as normal (which may result in the parallel worker threads
+   being restarted).
+
+   Note that if you locked threads, then the parallel worker threads will not restart.
+
+   Users of this API require a looser contract: any thread left running after this call returns has
+   either run the callback, or was created by a thread that had run the callback.
+
+   It's a strong expectation that the callback will run exactly once per thread and will never run
+   on a thread created by a thread that had already run the callback. */
+PAS_API void fugc_handshake(void (*callback)(void* arg), void* arg);
 
 enum fugc_mark_fast_result {
     fugc_mark_fast_already_marked,

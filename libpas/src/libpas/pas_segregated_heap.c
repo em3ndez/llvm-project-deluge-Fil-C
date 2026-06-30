@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2022 Apple Inc. All rights reserved.
- * Copyright (c) 2023 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -345,7 +345,7 @@ pas_segregated_size_directory* pas_segregated_heap_size_directory_for_index_slow
 }
 
 typedef struct {
-    pas_segregated_heap_medium_directory_tuple* tuple;
+    pas_segregated_heap_medium_directory_result value;
     uintptr_t dependency;
 } medium_directory_tuple_for_index_impl_result;
 
@@ -361,7 +361,7 @@ medium_directory_tuple_for_index_impl(
     
     unsigned begin;
     unsigned end;
-    pas_segregated_heap_medium_directory_tuple* best;
+    pas_segregated_heap_medium_directory_result best;
     medium_directory_tuple_for_index_impl_result result;
     
     PAS_ASSERT(rare_data);
@@ -371,7 +371,7 @@ medium_directory_tuple_for_index_impl(
     
     begin = 0;
     end = num_medium_directories;
-    best = NULL;
+    best = pas_segregated_heap_medium_directory_result_create_empty();
 
     result.dependency = (uintptr_t)medium_directories;
     
@@ -380,6 +380,7 @@ medium_directory_tuple_for_index_impl(
         pas_segregated_heap_medium_directory_tuple* directory;
         unsigned begin_index;
         unsigned end_index;
+        pas_segregated_heap_medium_directory_result result_for_current;
 
         middle = (begin + end) >> 1;
         
@@ -396,17 +397,27 @@ medium_directory_tuple_for_index_impl(
            or the tuple straddling page boundary, leading to the begin index being zero and the end_index
            having its original value. */
         if (!begin_index) {
-            result.tuple = NULL;
+            result.value = pas_segregated_heap_medium_directory_result_create_empty();
             return result;
         }
         
         end_index = directory->end_index;
         
         result.dependency += begin_index + end_index;
+
+        result_for_current.tuple = directory;
+        result_for_current.directory =
+            pas_compact_atomic_segregated_size_directory_ptr_load(&directory->directory);
+        result_for_current.allocator_index = directory->allocator_index;
+
+        /* Don't include the tuple in the dependency since you should only be using it if you're
+           holding the lock. */
+        result.dependency +=
+            (uintptr_t)result_for_current.directory + result_for_current.allocator_index;
         
         if (index < begin_index) {
             end = middle;
-            best = directory;
+            best = result_for_current;
             continue;
         }
         
@@ -415,33 +426,33 @@ medium_directory_tuple_for_index_impl(
             continue;
         }
 
-        result.tuple = directory;
+        result.value = result_for_current;
         return result;
     }
 
     switch (search_mode) {
     case pas_segregated_heap_medium_size_directory_search_within_size_class_progression:
-        result.tuple = NULL;
+        result.value = pas_segregated_heap_medium_directory_result_create_empty();
         return result;
         
     case pas_segregated_heap_medium_size_directory_search_least_greater_equal:
-        result.tuple = best;
+        result.value = best;
         return result;
     }
 
     PAS_ASSERT(!"Should not be reached");
-    result.tuple = NULL;
+    result.value = pas_segregated_heap_medium_directory_result_create_empty();
     return result;
 }
 
-static pas_segregated_heap_medium_directory_tuple*
+static pas_segregated_heap_medium_directory_result
 medium_directory_tuple_for_index_with_lock(
     pas_segregated_heap* heap,
     size_t index,
     pas_segregated_heap_medium_size_directory_search_mode search_mode,
     pas_lock_hold_mode heap_lock_hold_mode)
 {
-    pas_segregated_heap_medium_directory_tuple* result;
+    pas_segregated_heap_medium_directory_result result;
     pas_segregated_heap_rare_data* rare_data;
     pas_segregated_heap_medium_directory_tuple* medium_directories;
     
@@ -456,14 +467,14 @@ medium_directory_tuple_for_index_with_lock(
         medium_directories,
         rare_data->num_medium_directories,
         index,
-        search_mode).tuple;
+        search_mode).value;
     
     pas_heap_lock_unlock_conditionally(heap_lock_hold_mode);
     
     return result;
 }
 
-pas_segregated_heap_medium_directory_tuple*
+pas_segregated_heap_medium_directory_result
 pas_segregated_heap_medium_directory_tuple_for_index(
     pas_segregated_heap* heap,
     size_t index,
@@ -480,7 +491,7 @@ pas_segregated_heap_medium_directory_tuple_for_index(
     
     rare_data = pas_segregated_heap_rare_data_ptr_load(&heap->rare_data);
     if (!rare_data)
-        return NULL;
+        return pas_segregated_heap_medium_directory_result_create_empty();
     
     if (heap_lock_hold_mode == pas_lock_is_held) {
         return medium_directory_tuple_for_index_with_lock(
@@ -503,9 +514,9 @@ pas_segregated_heap_medium_directory_tuple_for_index(
     
     if (pas_mutation_count_matches_with_dependency(
             &rare_data->mutation_count, saved_count, result.dependency)) {
-        if (verbose && !result.tuple)
+        if (verbose && !result.value.directory)
             pas_log("did not find tuple\n");
-        return result.tuple;
+        return result.value;
     }
     
     return medium_directory_tuple_for_index_with_lock(
@@ -520,20 +531,16 @@ unsigned pas_segregated_heap_medium_allocator_index_for_index(
 {
     static const bool verbose = false;
     
-    pas_segregated_heap_medium_directory_tuple* medium_directory;
+    pas_segregated_heap_medium_directory_result medium_directory;
+    unsigned result;
     
     medium_directory = pas_segregated_heap_medium_directory_tuple_for_index(
         heap, index, search_mode, heap_lock_hold_mode);
     
-    if (medium_directory) {
-        unsigned result;
-        result = medium_directory->allocator_index;
-        if (verbose && !result)
-            pas_log("found null allocator index\n");
-        return result;
-    }
-    
-    return 0;
+    result = medium_directory.allocator_index;
+    if (verbose && !result)
+        pas_log("found null allocator index\n");
+    return result;
 }
 
 pas_segregated_size_directory* pas_segregated_heap_medium_size_directory_for_index(
@@ -542,15 +549,12 @@ pas_segregated_size_directory* pas_segregated_heap_medium_size_directory_for_ind
     pas_segregated_heap_medium_size_directory_search_mode search_mode,
     pas_lock_hold_mode heap_lock_hold_mode)
 {
-    pas_segregated_heap_medium_directory_tuple* medium_directory;
+    pas_segregated_heap_medium_directory_result medium_directory;
     
     medium_directory = pas_segregated_heap_medium_directory_tuple_for_index(
         heap, index, search_mode, heap_lock_hold_mode);
-    
-    if (medium_directory)
-        return pas_compact_atomic_segregated_size_directory_ptr_load(&medium_directory->directory);
-    
-    return NULL;
+
+    return medium_directory.directory;
 }
 
 static size_t compute_small_index_upper_bound(pas_segregated_heap* heap,
@@ -586,11 +590,11 @@ static void ensure_size_lookup(pas_segregated_heap* heap,
     
     index_upper_bound = compute_small_index_upper_bound(heap, config);
     
-    index_to_size_directory = pas_large_expendable_memory_allocate(
+    index_to_size_directory = (pas_compact_atomic_segregated_size_directory_ptr*)pas_large_expendable_memory_allocate(
         sizeof(pas_compact_atomic_segregated_size_directory_ptr) * index_upper_bound,
         sizeof(pas_compact_atomic_segregated_size_directory_ptr),
         "pas_segregated_heap/index_to_size_directory");
-    index_to_allocator_index = pas_large_expendable_memory_allocate(
+    index_to_allocator_index = (pas_allocator_index*)pas_large_expendable_memory_allocate(
         sizeof(pas_allocator_index) * index_upper_bound,
         sizeof(pas_allocator_index),
         "pas_segregated_heap/index_to_allocator_index");
@@ -758,7 +762,7 @@ static void rematerialize_size_lookup_set_index_to_small_allocator_index(
 {
     pas_segregated_heap* heap;
 
-    heap = arg;
+    heap = (pas_segregated_heap*)arg;
 
     PAS_ASSERT(heap->index_to_small_allocator_index);
     PAS_ASSERT(index < heap->small_index_upper_bound);
@@ -770,7 +774,7 @@ static void rematerialize_size_lookup_set_index_to_small_size_directory(
 {
     pas_segregated_heap* heap;
 
-    heap = arg;
+    heap = (pas_segregated_heap*)arg;
 
     PAS_ASSERT(heap->index_to_small_size_directory);
     PAS_ASSERT(index < heap->small_index_upper_bound);
@@ -785,7 +789,7 @@ static void rematerialize_size_lookup_set_medium_directory_tuple(
     pas_segregated_heap_rare_data* data;
     pas_segregated_heap_medium_directory_tuple* tuples;
 
-    heap = arg;
+    heap = (pas_segregated_heap*)arg;
     data = pas_segregated_heap_rare_data_ptr_load(&heap->rare_data);
     PAS_ASSERT(data);
 
@@ -908,7 +912,7 @@ pas_segregated_heap_ensure_allocator_index(
             pas_segregated_heap_medium_directory_tuple_for_index(
                 heap, index,
                 pas_segregated_heap_medium_size_directory_search_within_size_class_progression,
-                pas_lock_is_held);
+                pas_lock_is_held).tuple;
         PAS_ASSERT(medium_directory, medium_directory);
         PAS_ASSERT(
             pas_compact_atomic_segregated_size_directory_ptr_load(&medium_directory->directory)
@@ -1013,7 +1017,7 @@ static bool check_part_of_all_heaps_callback(pas_heap* heap, void* arg)
     
     check_part_of_all_heaps_data* data;
 
-    data = arg;
+    data = (check_part_of_all_heaps_data*)arg;
 
     if (verbose) {
         pas_log("all_heaps told us about %p (segregated = %p), we expect %p\n",
@@ -1035,7 +1039,7 @@ static bool check_part_of_all_segregated_heaps_callback(
 
     PAS_UNUSED_PARAM(config);
 
-    data = arg;
+    data = (check_part_of_all_heaps_data*)arg;
 
     if (heap == data->heap) {
         data->did_find = true;
@@ -1081,7 +1085,7 @@ static void check_size_lookup_recomputation_set_index_to_small_allocator_index(
 {
     check_size_lookup_recomputation_data* data;
 
-    data = arg;
+    data = (check_size_lookup_recomputation_data*)arg;
 
     PAS_ASSERT(index < data->heap->small_index_upper_bound);
     PAS_ASSERT(data->heap->index_to_small_allocator_index);
@@ -1102,7 +1106,7 @@ static void check_size_lookup_recomputation_set_index_to_small_size_directory(
 {
     check_size_lookup_recomputation_data* data;
 
-    data = arg;
+    data = (check_size_lookup_recomputation_data*)arg;
 
     PAS_ASSERT(index < data->heap->small_index_upper_bound);
     PAS_ASSERT(data->heap->index_to_small_size_directory);
@@ -1130,7 +1134,7 @@ static void check_size_lookup_recomputation_set_medium_directory_tuple(
     pas_segregated_heap_rare_data* rare_data;
     pas_segregated_heap_medium_directory_tuple* tuples;
 
-    data = arg;
+    data = (check_size_lookup_recomputation_data*)arg;
 
     PAS_ASSERT(value->begin_index);
     PAS_ASSERT(medium_tuple_index == data->num_medium_directories);
@@ -1225,9 +1229,9 @@ static void check_size_lookup_recomputation(pas_segregated_heap* heap,
 
     data.heap = heap;
     data.is_all_good = true;
-    data.seen_index_to_small_allocator_index = pas_large_utility_free_heap_allocate(
+    data.seen_index_to_small_allocator_index = (unsigned*)pas_large_utility_free_heap_allocate(
         bitvector_size, "check_size_lookup_recomputation/seen_index_to_small_allocator_index");
-    data.seen_index_to_small_size_directory = pas_large_utility_free_heap_allocate(
+    data.seen_index_to_small_size_directory = (unsigned*)pas_large_utility_free_heap_allocate(
         bitvector_size, "check_size_lookup_recomputation/seen_index_to_small_size_directory");
     data.num_medium_directories = 0;
 
@@ -1577,7 +1581,7 @@ pas_segregated_heap_ensure_size_directory_for_size(
         medium_tuple = pas_segregated_heap_medium_directory_tuple_for_index(
             heap, index,
             pas_segregated_heap_medium_size_directory_search_within_size_class_progression,
-            pas_lock_is_held);
+            pas_lock_is_held).tuple;
         if (medium_tuple) {
             pas_segregated_heap_rare_data* rare_data;
 
@@ -1698,7 +1702,7 @@ pas_segregated_heap_ensure_size_directory_for_size(
         medium_tuple = pas_segregated_heap_medium_directory_tuple_for_index(
             heap, index,
             pas_segregated_heap_medium_size_directory_search_least_greater_equal,
-            pas_lock_is_held);
+            pas_lock_is_held).tuple;
         if (medium_tuple) {
             pas_segregated_size_directory* directory;
             directory = pas_compact_atomic_segregated_size_directory_ptr_load(
@@ -2022,7 +2026,7 @@ pas_segregated_heap_ensure_size_directory_for_size(
 
             rare_data = pas_segregated_heap_rare_data_ptr_load(&heap->rare_data);
             if (!rare_data) {
-                rare_data = pas_immortal_heap_allocate(
+                rare_data = (pas_segregated_heap_rare_data*)pas_immortal_heap_allocate(
                     sizeof(pas_segregated_heap_rare_data),
                     "pas_segregated_heap_rare_data",
                     pas_object_allocation);
@@ -2039,7 +2043,7 @@ pas_segregated_heap_ensure_size_directory_for_size(
             next_tuple = pas_segregated_heap_medium_directory_tuple_for_index(
                 heap, index,
                 pas_segregated_heap_medium_size_directory_search_least_greater_equal,
-                pas_lock_is_held);
+                pas_lock_is_held).tuple;
         
             if (next_tuple &&
                 pas_compact_atomic_segregated_size_directory_ptr_load(
@@ -2093,7 +2097,7 @@ pas_segregated_heap_ensure_size_directory_for_size(
             
                     new_capacity = (rare_data->medium_directories_capacity + 1) << 1;
             
-                    new_directories = pas_compact_expendable_memory_allocate(
+                    new_directories = (pas_segregated_heap_medium_directory_tuple*)pas_compact_expendable_memory_allocate(
                         sizeof(pas_segregated_heap_medium_directory_tuple) * new_capacity,
                         PAS_ALIGNOF(pas_segregated_heap_medium_directory_tuple),
                         "pas_segregated_heap_rare_data/medium_directories");
@@ -2222,7 +2226,7 @@ static bool for_each_committed_size_directory_callback(
     pas_segregated_directory* directory;
     size_t index;
     PAS_UNUSED_PARAM(heap);
-    data = arg;
+    data = (for_each_committed_page_data*)arg;
     directory = &size_directory->base;
     for (index = 0; index < pas_segregated_directory_size(directory); ++index) {
         if (pas_segregated_directory_is_committed(directory, index)) {
@@ -2266,7 +2270,7 @@ static bool for_each_view_index_directory_callback(pas_segregated_heap* heap,
     pas_segregated_directory* directory;
     size_t index;
     PAS_UNUSED_PARAM(heap);
-    data = arg;
+    data = (for_each_view_index_data*)arg;
     directory = &size_directory->base;
     for (index = 0; index < pas_segregated_directory_size(directory); ++index) {
         if (!data->callback(
@@ -2306,7 +2310,7 @@ static bool for_each_live_object_object_callback(pas_segregated_size_directory* 
                                                  uintptr_t begin,
                                                  void* arg)
 {
-    for_each_live_object_data* data = arg;
+    for_each_live_object_data* data = (for_each_live_object_data*)arg;
     PAS_UNUSED_PARAM(view);
     return data->callback(data->heap, begin, directory->object_size, data->arg);
 }
@@ -2334,7 +2338,7 @@ static bool for_each_live_object_bitfit_callback(
 
     PAS_UNUSED_PARAM(heap);
     PAS_UNUSED_PARAM(view);
-    data = arg;
+    data = (for_each_live_object_data*)arg;
     
     return data->callback(data->heap, begin, size, data->arg);
 }
@@ -2377,10 +2381,10 @@ static bool num_committed_views_directory_callback(
     void* arg)
 {
     num_committed_views_data* data;
-    
+
     PAS_UNUSED_PARAM(heap);
 
-    data = arg;
+    data = (num_committed_views_data*)arg;
     
     data->result += pas_segregated_directory_num_committed_views(&directory->base);
     
@@ -2409,11 +2413,11 @@ static bool num_empty_views_directory_callback(
     void* arg)
 {
     num_empty_views_data* data;
-    
+
     PAS_UNUSED_PARAM(heap);
 
-    data = arg;
-    
+    data = (num_empty_views_data*)arg;
+
     data->result += pas_segregated_directory_num_empty_views(&directory->base);
     
     return true;
@@ -2444,7 +2448,7 @@ static bool num_empty_granules_directory_callback(
 
     PAS_UNUSED_PARAM(heap);
 
-    data = arg;
+    data = (num_empty_granules_data*)arg;
 
     data->result += pas_segregated_directory_num_empty_granules(&directory->base);
 
@@ -2473,10 +2477,10 @@ static bool num_views_directory_callback(
     void* arg)
 {
     num_views_data* data;
-    
+
     PAS_UNUSED_PARAM(heap);
 
-    data = arg;
+    data = (num_views_data*)arg;
     
     data->result += pas_segregated_directory_size(&directory->base);
     
@@ -2504,8 +2508,8 @@ static bool compute_summary_directory_callback(
     
     PAS_UNUSED_PARAM(heap);
 
-    summary = arg;
-    
+    summary = (pas_heap_summary*)arg;
+
     *summary = pas_heap_summary_add(
         *summary,
         pas_segregated_directory_compute_summary(&directory->base));

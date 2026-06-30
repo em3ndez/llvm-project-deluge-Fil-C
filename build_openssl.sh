@@ -28,10 +28,18 @@
 set -e
 set -x
 
-cd projects/openssl-3.3.1
+cd projects/openssl-3.5.7
 extract_source
-CC="$CCPREFIX$PWD/../../../build/bin/clang -g -O" ./Configure \
-    zlib no-asm no-devcryptoeng no-afalgeng --prefix=$PWD/../../../pizfix --libdir=lib
-$MAKE -j $NCPU
-$MAKE -j $NCPU install_sw
-$MAKE -j $NCPU install_ssldirs
+CC="$PWD/../../../build/bin/clang -g -O2" ./Configure \
+    zlib --prefix=$PWD/../../../pizfix --libdir=lib
+make -j $NCPU
+
+# Only run the test suite in a glibc build. There are a bunch of failures in the test suite in a musl
+# build.
+if test -e ../../../pizfix/lib/libc.so.6666
+then
+    HARNESS_JOBS=$NCPU make test
+fi
+
+make -j $NCPU install_sw
+make -j $NCPU install_ssldirs

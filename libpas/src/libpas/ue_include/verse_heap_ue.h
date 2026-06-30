@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -72,18 +72,6 @@ PAS_API void verse_heap_did_become_ready_for_allocation(void);
 
 PAS_API void* verse_heap_get_base(pas_heap* heap);
 PAS_API void verse_heap_add_to_set(pas_heap* heap, verse_heap_object_set* set);
-
-/* This is meant to be called as the casual case of the Verse VM allocator. It can handle any size. Note that
-   this is a different algorithm from pas_try_allocate_common.
-
-   For fast case allocation, the Verse VM should maintain its own table of local allocators for the sizes and
-   heaps it wants to use. */
-PAS_API void* verse_heap_try_allocate(pas_heap* heap, size_t size);
-PAS_API void* verse_heap_allocate(pas_heap* heap, size_t size);
-
-/* This is mean to be called as the fast case of aligned allocation. */
-PAS_API void* verse_heap_try_allocate_with_alignment(pas_heap* heap, size_t size, size_t alignment);
-PAS_API void* verse_heap_allocate_with_alignment(pas_heap* heap, size_t size, size_t alignment);
 
 /* Call this from one thread to start sweep and then do a handshake and then call the second function. */
 PAS_API void verse_heap_start_allocating_black_before_handshake(void);

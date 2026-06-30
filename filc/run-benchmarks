@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 #
-# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
 #
-# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
 # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
 # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
 # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -27,7 +28,7 @@ require 'pathname'
 require 'getoptlong'
 require 'shellwords'
 
-BASE_BENCHMARK_NAME = "PizBench9013"
+BASE_BENCHMARK_NAME = "PizBench9020"
 $benchmarkName = BASE_BENCHMARK_NAME
 
 $repeats = 10
@@ -133,7 +134,7 @@ class Stats
         if data.length <= 1
             "%.4f" % [mean]
         else
-            "%.4f += %.2f%%" % [mean, stdErrPercent]
+            "%.4f +- %.2f%%" % [mean, stdErrPercent]
         end
     end
 end
@@ -424,13 +425,6 @@ $benchmarks << Benchmark.new(
     ])
 
 $benchmarks << Benchmark.new(
-    "bin/zstd",
-    "-d < benchmarkData/libcrypto.3.dylib.zst > benchmarkOutput/libcrypto.3.dylib",
-    [
-        "diff -n benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
-    ])
-
-$benchmarks << Benchmark.new(
     "bin/dash",
     "benchmarkData/richards.sh",
     [])
@@ -439,6 +433,44 @@ $benchmarks << Benchmark.new(
     "bin/zsh",
     "benchmarkData/richards.sh",
     [])
+
+$benchmarks << Benchmark.new(
+    "bin/bash",
+    "benchmarkData/richards.sh",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/lz4",
+    "< benchmarkData/libcrypto.3.dylib > benchmarkOutput/libcrypto.3.dylib.lz4",
+    [
+        "diff -n benchmarkOutput/libcrypto.3.dylib.lz4 benchmarkData/libcrypto.3.dylib.lz4"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/perl",
+    "benchmarkData/nbody.pl 100000",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/brotli",
+    "< benchmarkData/libpizlo.dylib > benchmarkOutput/libpizlo.dylib.br",
+    [
+        "diff -q benchmarkOutput/libpizlo.dylib.br benchmarkData/libpizlo.dylib.br"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/brotli",
+    "-d < benchmarkData/libcrypto.3.dylib.br > benchmarkOutput/libcrypto.3.dylib",
+    [
+        "diff -q benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/bison",
+    "--no-lines --warnings=none --output=benchmarkOutput/bison-output.c benchmarkData/bison-grammar.y",
+    [
+      "diff -q benchmarkOutput/bison-output.c benchmarkData/bison-output.c"
+    ])
 
 $plugins.each {
     | plugin |

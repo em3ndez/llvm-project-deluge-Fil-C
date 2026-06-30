@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -50,66 +51,16 @@
 #include <unistd.h>
 #include <sys/uio.h>
 
+#define FILC_HAS_FIBER_CONTEXT PAS_GLIBC
+
+#if FILC_HAS_FIBER_CONTEXT
+#include <ucontext.h>
+#endif /* FILC_HAS_FIBER_CONTEXT */
+
 PAS_BEGIN_EXTERN_C;
 
 /* Internal FilC runtime header, defining how the FilC runtime maintains its state. */
 
-struct filc_alignment_and_offset;
-struct filc_alignment_header;
-struct filc_atomic_box;
-struct filc_aux_base_and_ptr;
-struct filc_cc_cursor;
-struct filc_cc_sizer;
-struct filc_cc_unit;
-struct filc_closure;
-struct filc_constant_relocation;
-struct filc_constexpr_node;
-struct filc_exact_ptr_table;
-struct filc_exception_and_int;
-struct filc_exception_and_ptr;
-struct filc_exception_and_void;
-struct filc_finalizer_queue;
-struct filc_frame;
-struct filc_function_origin;
-struct filc_global_initialization_work_item;
-struct filc_inline_frame;
-struct filc_inverse_weak_map_entry;
-struct filc_inverse_weak_map_key;
-struct filc_inverse_weak_map_map_entry;
-struct filc_jmp_buf;
-struct filc_lower_or_box;
-struct filc_mark_stack;
-struct filc_marker;
-struct filc_native_frame;
-struct filc_object;
-struct filc_object_array;
-struct filc_object_array_impl;
-struct filc_optimized_access_check_origin;
-struct filc_optimized_alignment_contradiction_origin;
-struct filc_origin;
-struct filc_origin_node;
-struct filc_origin_with_eh;
-struct filc_panic_context;
-struct filc_ptr;
-struct filc_ptr_array;
-struct filc_ptr_hash_map_entry;
-struct filc_ptr_table;
-struct filc_ptr_table_array;
-struct filc_ptr_uintptr_hash_map_entry;
-struct filc_raw_ptr_array;
-struct filc_rest_ptr_pair;
-struct filc_signal_handler;
-struct filc_signal_queue_chunk;
-struct filc_signal_queue_chunk_header;
-struct filc_thread;
-struct filc_uintptr_ptr_hash_map_entry;
-struct filc_weak;
-struct filc_weak_map;
-struct pas_basic_heap_runtime_config;
-struct pas_local_allocator;
-struct pas_thread_local_cache_node;
-struct pizlonated_return_value;
-struct verse_heap_object_set;
 typedef struct filc_alignment_and_offset filc_alignment_and_offset;
 typedef struct filc_alignment_header filc_alignment_header;
 typedef struct filc_atomic_box filc_atomic_box;
@@ -124,8 +75,11 @@ typedef struct filc_exact_ptr_table filc_exact_ptr_table;
 typedef struct filc_exception_and_int filc_exception_and_int;
 typedef struct filc_exception_and_ptr filc_exception_and_ptr;
 typedef struct filc_exception_and_void filc_exception_and_void;
+typedef struct filc_fiber_context filc_fiber_context;
 typedef struct filc_finalizer_queue filc_finalizer_queue;
 typedef struct filc_frame filc_frame;
+typedef struct filc_function filc_function;
+typedef struct filc_function_object filc_function_object;
 typedef struct filc_function_origin filc_function_origin;
 typedef struct filc_global_initialization_work_item filc_global_initialization_work_item;
 typedef struct filc_inline_frame filc_inline_frame;
@@ -157,6 +111,8 @@ typedef struct filc_rest_ptr_pair filc_rest_ptr_pair;
 typedef struct filc_signal_handler filc_signal_handler;
 typedef struct filc_signal_queue_chunk filc_signal_queue_chunk;
 typedef struct filc_signal_queue_chunk_header filc_signal_queue_chunk_header;
+typedef struct filc_stack_aux filc_stack_aux;
+typedef struct filc_stack_limit filc_stack_limit;
 typedef struct filc_thread filc_thread;
 typedef struct filc_uintptr_ptr_hash_map_entry filc_uintptr_ptr_hash_map_entry;
 typedef struct filc_weak filc_weak;
@@ -199,6 +155,7 @@ typedef uintptr_t filc_word;
 #define FILC_SPECIAL_TYPE_WEAK            ((filc_special_type)9)
 #define FILC_SPECIAL_TYPE_WEAK_MAP        ((filc_special_type)10)
 #define FILC_SPECIAL_TYPE_FINALIZER_QUEUE ((filc_special_type)11)
+#define FILC_SPECIAL_TYPE_FIBER_CONTEXT   ((filc_special_type)12)
 #define FILC_SPECIAL_TYPE_MASK            ((filc_special_type)15)
 
 #define FILC_LOG_ALIGN_MASK               ((filc_log_align)31)
@@ -209,11 +166,12 @@ typedef uintptr_t filc_word;
 #define FILC_OBJECT_AUX_PTR_MASK          PAS_ADDRESS_MASK
 #define FILC_OBJECT_AUX_FLAGS_SHIFT       PAS_ADDRESS_BITS
 
-/* FIXME: Need to support special aligned objects. So, we need 4 bits for the special type and 5 bits
-   for alignment. That leaves 7 flags. */
 #define FILC_OBJECT_FLAG_GLOBAL           ((filc_object_flags)1)  /* Pointer to a global, so cannot be
                                                                      freed. */
-#define FILC_OBJECT_FLAG_READONLY         ((filc_object_flags)2)  /* Object is readonly. */
+#define FILC_OBJECT_FLAG_READONLY         ((filc_object_flags)2)  /* Object is readonly. Also, a
+                                                                     function that isn't readonly is
+                                                                     a closure. (This is mostly about
+                                                                     sharing bit.) */
 #define FILC_OBJECT_FLAG_FREE             ((filc_object_flags)4)  /* Object is freed. Freed objects
                                                                      also have their size set to zero,
                                                                      but otherwise retain all of the
@@ -235,10 +193,7 @@ typedef uintptr_t filc_word;
                                                                      marked. */
 #define FILC_OBJECT_FLAG_WEAK_KEY         ((filc_object_flags)32) /* The object is being used as a key
                                                                      in one or more weak maps. */
-#define FILC_OBJECT_FLAG_CLOSURE          ((filc_object_flags)64) /* Only applicable to functions.
-                                                                     Means that the function is a
-                                                                     closure, i.e. the capability has
-                                                                     a pointer field. */
+/* We have flag bit value 64 available. */
 #define FILC_OBJECT_FLAGS_SPECIAL_SHIFT   ((filc_object_flags)7)  /* The shift amount to get to the
                                                                      special type. */
 #define FILC_OBJECT_FLAGS_SPECIAL_MASK    ((filc_object_flags)FILC_SPECIAL_TYPE_MASK \
@@ -458,6 +413,31 @@ struct filc_alignment_header {
     uintptr_t encoded_finalizer;
 };
 
+struct filc_stack_aux {
+    size_t num_lowers;
+    void* lowers[];
+};
+
+/* Say we have a nonescaping alloca. Let's consider the two cases: it gets a stack_aux, or its lowers
+   are replicated to the frame's lowers, and it gets a naked stack aux.
+
+   And let's consider what happens if you setjmp/longjmp.
+
+   We're happy with either the semantics that the pointers on the stack return to the values they had
+   before the setjmp, or that they keep the value they had just before the longjmp.
+
+   Whatever the lowers end up being set to for those stack allocations when you return out of the
+   setjmp need to have been marked by GC.
+
+   And ideally, we won't end up with pointer-capability tearing, where the pointer's intval refers to
+   some value from just before the longjmp but the pointer's lower gets set to a value from just before
+   the setjmp.
+
+   So confusing!
+
+   This suggests that the best answer for now is: if a function does setjmp, then we turn off the
+   nonescaping alloca optimization! */
+
 struct filc_cc_cursor {
     size_t offset;
     size_t size;
@@ -525,6 +505,10 @@ struct filc_function_origin {
     
        FIXME: We could use a bespoke weak set for this purpose and it would be faster! */
     bool has_setjmps;
+
+    /* Tells how many of the lowers are actually pointers to stack-allocated auxes. If we have any
+       then they are at the end of the lowers, but just below the setjmp lower, if there is one. */
+    unsigned num_stack_auxes;
 };
 
 /* Given an origin, you can get the combined function/filename/line/column like so:
@@ -678,6 +662,8 @@ struct filc_signal_handler {
     int flags; /* Original flags requested by user (useful for when sigaction is used to request the
                   old flags). */
     int user_signum; /* This is only needed for assertion discipline. */
+    bool dump_heap;
+    bool dump_stacks;
 };
 
 /* FIXME: Using such large alignment here makes this difficult to express in LLVM IR. And, it's not
@@ -690,8 +676,24 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_cc_unit {
     char contents[FILC_CC_ALIGNMENT];
 };
 
+typedef uint64_t filc_signature;
+
+#define FILC_GENERIC_SIGNATURE ((filc_signature)0)
+
+struct filc_function {
+    void* fast_entrypoint;
+    pizlonated_function generic_entrypoint;
+    filc_signature signature;
+};
+
 struct filc_closure {
-    filc_ptr data_ptr;
+    filc_function base;
+    filc_ptr data_ptr; /* Used by closures. */
+};
+
+struct filc_function_object {
+    filc_object object;
+    filc_function function;
 };
 
 struct filc_signal_queue_chunk_header {
@@ -701,6 +703,11 @@ struct filc_signal_queue_chunk_header {
 struct filc_signal_queue_chunk {
     filc_signal_queue_chunk_header header;
     siginfo_t infos[FILC_SIGNAL_QUEUE_CHUNK_SIZE];
+};
+
+struct filc_stack_limit {
+    void* stack_limit;
+    void* stack_top;
 };
 
 struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
@@ -726,6 +733,10 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
     size_t cc_outline_size;
 
     /* End fields that the compiler has to know about. */
+
+    void* stack_top;
+
+    filc_stack_limit original_stack_limit;
     
     filc_native_frame* top_native_frame;
 
@@ -754,6 +765,15 @@ struct PAS_ALIGNED(FILC_CC_ALIGNMENT) filc_thread {
        an object that holds the actual value. Threads track all of those thread local objects in this
        array, so that they can mark them as roots. */
     filc_object_array thread_locals;
+
+#if FILC_HAS_FIBER_CONTEXT
+    /* Fibers we switch from have to be rescanned, and it's easiest to hook that into the thread's
+       scanning. */
+    filc_raw_ptr_array grey_fibers;
+
+    filc_fiber_context* current_fiber_context;
+    filc_fiber_context* switching_to_fiber_context;
+#endif /* FILC_HAS_FIBER_CONTEXT */
 
     pas_system_mutex lock; /* We grab all of these during fork(). */
     pas_system_condition cond;
@@ -1337,6 +1357,34 @@ struct filc_jmp_buf {
     void* lowers[];
 };
 
+#if FILC_HAS_FIBER_CONTEXT
+enum filc_fiber_context_state {
+    filc_fiber_context_uninitialized,
+    filc_fiber_context_after_getcontext,
+    filc_fiber_context_runnable,
+    filc_fiber_context_running
+};
+
+typedef enum filc_fiber_context_state filc_fiber_context_state;
+
+struct filc_fiber_context {
+    pas_lock lock;
+    filc_fiber_context_state state;
+    ucontext_t context;
+    filc_frame* top_frame;
+    filc_native_frame* top_native_frame;
+    filc_raw_ptr_array allocation_roots;
+    unsigned special_signal_deferral_depth;
+    filc_stack_limit stack_limit;
+    void* stack;
+    filc_ptr closure_ptr;
+    filc_ptr bound_sigset_ptr;
+    filc_thread* owning_thread;
+    filc_fiber_context* stack_owner;
+    bool is_grey;
+};
+#endif /* FILC_HAS_FIBER_CONTEXT */
+
 enum filc_size_mode {
     filc_small_size,
     filc_large_size
@@ -1348,7 +1396,7 @@ PAS_API extern pas_system_thread_id filc_panicking_thread;
 
 #define FILC_FOR_EACH_LOCK(macro) \
     macro(thread_list); \
-    macro(stop_the_world)
+    macro(handshake)
 
 /* We use the system mutex for our global locks so that they are fork-friendly. The Darwin
    os_unfair_lock, which we use for most of libpas, is not fork-friendly. That's because
@@ -1368,7 +1416,6 @@ FILC_FOR_EACH_LOCK(FILC_DECLARE_LOCK);
 #undef FILC_DECLARE_LOCK
 
 /* These locks don't need to be held across fork, so no big deal. */
-PAS_DECLARE_LOCK(filc_soft_handshake);
 PAS_DECLARE_LOCK(filc_global_initialization);
 PAS_DECLARE_LOCK(filc_global_variable_roots);
 
@@ -1397,10 +1444,13 @@ PAS_API extern filc_ptr filc_pizlonated_errno_handler;
 PAS_API extern filc_ptr filc_pizlonated_dlerror_handler;
 
 PAS_API extern bool filc_exit_on_panic;
+PAS_API extern bool filc_quiet_panic;
 PAS_API extern bool filc_dump_errnos;
 PAS_API extern bool filc_run_global_ctors;
 PAS_API extern bool filc_run_global_dtors;
 PAS_API extern bool filc_verbose_stop_the_world;
+PAS_API extern unsigned filc_dump_heap_on_signal;
+PAS_API extern unsigned filc_dump_stacks_on_signal;
 
 typedef filc_ptr* filc_global_initialization_key;
 
@@ -1466,7 +1516,7 @@ PAS_CREATE_HASHTABLE(filc_global_initialization_work_item_hash_map,
 PAS_API extern filc_global_initialization_work_item_hash_map filc_global_initialization_map;
 
 PAS_API extern unsigned filc_stop_the_world_count;
-PAS_API extern pas_system_condition filc_stop_the_world_cond;
+PAS_API extern pas_system_condition filc_handshake_cond;
 
 PAS_API extern filc_thread* filc_first_thread;
 PAS_API extern pthread_key_t filc_thread_key;
@@ -1559,15 +1609,24 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_user_panic(
             __FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); \
     } while (0)
 
+PAS_API filc_stack_limit filc_try_compute_stack_limit(void);
+
+PAS_API filc_stack_limit filc_compute_stack_limit(void);
+
+static inline bool filc_stack_limit_did_succeed(filc_stack_limit stack_limit)
+{
+    return !!stack_limit.stack_limit;
+}
+
 /* Must be called from CRT before any FilC happens. If we ever allow FilC dylibs to be loaded 
    into non-FilC code, then we'll have to call it from compiler-generated initializers, too. It's
    not fine to call this more than once or at any other time than in the CRT. */
-PAS_API void filc_initialize(void);
+PAS_API void filc_initialize(filc_stack_limit stack_limit);
 
 PAS_API size_t filc_add_size(size_t a, size_t b);
 PAS_API size_t filc_mul_size(size_t a, size_t b);
 
-PAS_API filc_thread* filc_thread_create_with_manual_tracking(void);
+PAS_API filc_thread* filc_thread_create_with_manual_tracking(filc_thread* my_thread);
 
 PAS_API void filc_thread_destruct(filc_thread* thread);
 
@@ -1577,6 +1636,14 @@ PAS_API void filc_thread_undo_create(filc_thread* thread);
 
 /* This removes the thread from the thread list and reuses its tid. */
 PAS_API void filc_thread_dispose(filc_thread* thread);
+
+static inline filc_stack_limit filc_thread_stack_limit(filc_thread* thread)
+{
+    filc_stack_limit stack_limit;
+    stack_limit.stack_limit = thread->stack_limit;
+    stack_limit.stack_top = thread->stack_top;
+    return stack_limit;
+}
 
 static inline pas_local_allocator* filc_thread_allocator(filc_thread* thread, size_t allocator_index)
 {
@@ -1605,13 +1672,16 @@ static inline void* filc_thread_allocate_with_allocator_index(filc_thread* threa
     return verse_local_allocator_allocate(filc_thread_allocator(thread, allocator_index));
 }
 
-PAS_API PAS_NEVER_INLINE void* filc_thread_allocate_slow(size_t size);
+PAS_API PAS_NEVER_INLINE pas_allocation_result filc_thread_allocate_slow(size_t size);
 
-static PAS_ALWAYS_INLINE void* filc_thread_allocate_impl(filc_thread* thread, size_t size)
+static PAS_ALWAYS_INLINE pas_allocation_result filc_thread_allocate_impl(filc_thread* thread,
+                                                                         size_t size)
 {
     size_t allocator_index = filc_compute_allocator_index(size);
-    if (PAS_LIKELY(filc_is_fast_allocator_index(allocator_index)))
-        return filc_thread_allocate_with_allocator_index(thread, allocator_index);
+    if (PAS_LIKELY(filc_is_fast_allocator_index(allocator_index))) {
+        return pas_allocation_result_create_success(
+            (uintptr_t)filc_thread_allocate_with_allocator_index(thread, allocator_index));
+    }
     return filc_thread_allocate_slow(size);
 }
 
@@ -1624,10 +1694,10 @@ static PAS_ALWAYS_INLINE void filc_thread_assert_allocation_color(filc_thread* t
 
 /* Super fast allocation function usable only when for the default heap and only if you don't need
    special alignment. */
-static PAS_ALWAYS_INLINE void* filc_thread_allocate(filc_thread* thread, size_t size)
+static PAS_ALWAYS_INLINE pas_allocation_result filc_thread_allocate(filc_thread* thread, size_t size)
 {
-    void* result = filc_thread_allocate_impl(thread, size);
-    filc_thread_assert_allocation_color(thread, result);
+    pas_allocation_result result = filc_thread_allocate_impl(thread, size);
+    filc_thread_assert_allocation_color(thread, (void*)result.begin);
     return result;
 }
 
@@ -1642,11 +1712,15 @@ PAS_API void filc_assert_my_thread_is_entered(void);
 PAS_API void filc_assert_my_thread_is_not_entered(void);
 
 PAS_API void filc_snapshot_threads(filc_thread*** threads, size_t* num_threads);
+PAS_API size_t filc_count_threads(void);
 
 PAS_API void filc_soft_handshake_no_op_callback(filc_thread* my_thread, void* arg);
 
 /* Calls the callback from every thread. Returns when every thread has done so. */
 PAS_API void filc_soft_handshake(void (*callback)(filc_thread* my_thread, void* arg), void* arg);
+
+/* Calls the callback from every runtime thread. */
+PAS_API void filc_runtime_threads_handshake(void (*callback)(void* arg), void* arg);
 
 PAS_API void filc_stop_the_world(void);
 PAS_API void filc_resume_the_world(void);
@@ -1655,13 +1729,13 @@ PAS_API void filc_wait_for_world_resumption_holding_lock(void);
 
 /* Begin execution in Fil-C. Executing Fil-C comes with the promise that you'll periodically do
    a pollcheck and that all signals will be deferred to pollchecks. */
-PAS_API void filc_enter(filc_thread* my_thread);
+void filc_enter(filc_thread* my_thread);
 
 /* End execution in Fil-C. Call this before doing anything that might block or anything to
    affect signal masks.
    
    You can exit and then reenter as much as you like. It'll be super cheap eventually. */
-PAS_API void filc_exit(filc_thread* my_thread);
+void filc_exit(filc_thread* my_thread);
 
 /* These have to be called entered, currently. The only thing stopping us from making them work
    exited is that then, decrease_special_signal_deferral_depth would have to
@@ -1725,6 +1799,12 @@ static inline void* filc_raw_ptr_array_pop(filc_raw_ptr_array* array)
     return array->array[--array->size];
 }
 
+static inline void filc_raw_ptr_array_reset(filc_raw_ptr_array* array)
+{
+    filc_raw_ptr_array_destruct(array);
+    filc_raw_ptr_array_construct(array);
+}
+
 static inline void filc_object_array_impl_construct(filc_object_array_impl* array)
 {
     array->num_objects = 0;
@@ -1738,8 +1818,8 @@ static inline void filc_object_array_impl_destruct(filc_object_array_impl* array
         bmalloc_deallocate(array->objects);
 }
 
-PAS_ALWAYS_INLINE filc_object* filc_object_array_impl_at(filc_object_array_impl* array,
-                                                         size_t index)
+static PAS_ALWAYS_INLINE filc_object* filc_object_array_impl_at(filc_object_array_impl* array,
+                                                                size_t index)
 {
     PAS_TESTING_ASSERT(index < array->num_objects);
     return array->objects[index];
@@ -1973,10 +2053,8 @@ static PAS_ALWAYS_INLINE void filc_push_native_frame(
     my_thread->top_native_frame = frame;
 }
 
-static PAS_ALWAYS_INLINE void filc_pop_native_frame(filc_thread* my_thread, filc_native_frame* frame)
+static PAS_ALWAYS_INLINE void filc_native_frame_destruct(filc_native_frame* frame)
 {
-    PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
-
     if (frame->size) {
         unsigned index;
         uintptr_t* array = frame->array;
@@ -1995,6 +2073,13 @@ static PAS_ALWAYS_INLINE void filc_pop_native_frame(filc_thread* my_thread, filc
         PAS_TESTING_ASSERT(frame->capacity == FILC_NATIVE_FRAME_INLINE_CAPACITY);
         PAS_TESTING_ASSERT(frame->array == frame->inline_array);
     }
+}
+
+static PAS_ALWAYS_INLINE void filc_pop_native_frame(filc_thread* my_thread, filc_native_frame* frame)
+{
+    PAS_TESTING_ASSERT(my_thread->state & FILC_THREAD_STATE_ENTERED);
+
+    filc_native_frame_destruct(frame);
     
     PAS_TESTING_ASSERT(!frame->locked);
     
@@ -2052,6 +2137,8 @@ PAS_API void filc_thread_assert_participates_in_handshakes(filc_thread* my_threa
 PAS_API void filc_thread_assert_participates_in_pollchecks(filc_thread* my_thread);
 
 PAS_API void filc_thread_sweep_mark_stack(filc_thread* my_thread);
+PAS_API void filc_thread_reset_grey_fibers(filc_thread* my_thread);
+PAS_API void filc_thread_assert_no_grey_fibers(filc_thread* my_thread);
 PAS_API void filc_thread_donate(filc_thread* my_thread);
 
 static inline bool filc_origin_node_is_inline_frame(const filc_origin_node* origin_node)
@@ -2081,6 +2168,28 @@ static inline const filc_function_origin* filc_origin_node_as_function_origin(
 PAS_API const filc_function_origin* filc_origin_get_function_origin(const filc_origin* origin);
 
 PAS_API const filc_origin* filc_origin_next_inline(const filc_origin* origin);
+
+static inline unsigned filc_function_origin_stack_aux_end_index(const filc_function_origin* origin)
+{
+    unsigned end = origin->base.num_lowers_ish;
+    PAS_ASSERT(end < UINT_MAX);
+    if (origin->has_setjmps)
+        end--;
+    return end;
+}
+
+static inline unsigned filc_function_origin_stack_aux_begin_index(const filc_function_origin* origin)
+{
+    return filc_function_origin_stack_aux_end_index(origin) - origin->num_stack_auxes;
+}
+
+static inline bool filc_function_origin_lower_index_is_stack_aux(const filc_function_origin* origin,
+                                                                 unsigned index)
+{
+    PAS_ASSERT(index < origin->base.num_lowers_ish);
+    return index >= filc_function_origin_stack_aux_begin_index(origin)
+        && index < filc_function_origin_stack_aux_end_index(origin);
+}
 
 /* This dumps just the origin itself, not its entire inline stack. */
 PAS_API void filc_origin_dump_self(const filc_origin* origin, pas_stream* stream);
@@ -2146,7 +2255,7 @@ static inline uintptr_t filc_aux_create(filc_object_flags flags, char* ptr)
 
 static uintptr_t filc_object_aux(filc_object* object)
 {
-    return __c11_atomic_load((_Atomic uintptr_t*)&object->aux, __ATOMIC_RELAXED);
+    return __atomic_load_n(&object->aux, __ATOMIC_RELAXED);
 }
 
 static inline char* filc_object_aux_ptr(filc_object* object)
@@ -2210,40 +2319,46 @@ static inline filc_lower_or_box* filc_object_ensure_lower_or_box_ptr_at_offset(f
 
 static inline filc_lower_or_box filc_lower_or_box_load_unfenced(filc_lower_or_box* ptr)
 {
-    return __c11_atomic_load((_Atomic filc_lower_or_box*)ptr, __ATOMIC_RELAXED);
+    return (filc_lower_or_box){
+        .encoded_value = __atomic_load_n(&ptr->encoded_value, __ATOMIC_RELAXED)
+    };
 }
 
 static inline filc_lower_or_box filc_lower_or_box_load(filc_lower_or_box* ptr)
 {
-    return __c11_atomic_load((_Atomic filc_lower_or_box*)ptr, __ATOMIC_SEQ_CST);
+    return (filc_lower_or_box){
+        .encoded_value = __atomic_load_n(&ptr->encoded_value, __ATOMIC_SEQ_CST)
+    };
 }
 
 static inline void filc_lower_or_box_store_unfenced_unbarriered(filc_lower_or_box* ptr,
                                                                 filc_lower_or_box value)
 {
-    __c11_atomic_store((_Atomic filc_lower_or_box*)ptr, value, __ATOMIC_RELAXED);
+    __atomic_store_n(&ptr->encoded_value, value.encoded_value, __ATOMIC_RELAXED);
 }
 
 static inline void filc_lower_or_box_store_unbarriered(filc_lower_or_box* ptr,
                                                        filc_lower_or_box value)
 {
-    __c11_atomic_store((_Atomic filc_lower_or_box*)ptr, value, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&ptr->encoded_value, value.encoded_value, __ATOMIC_SEQ_CST);
 }
 
 static inline bool filc_lower_or_box_cas_weak_unfenced_unbarriered(filc_lower_or_box* ptr,
                                                                    filc_lower_or_box expected,
                                                                    filc_lower_or_box new_value)
 {
-    return __c11_atomic_compare_exchange_weak(
-        (_Atomic filc_lower_or_box*)ptr, &expected, new_value, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+    return __atomic_compare_exchange_n(
+        &ptr->encoded_value, &expected.encoded_value, new_value.encoded_value,
+        true, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 }
 
 static inline bool filc_lower_or_box_cas_weak_unbarriered(filc_lower_or_box* ptr,
                                                           filc_lower_or_box expected,
                                                           filc_lower_or_box new_value)
 {
-    return __c11_atomic_compare_exchange_weak(
-        (_Atomic filc_lower_or_box*)ptr, &expected, new_value, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return __atomic_compare_exchange_n(
+        &ptr->encoded_value, &expected.encoded_value, new_value.encoded_value,
+        true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
 static inline bool filc_lower_or_box_is_null(filc_lower_or_box value)
@@ -2498,8 +2613,9 @@ static inline void filc_object_validate_special_with_payload(filc_object* object
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_WEAK ||
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_WEAK_MAP ||
                filc_object_special_type(object) == FILC_SPECIAL_TYPE_FINALIZER_QUEUE ||
+               filc_object_special_type(object) == FILC_SPECIAL_TYPE_FIBER_CONTEXT ||
                (filc_object_special_type(object) == FILC_SPECIAL_TYPE_FUNCTION
-                && (filc_object_get_flags(object) & FILC_OBJECT_FLAG_CLOSURE)));
+                && !(filc_object_get_flags(object) & FILC_OBJECT_FLAG_READONLY)));
 }
 
 static inline void filc_object_testing_validate_special_with_payload(filc_object* object)
@@ -2613,8 +2729,17 @@ static inline filc_alignment_header* filc_allocation_get_alignment_header(void* 
 
 static inline filc_object* filc_allocation_get_object(void* allocation)
 {
-    if (filc_allocation_starts_with_object(allocation))
+    if (filc_allocation_starts_with_object(allocation)) {
+        /* HACK: The presence of this cast causes clang to generate crap code. It's only needed for
+           g++.
+        
+           This can probably be removed if all of the Fil-C targets switch to a newer clang or g++. */
+#ifdef __cplusplus
+        return (filc_object*)allocation;
+#else
         return allocation;
+#endif
+    }
     return (filc_object*)((char*)allocation + filc_alignment_header_get_alignment(
                               filc_allocation_get_alignment_header(allocation))) - 1;
 }
@@ -2815,29 +2940,29 @@ static inline filc_ptr filc_ptr_for_special_payload(filc_thread* my_thread, void
 
 static inline void* filc_flight_ptr_load_ptr(filc_ptr* ptr)
 {
-    return __c11_atomic_load((void*_Atomic*)&ptr->ptr, __ATOMIC_RELAXED);
+    return __atomic_load_n(&ptr->ptr, __ATOMIC_RELAXED);
 }
 
 static inline void* filc_flight_ptr_load_lower(filc_ptr* ptr)
 {
-    return __c11_atomic_load((void*_Atomic*)&ptr->lower, __ATOMIC_RELAXED);
+    return __atomic_load_n(&ptr->lower, __ATOMIC_RELAXED);
 }
 
 static inline void filc_flight_ptr_store_ptr(filc_ptr* ptr, void* raw_ptr)
 {
-    __c11_atomic_store((void*_Atomic*)&ptr->ptr, raw_ptr, __ATOMIC_RELAXED);
+    __atomic_store_n(&ptr->ptr, raw_ptr, __ATOMIC_RELAXED);
 }
 
-static inline void filc_flight_ptr_store_lower(filc_ptr* ptr, filc_object* object)
+static inline void filc_flight_ptr_store_lower(filc_ptr* ptr, void* object)
 {
-    __c11_atomic_store((void*_Atomic*)&ptr->lower, object, __ATOMIC_RELAXED);
+    __atomic_store_n(&ptr->lower, object, __ATOMIC_RELAXED);
 }
 
 static inline bool filc_flight_ptr_unfenced_unbarriered_weak_cas_lower(
     filc_ptr* ptr, void* expected, void* new_lower)
 {
-    return __c11_atomic_compare_exchange_weak(
-        (void*_Atomic*)&ptr->lower, &expected, new_lower, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+    return __atomic_compare_exchange_n(
+        &ptr->lower, &expected, new_lower, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 }
 
 /* This is useful when using ptr loads for the purpose of loading something that *might* be a ptr
@@ -2857,16 +2982,29 @@ static inline filc_ptr filc_flight_ptr_load_with_manual_tracking(filc_ptr* ptr)
                                                                   filc_flight_ptr_load_ptr(ptr));
 }
 
+static inline pas_pair filc_ptr_get_pair(filc_ptr ptr)
+{
+    return pas_pair_create((uintptr_t)ptr.ptr, (uintptr_t)ptr.lower);
+}
+
+static inline filc_ptr filc_ptr_create_with_pair(pas_pair pair)
+{
+    filc_ptr result;
+    result.ptr = (void*)pas_pair_low(pair);
+    result.lower = (void*)pas_pair_high(pair);
+    return result;
+}
+
 static inline filc_ptr filc_flight_ptr_load_atomic_with_manual_tracking(filc_ptr* ptr)
 {
-    filc_ptr result = __c11_atomic_load((_Atomic filc_ptr*)ptr, __ATOMIC_SEQ_CST);
+    filc_ptr result = filc_ptr_create_with_pair(pas_atomic_load_pair(ptr));
     filc_testing_validate_ptr(result);
     return result;
 }
 
 static inline filc_ptr filc_flight_ptr_load_atomic_unfenced_with_manual_tracking(filc_ptr* ptr)
 {
-    filc_ptr result = __c11_atomic_load((_Atomic filc_ptr*)ptr, __ATOMIC_RELAXED);
+    filc_ptr result = filc_ptr_create_with_pair(pas_atomic_load_pair_relaxed(ptr));
     filc_testing_validate_ptr(result);
     return result;
 }
@@ -2894,12 +3032,12 @@ static inline void filc_flight_ptr_store(filc_thread* my_thread, filc_ptr* ptr, 
 static inline void filc_flight_ptr_store_atomic_unfenced_without_barrier(filc_ptr* ptr,
                                                                          filc_ptr value)
 {
-    __c11_atomic_store((_Atomic filc_ptr*)ptr, value, __ATOMIC_RELAXED);
+    pas_atomic_store_pair_relaxed(ptr, filc_ptr_get_pair(value));
 }
 
 static inline void filc_flight_ptr_store_atomic_without_barrier(filc_ptr* ptr, filc_ptr new_value)
 {
-    __c11_atomic_store((_Atomic filc_ptr*)ptr, new_value, __ATOMIC_SEQ_CST);
+    pas_atomic_store_pair(ptr, filc_ptr_get_pair(new_value));
 }
 
 static inline void filc_flight_ptr_store_atomic_unfenced(filc_thread* my_thread,
@@ -2923,8 +3061,8 @@ static inline bool filc_flight_ptr_unbarriered_weak_cas(
         filc_ptr old_value = filc_flight_ptr_load_with_manual_tracking(ptr);
         if (old_value.ptr != expected.ptr)
             return false;
-        if (__c11_atomic_compare_exchange_weak(
-                (_Atomic filc_ptr*)ptr, &old_value, new_value, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+        if (pas_compare_and_swap_pair_weak(
+                ptr, filc_ptr_get_pair(old_value), filc_ptr_get_pair(new_value)))
             return true;
     }
 }
@@ -2946,9 +3084,8 @@ static inline filc_ptr filc_flight_ptr_unbarriered_strong_cas(
             actual_new_value = new_value;
         else
             actual_new_value = old_value;
-        if (__c11_atomic_compare_exchange_weak(
-                (_Atomic filc_ptr*)ptr, &old_value, actual_new_value,
-                __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+        if (pas_compare_and_swap_pair_weak(
+                ptr, filc_ptr_get_pair(old_value), filc_ptr_get_pair(actual_new_value)))
             return old_value;
     }
 }
@@ -2963,7 +3100,13 @@ static inline filc_ptr filc_flight_ptr_strong_cas(
 static inline filc_ptr filc_flight_ptr_xchg(filc_thread* my_thread, filc_ptr* ptr, filc_ptr new_value)
 {
     filc_store_barrier(my_thread, filc_ptr_object(new_value));
-    return __c11_atomic_exchange((_Atomic filc_ptr*)ptr, new_value, __ATOMIC_SEQ_CST);
+    for (;;) {
+        filc_ptr result = *ptr;
+        if (pas_compare_and_swap_pair_weak(ptr,
+                                           filc_ptr_get_pair(result),
+                                           filc_ptr_get_pair(new_value)))
+            return result;
+    }
 }
 
 #define FILC_PTR_ARRAY_INITIALIZER ((filc_ptr_array){ \
@@ -3110,13 +3253,15 @@ static inline filc_ptr filc_load_ptr_atomic_with_manual_tracking(filc_ptr ptr, p
 {
     ptr = filc_ptr_with_offset(ptr, offset);
     filc_check_native_access(ptr, sizeof(void*), filc_read_access);
+    void* raw_ptr = *(void**)filc_ptr_ptr(ptr);
+    pas_load_load_fence();
     filc_lower_or_box lower_or_box = filc_ptr_load_lower_or_box(ptr);
     if (filc_lower_or_box_is_box(lower_or_box)) {
         return filc_atomic_box_load_with_manual_tracking(
             filc_lower_or_box_get_box(lower_or_box));
     }
     return filc_ptr_create_with_lower_and_ptr_and_manual_tracking(
-        filc_lower_or_box_get_lower(lower_or_box), *(void**)filc_ptr_ptr(ptr));
+        filc_lower_or_box_get_lower(lower_or_box), raw_ptr);
 }
 
 static inline void filc_store_ptr(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
@@ -3152,13 +3297,9 @@ static inline void filc_store_ptr_atomic_with_ptr_pair(filc_thread* my_thread,
             lower_or_box_ptr,
             filc_lower_or_box_create_box(filc_atomic_box_create_for_ptr_store(my_thread, value)));
     }
+    pas_store_store_fence();
     *ptr_ptr = filc_ptr_ptr(value);
 }
-
-void filc_store_ptr_atomic_with_ptr_pair_outline(filc_thread* my_thread,
-                                                 void** ptr_ptr,
-                                                 filc_lower_or_box* lower_or_box_ptr,
-                                                 filc_ptr value);
 
 static inline void filc_store_ptr_atomic(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
                                          filc_ptr value)
@@ -3169,6 +3310,9 @@ static inline void filc_store_ptr_atomic(filc_thread* my_thread, filc_ptr ptr, p
     filc_store_ptr_atomic_with_ptr_pair(my_thread, (void**)filc_ptr_ptr(ptr), lower_or_box_ptr,
                                         value);
 }
+
+filc_ptr filc_load_ptr_atomic_with_manual_tracking_outline(filc_ptr ptr);
+void filc_store_ptr_atomic_outline(filc_thread* my_thread, filc_ptr ptr, filc_ptr value);
 
 bool filc_weak_cas_ptr(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
                        filc_ptr expected, filc_ptr new_value);
@@ -3585,6 +3729,7 @@ static inline bool filc_special_type_is_valid(filc_special_type special_type)
     case FILC_SPECIAL_TYPE_WEAK:
     case FILC_SPECIAL_TYPE_WEAK_MAP:
     case FILC_SPECIAL_TYPE_FINALIZER_QUEUE:
+    case FILC_SPECIAL_TYPE_FIBER_CONTEXT:
         return true;
     default:
         return false;
@@ -3656,6 +3801,9 @@ PAS_API void filc_free(filc_object* object);
 
 /* Equivalent to zgc_free in that it does all of the checks. */
 void filc_free_with_checks(filc_ptr ptr);
+
+void filc_log_allocate(filc_thread* my_thread, const filc_origin* origin, size_t size,
+                       size_t alignment);
 
 PAS_API void filc_unmap(void* ptr, size_t size);
 
@@ -3812,10 +3960,22 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_access_check_fail(
 PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_alignment_contradiction(
     filc_ptr ptr, const filc_optimized_alignment_contradiction_origin* contradiction_origin);
 
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_stack_access_check_fail(
+    intptr_t offset, size_t size, const filc_optimized_access_check_origin* check_origin);
+
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_optimized_stack_alignment_contradiction(
+    intptr_t offset, size_t size,
+    const filc_optimized_alignment_contradiction_origin* contradiction_origin);
+
 /* FIXME: 64-bit mask is just barely enough. */
-PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
-    filc_ptr ptr, uint64_t mask, size_t size, filc_access_kind access_kind,
-    const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t size, const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_compress_write_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin);
+PAS_NEVER_INLINE PAS_NO_RETURN void filc_expand_read_check_fail(
+    filc_ptr ptr, uint64_t mask, size_t element_size, size_t vector_size, const filc_origin* origin);
 
 #define FILC_LOAD_PTR_FIELD(my_thread, ptr, struct_type, field_name) \
     filc_load_ptr((my_thread), (ptr), PAS_OFFSETOF(struct_type, field_name))
@@ -3826,7 +3986,7 @@ PAS_NEVER_INLINE PAS_NO_RETURN void filc_masked_access_check_fail(
 void filc_check_function_call(filc_ptr ptr);
 PAS_NO_RETURN void filc_check_function_call_fail(filc_ptr ptr);
 
-PAS_NO_RETURN void filc_check_closure_fail(void* lower, const filc_origin* origin);
+PAS_NO_RETURN void filc_comdat_link_fail(const char* name, uint64_t signature);
 
 void filc_check_access_special(filc_ptr ptr, filc_special_type expected_type);
 
@@ -3861,7 +4021,15 @@ static PAS_ALWAYS_INLINE void filc_memset_small_word(void* ptr, uintptr_t value,
 static PAS_ALWAYS_INLINE void filc_memcpy_small_up(void* dst, void* src, size_t bytes)
 {
     char* cur_dst = (char*)dst;
+    /* HACK: clang ends up generating terrible code if we introduce this cast. We only need the cast
+       for g++.
+        
+       This can probably be removed if all of the Fil-C targets switch to a newer clang or g++. */
+#ifdef __cplusplus
+    char* end_dst = (char*)dst + bytes;
+#else
     char* end_dst = dst + bytes;
+#endif
     char* cur_src = (char*)src;
     while (cur_dst < end_dst) {
         *cur_dst++ = *cur_src++;
@@ -3948,7 +4116,7 @@ static PAS_ALWAYS_INLINE void filc_low_level_ptr_safe_bzero(void* raw_ptr, size_
     PAS_TESTING_ASSERT(pas_is_aligned(bytes, sizeof(void*)));
     words = bytes / sizeof(void*);
     while (words--)
-        __c11_atomic_store((void*_Atomic*)ptr++, NULL, __ATOMIC_RELAXED);
+        __atomic_store_n(ptr++, NULL, __ATOMIC_RELAXED);
 }
 
 static PAS_ALWAYS_INLINE void filc_low_level_ptr_safe_memcpy(void* raw_dst,
@@ -3963,9 +4131,9 @@ static PAS_ALWAYS_INLINE void filc_low_level_ptr_safe_memcpy(void* raw_dst,
     PAS_TESTING_ASSERT(pas_is_aligned(bytes, sizeof(void*)));
     words = bytes / sizeof(void*);
     while (words--) {
-        __c11_atomic_store(
-            (void*_Atomic*)dst++,
-            __c11_atomic_load((void*_Atomic*)src++, __ATOMIC_RELAXED),
+        __atomic_store_n(
+            dst++,
+            __atomic_load_n(src++, __ATOMIC_RELAXED),
             __ATOMIC_RELAXED);
     }
 }
@@ -4001,6 +4169,30 @@ filc_aux_base_and_ptr filc_finish_memmove_small_5(filc_thread* my_thread, filc_p
 void filc_memmove(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t count,
                   const filc_origin* origin);
 
+void filc_memmove_already_checked_stack_to_heap(
+    filc_thread* my_thread, filc_ptr dst, void* src_payload, void* src_aux, size_t size,
+    const filc_origin* origin);
+
+void filc_memmove_stack_to_heap(
+    filc_thread* my_thread, filc_ptr dst, void* src_payload, void* src_aux,
+    filc_stack_aux* src_stack_aux, size_t size, const filc_origin* origin);
+
+void filc_memmove_already_checked_heap_to_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_ptr src, size_t size);
+
+void filc_memmove_heap_to_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_stack_aux* dst_stack_aux,
+    filc_ptr src, size_t size, const filc_origin* origin);
+
+void filc_memmove_already_checked_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, void* src_payload, void* src_aux,
+    size_t size);
+
+void filc_memmove_stack(
+    filc_thread* my_thread, void* dst_payload, void* dst_aux, filc_stack_aux* dst_stack_aux,
+    void* src_payload, void* src_aux, filc_stack_aux* src_stack_aux, size_t size,
+    const filc_origin* origin);
+
 /* There are multiple reasons for these promote/demote things not exiting:
    
    - It so happens that the way that the compiler emits calls to these means that it could do:
@@ -4028,6 +4220,9 @@ void filc_memmove(filc_thread* my_thread, filc_ptr dst, filc_ptr src, size_t cou
 filc_ptr filc_promote_already_checked_stack_to_heap_without_exiting(
     filc_thread* my_thread, void* payload, void* aux, size_t size);
 
+filc_ptr filc_promote_already_checked_stack_to_heap_with_alignment_without_exiting(
+    filc_thread* my_thread, void* payload, void* aux, size_t size, size_t alignment);
+
 /* Takes a known-to-be-word-aligned pointer and a known-to-be-word-aligned size, with all checks
    necessary to do the access to the pointer with that size already having been performed, and copies
    to the given stack buffer, which is also known to be big enough. */
@@ -4046,8 +4241,7 @@ size_t filc_prepare_to_return_with_data(filc_thread* my_thread, filc_ptr rets,
 
 /* Checks that the ptr points at a valid C string. That is, there is a null terminator before we
    get to the upper bound. Returns a copy of that string allocated in the utility heap, and checks
-   that it still has the null terminator at the end. Kills the shit out of the program if any of the
-   checks fail.
+   that it still has the null terminator at the end. Kills the program if any of the checks fail.
    
    The fact that the string is allocated in the utility heap - and the fact that the utility heap
    has no capabilities into it other than immortal and/or opaque ones - and the fact that there is
@@ -4149,7 +4343,8 @@ void filc_execute_constant_relocations(
     size_t num_relocations);
 
 PAS_API void filc_set_user_environment(filc_thread* my_thread,
-                                       int argc, filc_ptr argv, filc_ptr environ, filc_ptr auxv);
+                                       int argc, char** native_argv,
+                                       filc_ptr argv, filc_ptr environ, filc_ptr auxv);
 PAS_API bool filc_is_user_environment_set(void);
 PAS_API int filc_get_user_argc(void);
 PAS_API filc_ptr filc_get_user_argv(void);
@@ -4220,6 +4415,26 @@ static inline const char* filc_jmp_buf_kind_get_longjmp_string(filc_jmp_buf_kind
 /* This creates all of the filc_jmp_buf except for the system_buf, which must be populated by the
    caller. The `value` argument is ignored unless kind is sigsetjmp. */
 filc_jmp_buf* filc_jmp_buf_create(filc_thread* my_thread, filc_jmp_buf_kind kind, int value);
+
+#if FILC_HAS_FIBER_CONTEXT
+static inline const char* filc_fiber_context_state_get_string(filc_fiber_context_state state)
+{
+    switch (state) {
+    case filc_fiber_context_uninitialized:
+        return "uninitialized";
+    case filc_fiber_context_after_getcontext:
+        return "after_getcontext";
+    case filc_fiber_context_runnable:
+        return "runnable";
+    case filc_fiber_context_running:
+        return "running";
+    }
+    PAS_ASSERT(!"Should not be reached");
+    return NULL;
+}
+
+void filc_fiber_context_destruct(filc_fiber_context* fiber_context);
+#endif
 
 /* This is for cases where you want to grab a lock while entered and hold it across an exit.
    

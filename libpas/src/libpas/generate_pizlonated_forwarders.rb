@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 #
-# Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
 #
-# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
 # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
 # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
 # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -167,6 +168,7 @@ addSig "void", "zprint_ptr", "filc_ptr"
 addSig "size_t", "zstrlen", "filc_ptr"
 addSig "int", "zisdigit", "int"
 addSig "void", "zerror", "filc_ptr"
+addSig "void", "zsafety_error", "filc_ptr"
 addSig "filc_ptr", "zcall", "filc_ptr", "filc_ptr"
 addSig "filc_ptr", "zget_jmp_buf_impl_frame", "filc_ptr"
 addSig "filc_ptr", "zclosure_new", "filc_ptr", "filc_ptr"
@@ -185,12 +187,17 @@ addSig "bool", "zgc_is_verifying"
 addSig "void", "zscavenge_synchronously"
 addSig "void", "zscavenger_suspend"
 addSig "void", "zscavenger_resume"
+addSig "void", "zlock_runtime_threads"
 addSig "void", "zdump_stack"
 addSig "void", "zstack_scan", "filc_ptr", "filc_ptr"
-addSig "exception/int", "_Unwind_RaiseException", "filc_ptr"
-addSig "exception/int", "_Unwind_ForcedUnwind", "filc_ptr", "filc_ptr", "filc_ptr"
 addSig "void", "zlongjmp", "filc_ptr", "int"
 addSig "void", "zmake_setjmp_save_sigmask", "bool"
+addSig "filc_ptr", "zfiber_context_new"
+addSig "void", "zfiber_context_bind_sigset", "filc_ptr", "filc_ptr"
+addSig "void", "zfiber_context_getcontext", "filc_ptr"
+addSig "void", "zfiber_context_setcontext", "filc_ptr"
+addSig "void", "zfiber_context_makecontext", "filc_ptr", "size_t", "filc_ptr"
+addSig "void", "zfiber_context_swapcontext", "filc_ptr", "filc_ptr"
 addSig "void", "zcpuid", "unsigned", "filc_ptr", "filc_ptr", "filc_ptr", "filc_ptr"
 addSig "void", "zcpuid_count", "unsigned", "unsigned", "filc_ptr", "filc_ptr", "filc_ptr",
        "filc_ptr"
@@ -202,6 +209,11 @@ addSig "void", "zregister_sys_dlerror_handler", "filc_ptr"
 addSig "void", "zset_errno", "int"
 addSig "size_t", "znum_deferred_signals"
 addSig "size_t", "zgc_get_allocation_size", "filc_ptr"
+addSig "void", "zdump_pas_status"
+addSig "void", "zset_scavenger_periods_to_1ms"
+addSig "void", "zset_quiet_panic", "bool"
+addSig "bool", "zget_quiet_panic"
+addSig "void", "zsetproctitle", "filc_ptr"
 
 addSig "int", "zsys_ioctl", "int", "int", "..."
 addSig "ssize_t", "zsys_writev", "int", "filc_ptr", "int"
@@ -279,6 +291,7 @@ addSig "filc_ptr", "zsys_getcwd", "filc_ptr", "size_t"
 addSig "filc_ptr", "zsys_dlopen", "filc_ptr", "int"
 addSig "filc_ptr", "zsys_dlsym", "filc_ptr", "filc_ptr"
 addSig "filc_ptr", "zsys_dlvsym", "filc_ptr", "filc_ptr", "filc_ptr"
+addSig "int", "zsys_dladdr", "filc_ptr", "filc_ptr"
 addSig "int", "zsys_poll", "filc_ptr", "unsigned long", "int"
 addSig "int", "zsys_faccessat", "int", "filc_ptr", "int", "int"
 addSig "int", "zsys_sigwait", "filc_ptr", "filc_ptr"
@@ -382,6 +395,7 @@ addSig "int", "zsys_epoll_pwait_impl", "int", "filc_ptr", "int", "int", "filc_pt
 addSig "int", "zsys_epoll_pwait2_impl", "int", "filc_ptr", "int", "filc_ptr", "filc_ptr"
 addSig "int", "zsys_sysinfo", "filc_ptr"
 addSig "int", "zsys_sched_getaffinity", "int", "size_t", "filc_ptr"
+addSig "int", "zsys_raw_sched_getaffinity", "int", "size_t", "filc_ptr"
 addSig "int", "zsys_sched_setaffinity", "int", "size_t", "filc_ptr"
 addSig "int", "zsys_posix_fadvise", "int", "long", "long", "int"
 addSig "int", "zsys_ppoll", "filc_ptr", "unsigned long", "filc_ptr", "filc_ptr"
@@ -469,9 +483,9 @@ addSig "int", "zsys_pkey_alloc", "unsigned", "unsigned"
 addSig "int", "zsys_pkey_free", "int"
 addSig "int", "zsys_memfd_create", "filc_ptr", "unsigned"
 addSig "int", "zsys_setns", "int", "int"
-addSig "int", "zsys_query_module", "filc_ptr", "int", "filc_ptr", "size_t", "filc_ptr"
 addSig "int", "zsys_sigqueue", "int", "int", "filc_ptr"
 addSig "int", "zsys_openat", "int", "filc_ptr", "int", "..."
+addSig "int", "zsys_openat2", "int", "filc_ptr", "filc_ptr", "size_t"
 addSig "int", "zsys_statfs", "filc_ptr", "filc_ptr"
 addSig "int", "zsys_fstatfs", "int", "filc_ptr"
 addSig "int", "zsys_statvfs", "filc_ptr", "filc_ptr"
@@ -499,6 +513,25 @@ addSig "int", "zsys_timer_getoverrun", "int"
 addSig "int", "zsys_timer_settime", "int", "int", "filc_ptr", "filc_ptr"
 addSig "int", "zsys_timer_delete", "int"
 addSig "int", "zsys_timer_gettime", "int", "filc_ptr"
+addSig "int", "zsys_fallocate", "int", "int", "long", "long"
+addSig "long", "zsys_keyctl", "int", "..."
+addSig "int", "zsys_add_key", "filc_ptr", "filc_ptr", "filc_ptr", "size_t", "int"
+addSig "int", "zsys_request_key", "filc_ptr", "filc_ptr", "filc_ptr", "int"
+addSig "long", "zsys_keyctl_dh_compute", "int", "int", "int", "filc_ptr", "size_t"
+addSig "long", "zsys_keyctl_dh_compute_kdf", "int", "int", "int", "filc_ptr", "filc_ptr", "size_t",
+       "filc_ptr", "size_t"
+addSig "long", "zsys_keyctl_pkey_query", "int", "filc_ptr", "filc_ptr"
+addSig "long", "zsys_keyctl_pkey_encrypt", "int", "filc_ptr", "filc_ptr", "size_t", "filc_ptr",
+       "size_t"
+addSig "long", "zsys_keyctl_pkey_decrypt", "int", "filc_ptr", "filc_ptr", "size_t", "filc_ptr",
+       "size_t"
+addSig "long", "zsys_keyctl_pkey_sign", "int", "filc_ptr", "filc_ptr", "size_t", "filc_ptr", "size_t"
+addSig "long", "zsys_keyctl_pkey_verify", "int", "filc_ptr", "filc_ptr", "size_t", "filc_ptr",
+       "size_t"
+addSig "long", "zsys_get_mempolicy", "filc_ptr", "filc_ptr", "unsigned long", "filc_ptr", "unsigned long"
+addSig "long", "zsys_set_mempolicy", "int", "filc_ptr", "unsigned long"
+addSig "int", "zsys_clock_adjtime", "int", "filc_ptr"
+addSig "void", "zsys_abort"
 
 addSig "filc_ptr", "zthread_self"
 addSig "unsigned", "zthread_get_id", "filc_ptr"
@@ -509,9 +542,17 @@ addSig "bool", "zthread_create2", "filc_ptr", "filc_ptr", "filc_ptr", "filc_ptr"
 addSig "void", "zthread_exit", "filc_ptr"
 addSig "bool", "zthread_join", "filc_ptr", "filc_ptr"
 addSig "bool", "zthread_kill", "filc_ptr", "int"
+addSig "filc_ptr", "zthread_stack_limit", "filc_ptr"
+addSig "filc_ptr", "zthread_stack_top", "filc_ptr"
 addSig "void", "zincrement_signal_deferral_depth"
 addSig "void", "zdecrement_signal_deferral_depth"
 addSig "unsigned long long", "zget_signal_deferral_depth"
+addSig "void", "zdump_heap", "int"
+addSig "void", "zdump_stacks"
+
+addSig "exception/int", "_Unwind_RaiseException", "filc_ptr"
+addSig "exception/int", "_Unwind_ForcedUnwind", "filc_ptr", "filc_ptr", "filc_ptr"
+addSig "void", "__cpu_indicator_init"
 
 addSig "int", "zmath_finitel", "long double"
 addSig "long double", "zmath_scalbnl", "long double", "int"
@@ -533,8 +574,16 @@ addSig "long double", "zmath_remainderl", "long double", "long double"
 addSig "long long", "zmath_llrintl", "long double"
 addSig "long double", "zmath_log1pl", "long double"
 addSig "long double", "zmath_nearbyintl", "long double"
+addSig "long double", "zmath_acosl", "long double"
+addSig "long double", "zmath_atan2l", "long double", "long double"
+addSig "long double", "zmath_atanl", "long double"
+addSig "long double", "zmath_logbl", "long double"
+addSig "long double", "zmath_significandl", "long double"
 addSig "unsigned", "zmath_getcw"
 addSig "void", "zmath_setcw", "unsigned"
+addSig "void", "zmath_feclearexcept", "int"
+addSig "int", "zmath_feenableexcept", "int"
+addSig "int", "zmath_fetestexcept", "int"
 
 addOutSig "void_ptr_ptr", "void", "filc_ptr", "filc_ptr"
 addOutSig "main", "exception/int", "int", "filc_ptr", "filc_ptr"
@@ -548,6 +597,9 @@ addOutSig "eh_stop_fn", "int", "int", "int", "unsigned long long", "filc_ptr", "
 addOutSig "void_ptr", "void", "filc_ptr"
 addOutSig "thread_main", "exception/filc_ptr", "filc_ptr"
 addOutSig "libc_start_main", "exception/void", "filc_ptr", "int", "filc_ptr", "filc_ptr", "filc_ptr"
+addOutSig "fiber_context_main", "exception/void"
+
+# FIXME: We totally could use fast entrypoints for native calls.
 
 case ARGV[0]
 when "src/libpas/filc_native.h"
@@ -557,6 +609,7 @@ when "src/libpas/filc_native.h"
         outp.puts "#ifndef FILC_NATIVE_H"
         outp.puts "#define FILC_NATIVE_H"
         outp.puts "#include \"filc_runtime.h\""
+        outp.puts "PAS_BEGIN_EXTERN_C;"
         $signatures.each {
             | signature |
             outp.print "PAS_API #{signature.nativeReturnType} "
@@ -587,6 +640,7 @@ when "src/libpas/filc_native.h"
             outp.puts ");"
         }
         outp.puts "#endif /* FILC_NATIVE_H */"
+        outp.puts "PAS_END_EXTERN_C;"
     }
 
 when "src/libpas/filc_native_forwarders.c"
@@ -594,6 +648,7 @@ when "src/libpas/filc_native_forwarders.c"
         | outp |
         outp.puts "/* Generated by generate_pizlonated_forwarders.rb */"
         outp.puts "#include \"filc_native.h\""
+        outp.puts "PAS_BEGIN_EXTERN_C;"
         $signatures.each {
             | signature |
             outp.puts "static pizlonated_return_value native_thunk_#{signature.name}("
@@ -661,15 +716,22 @@ when "src/libpas/filc_native_forwarders.c"
             end
             outp.puts "filc_cc_sizer_total_size(&rets_sizer));"
             outp.puts "}"
-            outp.puts "static const filc_object function_object_#{signature.name} = {"
-            outp.puts "    .upper = (void*)(&function_object_#{signature.name} + 1),"
-            outp.puts "    .aux = FILC_AUX_CREATE("
-            outp.puts "        FILC_OBJECT_FLAGS_CREATE("
-            outp.puts "            FILC_OBJECT_FLAG_GLOBAL |"
-            outp.puts "            FILC_OBJECT_FLAG_READONLY,"
-            outp.puts "            FILC_SPECIAL_TYPE_FUNCTION,"
-            outp.puts "            0),"
-            outp.puts "        native_thunk_#{signature.name})"
+            outp.puts "static const filc_function_object function_object_#{signature.name} = {"
+            outp.puts "    .object = {"
+            outp.puts "        .upper = (void*)&function_object_#{signature.name}.function,"
+            outp.puts "        .aux = FILC_AUX_CREATE("
+            outp.puts "            FILC_OBJECT_FLAGS_CREATE("
+            outp.puts "                FILC_OBJECT_FLAG_GLOBAL |"
+            outp.puts "                FILC_OBJECT_FLAG_READONLY,"
+            outp.puts "                FILC_SPECIAL_TYPE_FUNCTION,"
+            outp.puts "                0),"
+            outp.puts "            (void*)&function_object_#{signature.name}.function)"
+            outp.puts "    },"
+            outp.puts "    .function = {"
+            outp.puts "        .fast_entrypoint = (void*)native_thunk_#{signature.name},"
+            outp.puts "        .generic_entrypoint = native_thunk_#{signature.name},"
+            outp.puts "        .signature = FILC_GENERIC_SIGNATURE"
+            outp.puts "    }"
             outp.puts "};"
             outp.puts "filc_ptr pizlonated_#{signature.name}("
             outp.puts "    filc_thread* my_thread, const filc_origin* origin)"
@@ -677,8 +739,8 @@ when "src/libpas/filc_native_forwarders.c"
             outp.puts "    PAS_UNUSED_PARAM(my_thread);"
             outp.puts "    PAS_UNUSED_PARAM(origin);"
             outp.puts "    return filc_ptr_create_with_object_and_ptr_and_manual_tracking("
-            outp.puts "        (filc_object*)&function_object_#{signature.name},"
-            outp.puts "        native_thunk_#{signature.name});"
+            outp.puts "        (filc_object*)&function_object_#{signature.name}.object,"
+            outp.puts "        (void*)&function_object_#{signature.name}.function);"
             outp.puts "}"
         }
         $outSignatures.each {
@@ -719,7 +781,7 @@ when "src/libpas/filc_native_forwarders.c"
             }
             outp.puts "    filc_lock_top_native_frame(my_thread);"
             outp.puts "    pizlonated_function target_function ="
-            outp.puts "        (pizlonated_function)filc_ptr_ptr(target);"
+            outp.puts "        ((filc_function*)filc_ptr_ptr(target))->generic_entrypoint;"
             outp.puts "    pizlonated_return_value return_value = target_function("
             outp.puts "        my_thread, filc_ptr_lower(target),"
             outp.puts "        filc_cc_sizer_total_size(&args_sizer));"
@@ -757,6 +819,7 @@ when "src/libpas/filc_native_forwarders.c"
             end
             outp.puts "}"
         }
+        outp.puts "PAS_END_EXTERN_C;"
     }
 
 else

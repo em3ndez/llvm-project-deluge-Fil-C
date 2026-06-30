@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -131,6 +132,7 @@ void* zsys_dlopen(const char* filename, int flags); /* FIXME: we should add dlcl
                                                        do that. */
 void* zsys_dlsym(void* handle, const char* symbol);
 void* zsys_dlvsym(void* handle, const char* symbol, const char* version);
+int zsys_dladdr(const void* addr, void* info);
 int zsys_poll(void* pollfds, unsigned long nfds, int timeout);
 int zsys_faccessat(int dirfd, const char* pathname, int mode, int flags);
 int zsys_sigwait(const void* sigmask, int* sig);
@@ -180,7 +182,7 @@ int zsys_gettimeofday(void* tp, void* tzp);
 int zsys_settimeofday(const void* tp, const void* tzp);
 int zsys_getrusage(int who, void* rusage);
 int zsys_flock(int fd, int operation);
-clock_t zsys_times(struct tms *buf);
+long zsys_times(void *buf);
 int zsys_utimes(const char* path, const void* times);
 int zsys_lutimes(const char* path, const void* times);
 int zsys_adjtime(const void* delta, void* olddelta);
@@ -221,7 +223,7 @@ int zsys_uname(void* buf);
 int zsys_sendfile(int out_fd, int in_fd, long* offset, __SIZE_TYPE__ count);
 void zsys_futex_wake(volatile int* addr, int cnt, int priv);
 void zsys_futex_wait(volatile int* addr, int val, int priv);
-/* These futex calls return the errno as a negative value. They do not set errno.
+/* These futex calls return the errno as a positive value. They do not set errno.
  
    NOTE: the futex_timedwait uses an absolute timeout, which is not what the real futex syscall
    uses! */
@@ -247,6 +249,7 @@ int zsys_epoll_pwait2(int epfd, void* events, int maxevents, const void* timeout
                       const void* sigmask);
 int zsys_sysinfo(void* info);
 int zsys_sched_getaffinity(int tid, __SIZE_TYPE__ size, void* set);
+int zsys_raw_sched_getaffinity(int tid, __SIZE_TYPE__ size, void* set);
 int zsys_sched_setaffinity(int tid, __SIZE_TYPE__ size, const void* set);
 int zsys_posix_fadvise(int fd, long base, long len, int advice);
 int zsys_ppoll(void* fds, unsigned long nfds, const void* to, const void* mask);
@@ -353,6 +356,7 @@ int zsys_query_module(const char* name, int which, void* buf, __SIZE_TYPE__ bufs
 int zsys_uselib(const char* library);
 int zsys_sigqueue(int pid, int sig, void* value);
 int zsys_openat(int dirfd, const char* path, int flags, ...);
+int zsys_openat2(int dirfd, const char* pathname, const void* how, __SIZE_TYPE__ size);
 int zsys_statfs(const char* path, void* buf);
 int zsys_fstatfs(int fd, void* buf);
 int zsys_statvfs(const char* path, void* buf);
@@ -382,6 +386,30 @@ int zsys_timer_getoverrun(int timer);
 int zsys_timer_settime(int timer, int flags, const void* val, void* old);
 int zsys_timer_delete(int timer);
 int zsys_timer_gettime(int timer, void* value);
+int zsys_fallocate(int fd, int mode, long offset, long len);
+long zsys_keyctl(int op, ...);
+int zsys_add_key(const char* type, const char* description, const void* payload, __SIZE_TYPE__ plen,
+                 int ringid);
+int zsys_request_key(const char* type, const char* description, const char* callout_info,
+                     int destringid);
+long zsys_keyctl_dh_compute(int priv, int prime, int base, char* buffer, __SIZE_TYPE__ buflen);
+long zsys_keyctl_dh_compute_kdf(int priv, int prime, int base, char* hashname, char* otherinfo,
+                                __SIZE_TYPE__ otherinfolen, char* buffer, __SIZE_TYPE__ buflen);
+long zsys_keyctl_pkey_query(int key_id, const char* info, void* result);
+long zsys_keyctl_pkey_encrypt(int key_id, const char* info, const void* data, __SIZE_TYPE__ data_len,
+                              void* enc, __SIZE_TYPE__ enc_len);
+long zsys_keyctl_pkey_decrypt(int key_id, const char* info, const void* enc, __SIZE_TYPE__ enc_len,
+                              void* data, __SIZE_TYPE__ data_len);
+long zsys_keyctl_pkey_sign(int key_id, const char* info, const void* data, __SIZE_TYPE__ data_len,
+                           void* sig, __SIZE_TYPE__ sig_len);
+long zsys_keyctl_pkey_verify(int key_id, const char* info, const void* data, __SIZE_TYPE__ data_len,
+                             const void* sig, __SIZE_TYPE__ sig_len);
+long zsys_get_mempolicy(int *mode, unsigned long *nodemask,
+                        unsigned long maxnode, void *addr, unsigned long flags);
+long zsys_set_mempolicy(int mode, const unsigned long *nodemask,
+                        unsigned long maxnode);
+int zsys_clock_adjtime(int clock_id, void* buf);
+void zsys_abort(void);
 
 #ifdef __cplusplus
 }

@@ -61,12 +61,16 @@ std::string Linux::getMultiarchTriple(const Driver &D,
   case llvm::Triple::thumb:
     if (IsAndroid)
       return "arm-linux-androideabi";
-    if (TargetEnvironment == llvm::Triple::GNUEABIHF)
+    if (TargetEnvironment == llvm::Triple::GNUEABIHF ||
+        TargetEnvironment == llvm::Triple::MuslEABIHF ||
+        TargetEnvironment == llvm::Triple::EABIHF)
       return "arm-linux-gnueabihf";
     return "arm-linux-gnueabi";
   case llvm::Triple::armeb:
   case llvm::Triple::thumbeb:
-    if (TargetEnvironment == llvm::Triple::GNUEABIHF)
+    if (TargetEnvironment == llvm::Triple::GNUEABIHF ||
+        TargetEnvironment == llvm::Triple::MuslEABIHF ||
+        TargetEnvironment == llvm::Triple::EABIHF)
       return "armeb-linux-gnueabihf";
     return "armeb-linux-gnueabi";
   case llvm::Triple::x86:
@@ -82,6 +86,9 @@ std::string Linux::getMultiarchTriple(const Driver &D,
   case llvm::Triple::aarch64:
     if (IsAndroid)
       return "aarch64-linux-android";
+    if (hasEffectiveTriple() &&
+        getEffectiveTriple().getEnvironment() == llvm::Triple::PAuthTest)
+      return "aarch64-linux-pauthtest";
     return "aarch64-linux-gnu";
   case llvm::Triple::aarch64_be:
     return "aarch64_be-linux-gnu";
@@ -102,13 +109,16 @@ std::string Linux::getMultiarchTriple(const Driver &D,
     default:
       return TargetTriple.str();
     case llvm::Triple::GNUSF:
+    case llvm::Triple::MuslSF:
       FPFlavor = "sf";
       break;
     case llvm::Triple::GNUF32:
+    case llvm::Triple::MuslF32:
       FPFlavor = "f32";
       break;
     case llvm::Triple::GNU:
     case llvm::Triple::GNUF64:
+    case llvm::Triple::Musl:
       // This was going to be "f64" in an earlier Toolchain Conventions
       // revision, but starting from Feb 2023 the F64 ABI variants are
       // unmarked in their canonical forms.
@@ -170,15 +180,6 @@ std::string Linux::getMultiarchTriple(const Driver &D,
 
 static StringRef getOSLibDir(const llvm::Triple &Triple, const ArgList &Args) {
   if (Triple.isMIPS()) {
-    if (Triple.isAndroid()) {
-      StringRef CPUName;
-      StringRef ABIName;
-      tools::mips::getMipsCPUAndABI(Args, Triple, CPUName, ABIName);
-      if (CPUName == "mips32r6")
-        return "libr6";
-      if (CPUName == "mips32r2")
-        return "libr2";
-    }
     // lib32 directory has a special meaning on MIPS targets.
     // It contains N32 ABI binaries. Use this folder if produce
     // code for N32 ABI only.
@@ -220,6 +221,9 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
 
   Generic_GCC::PushPPaths(PPaths);
 
+  if (D.HasOptfil)
+    PPaths.push_back("/opt/fil/bin");
+
   Distro Distro(D.getVFS(), Triple);
 
   if (Distro.IsAlpineLinux() || Triple.isAndroid()) {
@@ -233,11 +237,37 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
     ExtraOpts.push_back("relro");
   }
 
-  // Android ARM/AArch64 use max-page-size=4096 to reduce VMA usage. Note, lld
-  // from 11 onwards default max-page-size to 65536 for both ARM and AArch64.
-  if ((Triple.isARM() || Triple.isAArch64()) && Triple.isAndroid()) {
-    ExtraOpts.push_back("-z");
-    ExtraOpts.push_back("max-page-size=4096");
+  // Note, lld from 11 onwards default max-page-size to 65536 for both ARM and
+  // AArch64.
+  if (Triple.isAndroid()) {
+    if (Triple.isARM()) {
+      // Android ARM uses max-page-size=4096 to reduce VMA usage.
+      ExtraOpts.push_back("-z");
+      ExtraOpts.push_back("max-page-size=4096");
+    } else if (Triple.isAArch64() || Triple.getArch() == llvm::Triple::x86_64) {
+      // Android AArch64 uses max-page-size=16384 to support 4k/16k page sizes.
+      // Android emulates a 16k page size for app testing on x86_64 machines.
+      ExtraOpts.push_back("-z");
+      ExtraOpts.push_back("max-page-size=16384");
+    }
+    if (Triple.isAndroidVersionLT(29)) {
+      // https://github.com/android/ndk/issues/1196
+      // The unwinder used by the crash handler on versions of Android prior to
+      // API 29 did not correctly handle binaries built with rosegment, which is
+      // enabled by default for LLD. Android only supports LLD, so it's not an
+      // issue that this flag is not accepted by other linkers.
+      ExtraOpts.push_back("--no-rosegment");
+    }
+    if (!Triple.isAndroidVersionLT(28)) {
+      // Android supports relr packing starting with API 28 and had its own
+      // flavor (--pack-dyn-relocs=android) starting in API 23.
+      // TODO: It's possible to use both with --pack-dyn-relocs=android+relr,
+      // but we need to gather some data on the impact of that form before we
+      // can know if it's a good default.
+      // On the other hand, relr should always be an improvement.
+      ExtraOpts.push_back("--use-android-relr-tags");
+      ExtraOpts.push_back("--pack-dyn-relocs=relr");
+    }
   }
 
   if (GCCInstallation.getParentLibPath().contains("opt/rh/"))
@@ -375,7 +405,7 @@ std::string Linux::computeSysRoot() const {
   if (getTriple().isAndroid()) {
     // Android toolchains typically include a sysroot at ../sysroot relative to
     // the clang binary.
-    const StringRef ClangDir = getDriver().getInstalledDir();
+    const StringRef ClangDir = getDriver().Dir;
     std::string AndroidSysRootPath = (ClangDir + "/../sysroot").str();
     if (getVFS().exists(AndroidSysRootPath))
       return AndroidSysRootPath;
@@ -427,12 +457,19 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
   const llvm::Triple &Triple = getTriple();
 
   if ((true)) {
+    // Check for explicit override flag
+    if (Arg *A = Args.getLastArg(options::OPT_filc_dynamic_linker)) {
+      A->claim();
+      return std::string(A->getValue());
+    }
+    
     if (getDriver().HasPizfix) {
-      SmallString<128> P(getDriver().Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix");
+      SmallString<128> P(getDriver().PizfixRoot);
       llvm::sys::path::append(P, "lib", "ld-yolo-x86_64.so");
       return std::string(P);
     }
+    if (getDriver().HasOptfil)
+        return "/opt/fil/lib/ld-yolo-x86_64.so";
     return "/lib/ld-yolo-x86_64.so";
   }
 
@@ -505,6 +542,7 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
   case llvm::Triple::thumbeb: {
     const bool HF =
         Triple.getEnvironment() == llvm::Triple::GNUEABIHF ||
+        Triple.getEnvironment() == llvm::Triple::GNUEABIHFT64 ||
         tools::arm::getARMFloatABI(*this, Args) == tools::arm::FloatABI::Hard;
 
     LibDir = "lib";
@@ -568,16 +606,12 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
     Loader =
         (tools::ppc::hasPPCAbiArg(Args, "elfv1")) ? "ld64.so.1" : "ld64.so.2";
     break;
-  case llvm::Triple::riscv32: {
-    StringRef ABIName = tools::riscv::getRISCVABI(Args, Triple);
-    LibDir = "lib";
-    Loader = ("ld-linux-riscv32-" + ABIName + ".so.1").str();
-    break;
-  }
+  case llvm::Triple::riscv32:
   case llvm::Triple::riscv64: {
+    StringRef ArchName = llvm::Triple::getArchTypeName(Arch);
     StringRef ABIName = tools::riscv::getRISCVABI(Args, Triple);
     LibDir = "lib";
-    Loader = ("ld-linux-riscv64-" + ABIName + ".so.1").str();
+    Loader = ("ld-linux-" + ArchName + "-" + ABIName + ".so.1").str();
     break;
   }
   case llvm::Triple::sparc:
@@ -627,24 +661,47 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   if (D.HasPizfix) {
     {
-      SmallString<128> P(D.Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix", "stdfil-include");
+      std::string P;
+      if (Arg *A = DriverArgs.getLastArg(options::OPT_filc_stdfil_include)) {
+        A->claim();
+        P = A->getValue();
+      } else {
+        SmallString<128> Path(D.PizfixRoot);
+        llvm::sys::path::append(Path, "stdfil-include");
+        P = std::string(Path);
+      }
       addSystemInclude(DriverArgs, CC1Args, P);
     }
     
     {
-      SmallString<128> P(D.Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix", "os-include");
+      std::string P;
+      if (Arg *A = DriverArgs.getLastArg(options::OPT_filc_os_include)) {
+        A->claim();
+        P = A->getValue();
+      } else {
+        SmallString<128> Path(D.PizfixRoot);
+        llvm::sys::path::append(Path, "os-include");
+        P = std::string(Path);
+      }
       addSystemInclude(DriverArgs, CC1Args, P);
     }
     
     if (!DriverArgs.hasArg(clang::driver::options::OPT_nostdinc)
         && !DriverArgs.hasArg(options::OPT_nostdlibinc)) {
-      SmallString<128> P(D.Dir);
-      llvm::sys::path::append(P, "..", "..", "pizfix", "include");
+      std::string P;
+      if (Arg *A = DriverArgs.getLastArg(options::OPT_filc_include)) {
+        A->claim();
+        P = A->getValue();
+      } else {
+        SmallString<128> Path(D.PizfixRoot);
+        llvm::sys::path::append(Path, "include");
+        P = std::string(Path);
+      }
       addSystemInclude(DriverArgs, CC1Args, P);
     }
-  } else
+  } else if (D.HasOptfil)
+    addSystemInclude(DriverArgs, CC1Args, "/opt/fil/include");
+  else
     addSystemInclude(DriverArgs, CC1Args, "/usr/include");
 
   SmallString<128> ResourceDirInclude(D.ResourceDir);
@@ -785,6 +842,11 @@ void Linux::AddIAMCUIncludeArgs(const ArgList &DriverArgs,
   }
 }
 
+void Linux::addSYCLIncludeArgs(const ArgList &DriverArgs,
+                               ArgStringList &CC1Args) const {
+  SYCLInstallation->addSYCLIncludeArgs(DriverArgs, CC1Args);
+}
+
 bool Linux::isPIEDefault(const llvm::opt::ArgList &Args) const {
   return CLANG_DEFAULT_PIE_ON_LINUX || getTriple().isAndroid() ||
          getTriple().isMusl() || getSanitizerArgs(Args).requiresPIE();
@@ -826,14 +888,15 @@ SanitizerMask Linux::getSupportedSanitizers() const {
   const bool IsRISCV64 = getTriple().getArch() == llvm::Triple::riscv64;
   const bool IsSystemZ = getTriple().getArch() == llvm::Triple::systemz;
   const bool IsHexagon = getTriple().getArch() == llvm::Triple::hexagon;
+  const bool IsAndroid = getTriple().isAndroid();
   SanitizerMask Res = ToolChain::getSupportedSanitizers();
   Res |= SanitizerKind::Address;
   Res |= SanitizerKind::PointerCompare;
   Res |= SanitizerKind::PointerSubtract;
+  Res |= SanitizerKind::Realtime;
   Res |= SanitizerKind::Fuzzer;
   Res |= SanitizerKind::FuzzerNoLink;
   Res |= SanitizerKind::KernelAddress;
-  Res |= SanitizerKind::Memory;
   Res |= SanitizerKind::Vptr;
   Res |= SanitizerKind::SafeStack;
   if (IsX86_64 || IsMIPS64 || IsAArch64 || IsLoongArch64)
@@ -842,9 +905,11 @@ SanitizerMask Linux::getSupportedSanitizers() const {
       IsRISCV64 || IsSystemZ || IsHexagon || IsLoongArch64)
     Res |= SanitizerKind::Leak;
   if (IsX86_64 || IsMIPS64 || IsAArch64 || IsPowerPC64 || IsSystemZ ||
-      IsLoongArch64)
+      IsLoongArch64 || IsRISCV64)
     Res |= SanitizerKind::Thread;
-  if (IsX86_64 || IsSystemZ)
+  if (IsX86_64 || IsAArch64)
+    Res |= SanitizerKind::Type;
+  if (IsX86_64 || IsSystemZ || IsPowerPC64)
     Res |= SanitizerKind::KernelMemory;
   if (IsX86_64 || IsMIPS64 || IsAArch64 || IsX86 || IsMIPS || IsArmArch ||
       IsPowerPC64 || IsHexagon || IsLoongArch64 || IsRISCV64)
@@ -855,6 +920,11 @@ SanitizerMask Linux::getSupportedSanitizers() const {
   if (IsX86_64 || IsAArch64) {
     Res |= SanitizerKind::KernelHWAddress;
   }
+  if (IsX86_64)
+    Res |= SanitizerKind::NumericalStability;
+  if (!IsAndroid)
+    Res |= SanitizerKind::Memory;
+
   // Work around "Cannot represent a difference across sections".
   if (getTriple().getArch() == llvm::Triple::ppc64)
     Res &= ~SanitizerKind::Function;
@@ -869,25 +939,6 @@ void Linux::addProfileRTLibs(const llvm::opt::ArgList &Args,
     CmdArgs.push_back(Args.MakeArgString(
         Twine("-u", llvm::getInstrProfRuntimeHookVarName())));
   ToolChain::addProfileRTLibs(Args, CmdArgs);
-}
-
-llvm::DenormalMode
-Linux::getDefaultDenormalModeForType(const llvm::opt::ArgList &DriverArgs,
-                                     const JobAction &JA,
-                                     const llvm::fltSemantics *FPType) const {
-  switch (getTriple().getArch()) {
-  case llvm::Triple::x86:
-  case llvm::Triple::x86_64: {
-    std::string Unused;
-    // DAZ and FTZ are turned on in crtfastmath.o
-    if (!DriverArgs.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles) &&
-        isFastMathRuntimeAvailable(DriverArgs, Unused))
-      return llvm::DenormalMode::getPreserveSign();
-    return llvm::DenormalMode::getIEEE();
-  }
-  default:
-    return llvm::DenormalMode::getIEEE();
-  }
 }
 
 void Linux::addExtraOpts(llvm::opt::ArgStringList &CmdArgs) const {

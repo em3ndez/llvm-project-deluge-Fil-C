@@ -3,5 +3,5 @@
 
 void thrd_yield()
 {
-	__syscall(SYS_sched_yield);
+	zsys_sched_yield();
 }
