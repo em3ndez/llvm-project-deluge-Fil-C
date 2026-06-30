@@ -703,6 +703,12 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       llvm::sys::path::append(P, "lib");
       BasePath = std::string(P);
     }
+
+    const char* DashRPath;
+    if (IsStaticPIE)
+      DashRPath = "-rpath-link";
+    else
+      DashRPath = "-rpath";
     
     {
       SmallString<128> P(BasePath);
@@ -710,13 +716,13 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       llvm::sys::path::append(P, "lib64");
       if (llvm::sys::fs::is_directory(P)) {
         CmdArgs.push_back(Args.MakeArgString("-L" + P));
-        CmdArgs.push_back("-rpath");
+        CmdArgs.push_back(DashRPath);
         CmdArgs.push_back(Args.MakeArgString(P));
       }
     }
     {
       CmdArgs.push_back(Args.MakeArgString("-L" + BasePath));
-      CmdArgs.push_back("-rpath");
+      CmdArgs.push_back(DashRPath);
       CmdArgs.push_back(Args.MakeArgString(BasePath));
     }
   } else if (ToolChain.getDriver().HasOptfil) {
