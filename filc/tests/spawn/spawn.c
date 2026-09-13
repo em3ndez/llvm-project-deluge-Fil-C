@@ -7,22 +7,28 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <inttypes.h>
 
 extern char** environ;
 
-static void mywait(int pid)
+static void mywait_impl(int pid, int expected_exit_status)
 {
     for (;;) {
         int status;
         int result = waitpid(pid, &status, 0);
         if (result == pid) {
             ZASSERT(WIFEXITED(status));
-            ZASSERT(!WEXITSTATUS(status));
+            ZASSERT(WEXITSTATUS(status) == expected_exit_status);
             break;
         }
         ZASSERT(result == -1);
         ZASSERT(errno == EINTR);
     }
+}
+
+static void mywait(int pid)
+{
+    mywait_impl(pid, 0);
 }
 
 static void spawn_and_wait(const char* path, const posix_spawn_file_actions_t* actions,
@@ -99,6 +105,20 @@ int main()
     ZASSERT(result);
     ZASSERT(result == ENOENT);
     ZASSERT(pid == 666);
+
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addclose(&actions, 0);
+    posix_spawn_file_actions_addclose(&actions, 1);
+    posix_spawn_file_actions_addclose(&actions, 2);
+    zprintf("Spawn5: ");
+    pid = 666;
+    ZASSERT(!posix_spawn(&pid, "/bin/sh", &actions, &attr, argv, environ));
+    mywait_impl(pid, 1);
+    zprintf("<none>\n");
+
+    posix_spawn_file_actions_init(&actions);
+    ZASSERT(posix_spawn_file_actions_addclose(&actions, INT32_MAX) == EBADF);
+    ZASSERT(posix_spawn_file_actions_addclose(&actions, -1) == EBADF);
 
     return 0;
 }

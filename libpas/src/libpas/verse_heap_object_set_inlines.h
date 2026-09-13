@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -30,7 +30,7 @@
 #include "pas_large_utility_free_heap.h"
 #include "pas_segregated_exclusive_view.h"
 #include "pas_segregated_size_directory.h"
-#include "ue_include/verse_heap_config_ue.h"
+#include "verse_heap_config.h"
 #include "verse_heap_iterate_filter.h"
 #include "verse_heap_large_entry.h"
 #include "verse_heap_object_set.h"

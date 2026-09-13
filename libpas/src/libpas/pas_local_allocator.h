@@ -1,7 +1,8 @@
 /*
  * Copyright (c) 2018-2021 Apple Inc. All rights reserved.
- * Copyright (c) 2023 Epic Games, Inc. All Rights Reserved.
- *
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved. 
+*
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -11,10 +12,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -38,9 +39,10 @@
 #include "pas_segregated_view.h"
 #include "pas_utils.h"
 #include <stdio.h>
-#include "ue_include/pas_local_allocator_ue.h"
 
 PAS_BEGIN_EXTERN_C;
+
+#define PAS_LOCAL_ALLOCATOR_ALIGNMENT 8
 
 struct pas_allocator_counts;
 struct pas_local_allocator;
@@ -86,17 +88,18 @@ struct pas_local_allocator {
 #define PAS_LOCAL_ALLOCATOR_NULL_INITIALIZER(location) ((pas_local_allocator){ \
         .scavenger_data = \
             PAS_LOCAL_ALLOCATOR_SCAVENGER_DATA_INITIALIZER(pas_local_allocator_allocator_kind, location), \
+        .alignment_shift = 0, \
+        .config_kind = pas_local_allocator_config_kind_null, \
+        .current_word_is_valid = false, \
+        .is_stashing_alloc_bits = false, \
         .payload_end = 0, \
         .remaining = 0, \
         .object_size = 0, \
         .page_ish = 0, \
         .current_offset = 0, \
         .end_offset = 0, \
-        .view = NULL, \
-        .alignment_shift = 0, \
-        .current_word_is_valid = false, \
         .current_word = 0, \
-        .config_kind = pas_local_allocator_config_kind_null \
+        .view = NULL, \
     })
 
 #define PAS_LOCAL_ALLOCATOR_SIZE(num_alloc_bits) \

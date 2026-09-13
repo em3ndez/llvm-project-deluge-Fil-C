@@ -1,6 +1,7 @@
 #!/bin/sh
 #
 # Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
 #
-# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
 # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
 # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
 # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -28,8 +29,10 @@
 set -e
 set -x
 
-cd projects/libffi-3.4.6
-extract_source
+cd projects
+rm -rf libffi/extracted-source
+../filc/projeny extract libffi.projeny libffi/extracted-source
+cd libffi/extracted-source
 CC="$PWD/../../../build/bin/clang -g" CXX="$PWD/../../../build/bin/clang++ -g" ./configure --prefix=$PWD/../../../pizfix --disable-exec-static-tramp
 make -j $NCPU
 make check
@@ -39,3 +42,5 @@ make install
 ../../../build/bin/clang -O2 -g -o ffitest ffitest.c -lffi -Wno-incompatible-function-pointer-types
 ./ffitest > ffitest.actual
 diff ffitest.expected ffitest.actual
+cd ..
+rm -rf extracted-source

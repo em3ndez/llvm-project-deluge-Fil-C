@@ -4,5 +4,5 @@
 
 int memfd_create(const char *name, unsigned flags)
 {
-	return syscall(SYS_memfd_create, name, flags);
+	return zsys_memfd_create(name, flags);
 }

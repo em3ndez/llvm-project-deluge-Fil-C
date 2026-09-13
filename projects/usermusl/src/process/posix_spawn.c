@@ -113,12 +113,12 @@ static int child(void *args_vp)
 				}
 				break;
 			case FDOP_OPEN:
-				fd = __sys_open(op->path, op->oflag, op->mode);
+				fd = zsys_open(op->path, op->oflag, op->mode);
 				if (fd < 0) goto fail;
 				if (fd != op->fd) {
 					if (__sys_dup2(fd, op->fd)<0)
 						goto fail;
-					__syscall(SYS_close, fd);
+					zsys_close(fd);
 				}
 				break;
 			case FDOP_CHDIR:

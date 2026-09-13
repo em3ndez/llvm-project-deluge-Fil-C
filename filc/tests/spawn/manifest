@@ -5,3 +5,4 @@ output-includes:
   - "Spawn2: Hello"
   - "Spawn3: /"
   - "Spawn4: Hello"
+  - "Spawn5: <none>"

@@ -90,9 +90,7 @@ private:
                                  RewriteKind rewrite) const;
 
   void AddClangCLArgs(const llvm::opt::ArgList &Args, types::ID InputType,
-                      llvm::opt::ArgStringList &CmdArgs,
-                      llvm::codegenoptions::DebugInfoKind *DebugInfoKind,
-                      bool *EmitCodeView) const;
+                      llvm::opt::ArgStringList &CmdArgs) const;
 
   mutable std::unique_ptr<llvm::raw_fd_ostream> CompilationDatabase = nullptr;
   void DumpCompilationDatabase(Compilation &C, StringRef Filename,
@@ -134,6 +132,26 @@ public:
   void AddRISCVTargetArgs(const llvm::opt::ArgList &Args,
                           llvm::opt::ArgStringList &CmdArgs) const;
   bool hasGoodDiagnostics() const override { return true; }
+  bool hasIntegratedAssembler() const override { return false; }
+  bool hasIntegratedCPP() const override { return false; }
+
+  void ConstructJob(Compilation &C, const JobAction &JA,
+                    const InputInfo &Output, const InputInfoList &Inputs,
+                    const llvm::opt::ArgList &TCArgs,
+                    const char *LinkingOutput) const override;
+};
+
+/// Fil-C sarcasm assembler tool. Runs the sarcasm (SAfe Runtime
+/// Capability-enforced Assembler) program on the assembly input. sarcasm
+/// rewrites annotated Yolo-C assembly into memory-safe, Fil-C-linkable
+/// assembly and assembles it. This is the default assembler for .s inputs on
+/// targets that sarcasm supports; -yolo-assembler opts back into the
+/// integrated assembler.
+class LLVM_LIBRARY_VISIBILITY SarcasmAs : public Tool {
+public:
+  SarcasmAs(const ToolChain &TC)
+      : Tool("sarcasm", "sarcasm assembler", TC) {}
+  bool hasGoodDiagnostics() const override { return false; }
   bool hasIntegratedAssembler() const override { return false; }
   bool hasIntegratedCPP() const override { return false; }
 
@@ -194,6 +212,21 @@ enum class DwarfFissionKind { None, Split, Single };
 DwarfFissionKind getDebugFissionKind(const Driver &D,
                                      const llvm::opt::ArgList &Args,
                                      llvm::opt::Arg *&Arg);
+
+// Calculate the output path of the module file when compiling a module unit
+// with the `-fmodule-output` option or `-fmodule-output=` option specified.
+// The behavior is:
+// - If `-fmodule-output=` is specfied, then the module file is
+//   writing to the value.
+// - Otherwise if the output object file of the module unit is specified, the
+// output path
+//   of the module file should be the same with the output object file except
+//   the corresponding suffix. This requires both `-o` and `-c` are specified.
+// - Otherwise, the output path of the module file will be the same with the
+//   input with the corresponding suffix.
+llvm::SmallString<256>
+getCXX20NamedModuleOutputPath(const llvm::opt::ArgList &Args,
+                              const char *BaseInput);
 
 } // end namespace tools
 

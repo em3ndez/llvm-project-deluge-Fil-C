@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2024-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -30,6 +31,14 @@
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 #include <pizlonated_runtime.h>
+#include <linux/futex.h>
+#include <linux/time.h>
+#include "syscall.h"
+
+unsigned zversion(void)
+{
+    return FILC_VERSION;
+}
 
 struct lock {
     int word;
@@ -460,14 +469,10 @@ struct futex_args {
 	volatile void* uaddr;
 	long futex_op;
 	unsigned long val;
-	const void* timeout;
+	const struct timespec* timeout;
 	volatile void* uaddr2;
 	unsigned long val3;
 };
-
-#define FUTEX_WAIT    0
-#define FUTEX_WAKE    1
-#define FUTEX_PRIVATE 128
 
 long zsys_syscall(long n, ...)
 {
@@ -484,17 +489,42 @@ long zsys_syscall(long n, ...)
     void* syscall_args = (char*)zargs() + 8;
     void* callee;
     switch (n) {
-    case 202: /* SYS_futex */ {
+    case SYS_futex: {
         struct futex_args* args = (struct futex_args*)syscall_args;
         switch (args->futex_op) {
         case FUTEX_WAIT:
-        case FUTEX_WAIT | FUTEX_PRIVATE:
-            ZASSERT(!args->timeout);
-            zsys_futex_wait(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
+        case FUTEX_WAIT | FUTEX_PRIVATE_FLAG:
+        case FUTEX_WAIT | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT_BITSET:
+        case FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG:
+        case FUTEX_WAIT_BITSET | FUTEX_CLOCK_REALTIME:
+        case FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME: {
+            if (args->futex_op & FUTEX_WAIT_BITSET)
+                ZASSERT(args->val3 == FUTEX_BITSET_MATCH_ANY);
+            int clock_id = (args->futex_op & FUTEX_CLOCK_REALTIME) ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+            struct timespec timeout = {};
+            if (args->timeout) {
+                if (!(args->futex_op & FUTEX_WAIT_BITSET))
+                    zsys_clock_gettime(clock_id, &timeout);
+                timeout.tv_sec += args->timeout->tv_sec;
+                timeout.tv_nsec += args->timeout->tv_nsec;
+                if (timeout.tv_nsec >= 1000000000) {
+                    timeout.tv_sec++;
+                    timeout.tv_nsec -= 1000000000;
+                }
+            }
+            int err = zsys_futex_timedwait(args->uaddr, args->val, clock_id,
+                args->timeout ? &timeout : 0, args->futex_op & FUTEX_PRIVATE_FLAG);
+            if (err > 0) {
+                zset_errno(err);
+                return -1;
+            }
             return 0;
+        }
         case FUTEX_WAKE:
-        case FUTEX_WAKE | FUTEX_PRIVATE:
-            zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE);
+        case FUTEX_WAKE | FUTEX_PRIVATE_FLAG:
+            zsys_futex_wake(args->uaddr, args->val, args->futex_op & FUTEX_PRIVATE_FLAG);
             return 0;
         default:
             zerrorf("unsupported futex op: %d.", args->futex_op);
@@ -502,39 +532,47 @@ long zsys_syscall(long n, ...)
         }
     }
 
-    case 217 /* SYS_getdents64 */:
+    case SYS_getdents64:
         callee = zsys_getdents;
         break;
 
-    case 444 /* SYS_landlock_create_ruleset */:
+    case SYS_set_mempolicy:
+        callee = zsys_set_mempolicy;
+        break;
+
+    case SYS_get_mempolicy:
+        callee = zsys_get_mempolicy;
+        break;
+
+    case SYS_landlock_create_ruleset:
         callee = zsys_landlock_create_ruleset;
         break;
 
-    case 445 /* SYS_landlock_add_rule */:
+    case SYS_landlock_add_rule:
         callee = zsys_landlock_add_rule;
         break;
 
-    case 446 /* SYS_landlock_restrict_self */:
+    case SYS_landlock_restrict_self:
         callee = zsys_landlock_restrict_self;
         break;
 
-    case 298 /* SYS_perf_event_open */:
+    case SYS_perf_event_open:
         callee = zsys_perf_event_open;
         break;
 
-    case 186 /* SYS_gettid */:
+    case SYS_gettid:
         callee = zthread_self_id;
         break;
 
-    case 318 /* SYS_getrandom */:
+    case SYS_getrandom:
         callee = zsys_getrandom;
         break;
 
-    case 39 /* SYS_getpid */:
+    case SYS_getpid:
         callee = zsys_getpid;
         break;
 
-    case 452 /* SYS_fchmodat2 */:
+    case SYS_fchmodat2:
         /* The pizlonated fchmodat syscall is really an interface to fchmodat2 on modern kernels, and
            on older kernels, it's an interface to a reasonably faithful emulation of fchmodat2.
         
@@ -543,21 +581,73 @@ long zsys_syscall(long n, ...)
         callee = zsys_fchmodat;
         break;
 
-    case 164 /* SYS_settimeofday */:
+    case SYS_settimeofday:
         callee = zsys_settimeofday;
         break;
 
-    case 3 /* SYS_close */:
+    case SYS_close:
         /* NOTE: Folks do this because they want a "nocancel" version of close(2). */
         callee = zsys_close;
         break;
 
-    case 332 /* SYS_statx */:
+    case SYS_statx:
         callee = zsys_statx;
         break;
 
-    case 326 /* SYS_copy_file_range */:
+    case SYS_copy_file_range:
         callee = zsys_copy_file_range;
+        break;
+
+    case SYS_renameat2:
+        callee = zsys_renameat2;
+        break;
+
+    case SYS_pidfd_open:
+        callee = zsys_pidfd_open;
+        break;
+
+    case SYS_setreuid:
+        callee = zsys_setreuid;
+        break;
+
+    case SYS_setregid:
+        callee = zsys_setregid;
+        break;
+
+    case SYS_setresuid:
+        callee = zsys_setresuid;
+        break;
+
+    case SYS_keyctl:
+        callee = zsys_keyctl;
+        break;
+
+    case SYS_sched_setaffinity:
+        callee = zsys_sched_setaffinity;
+        break;
+
+    case SYS_sched_getaffinity:
+        callee = zsys_raw_sched_getaffinity;
+        break;
+
+    case SYS_add_key:
+        callee = zsys_add_key;
+        break;
+
+    case SYS_request_key:
+        callee = zsys_request_key;
+        break;
+
+    case SYS_memfd_create:
+        callee = zsys_memfd_create;
+        break;
+
+    case SYS_write:
+        callee = zsys_write;
+        break;
+
+    case SYS_openat2:
+        callee = zsys_openat2;
         break;
 
 	/* FIXME: Implement more syscalls! */
@@ -580,6 +670,16 @@ void* zthread_create(void* (*callback)(void* arg), void* arg)
     void* result = 0;
     zthread_create2(callback, arg, &result, 0);
     return result;
+}
+
+void* zstack_limit(void)
+{
+    return zthread_stack_limit(zthread_self());
+}
+
+void* zstack_top(void)
+{
+    return zthread_stack_top(zthread_self());
 }
 
 int zsys_gettid(void)
@@ -611,6 +711,18 @@ void* zsys_create_module(const char* name, __SIZE_TYPE__ size)
     (void)size;
     zerror("create_module not supported.");
     return 0;
+}
+
+int zsys_query_module(const char* name, int which, void* buf, __SIZE_TYPE__ bufsize,
+    __SIZE_TYPE__* ret)
+{
+    (void)name;
+    (void)which;
+    (void)buf;
+    (void)bufsize;
+    (void)ret;
+    zerror("query_module not supported.");
+    return -1;
 }
 
 int zsys_get_kernel_syms(void* table)
@@ -676,3 +788,150 @@ void zgc_request_and_wait(void)
 {
     zgc_wait(zgc_request_fresh());
 }
+
+/* Support for atomic accesses that the compiler cannot handle natively. Two kinds of calls
+   end up here:
+
+   - Atomics on objects bigger than 16 bytes: the frontend emits calls to __atomic_load,
+     __atomic_store, __atomic_exchange, __atomic_compare_exchange, and __atomic_is_lock_free.
+
+   - Atomics whose alignment is less than their size (e.g. a 16-byte atomic with 8-byte
+     alignment, which cannot use cmpxchg16b on x86_64): a pre-pass in the pizlonator
+     (convertMisalignedAtomicsToLibcalls in FilPizlonator.cpp) converts those into calls to
+     __atomic_load & friends. If we didn't do that, the backend - which runs after the
+     pizlonator - would emit raw, unpizlonated calls to those symbols, which could never bind
+     to the pizlonated implementations here; worse, such a raw libcall would copy the payload
+     but not the capabilities of any pointers in the accessed memory. (Note that even with
+     the pizlonator's conversion, the capabilities of pointers inside flattened-integer
+     atomics are lost, since the frontend emits such atomics on flattened integer types.
+     That's consistent with how aligned 16-byte atomics behave.)
+
+   This is the same deal as compiler-rt's atomic.c: since every atomic access to such an
+   object goes through these functions, we can make the accesses appear atomic by serializing
+   them with locks.
+
+   We use a hashed array of locks rather than a per-object lock, so that we don't need any
+   per-object state. */
+
+#define ATOMIC_LOCK_COUNT_LOG2 10
+#define ATOMIC_LOCK_COUNT (1 << ATOMIC_LOCK_COUNT_LOG2)
+#define ATOMIC_LOCK_MASK (ATOMIC_LOCK_COUNT - 1)
+
+/* The locks are zero-initialized, and zero is LOCK_NOT_HELD, so there is no need to call
+   lock_init on them. */
+static struct lock atomic_locks[ATOMIC_LOCK_COUNT];
+
+/* We cannot use memcmp from libc here, since we are part of libpizlo, which is linked after
+   libc. Note that __builtin_memcmp would just turn into a bcmp call, which has the same
+   problem. */
+static int atomic_mem_equal(void* a, void* b, __SIZE_TYPE__ size)
+{
+    unsigned char* ac = a;
+    unsigned char* bc = b;
+    while (size--) {
+        if (*ac++ != *bc++)
+            return 0;
+    }
+    return 1;
+}
+
+static struct lock* atomic_lock_for_ptr(void* ptr)
+{
+    __UINTPTR_TYPE__ hash = (__UINTPTR_TYPE__)ptr;
+    /* Disregard the lowest 4 bits. We want all values that may be part of the same memory
+       operation to hash to the same value and therefore use the same lock. */
+    hash >>= 4;
+    /* Use the next bits as the basis for the hash. */
+    __UINTPTR_TYPE__ low = hash & ATOMIC_LOCK_MASK;
+    /* Now use the higher bits to perturb the hash, so that we don't get collisions from atomic
+       fields in a single object. */
+    hash >>= 16;
+    hash ^= low;
+    return atomic_locks + (hash & ATOMIC_LOCK_MASK);
+}
+
+/* We cannot define functions called __atomic_load & friends directly, because the compiler
+   reserves those names for builtins. So, we define them with a _c suffix and use this pragma to
+   give them the real symbol names, just like compiler-rt's atomic.c does. The pizlonator then
+   mangles those names the same way it mangles the call sites, so everything links up. */
+#pragma redefine_extname __atomic_load_c __atomic_load
+#pragma redefine_extname __atomic_store_c __atomic_store
+#pragma redefine_extname __atomic_exchange_c __atomic_exchange
+#pragma redefine_extname __atomic_compare_exchange_c __atomic_compare_exchange
+#pragma redefine_extname __atomic_is_lock_free_c __atomic_is_lock_free
+
+void __atomic_load_c(__SIZE_TYPE__ size, void* src, void* dest, int model)
+{
+    /* Taking the lock gives us seq_cst semantics regardless of the requested model, which is
+       always a valid way to honor the model. */
+    (void)model;
+    struct lock* lock = atomic_lock_for_ptr(src);
+    lock_lock(lock);
+    __builtin_memcpy(dest, src, size);
+    lock_unlock(lock);
+}
+
+void __atomic_store_c(__SIZE_TYPE__ size, void* dest, void* src, int model)
+{
+    (void)model;
+    struct lock* lock = atomic_lock_for_ptr(dest);
+    lock_lock(lock);
+    __builtin_memcpy(dest, src, size);
+    lock_unlock(lock);
+}
+
+void __atomic_exchange_c(__SIZE_TYPE__ size, void* ptr, void* val, void* old, int model)
+{
+    (void)model;
+    struct lock* lock = atomic_lock_for_ptr(ptr);
+    lock_lock(lock);
+    __builtin_memcpy(old, ptr, size);
+    __builtin_memcpy(ptr, val, size);
+    lock_unlock(lock);
+}
+
+int __atomic_compare_exchange_c(__SIZE_TYPE__ size, void* ptr, void* expected, void* desired,
+                                int success, int failure)
+{
+    (void)success;
+    (void)failure;
+    struct lock* lock = atomic_lock_for_ptr(ptr);
+    lock_lock(lock);
+    if (atomic_mem_equal(ptr, expected, size)) {
+        __builtin_memcpy(ptr, desired, size);
+        lock_unlock(lock);
+        return 1;
+    }
+    __builtin_memcpy(expected, ptr, size);
+    lock_unlock(lock);
+    return 0;
+}
+
+_Bool __atomic_is_lock_free_c(__SIZE_TYPE__ size, void* ptr)
+{
+    /* clang does not fold __atomic_is_lock_free to a constant at call sites; it emits a real
+       call to this function (verified for sizes 16 and 17). So this function is genuinely
+       reachable and must return correct answers.
+
+       An atomic operation is lock-free iff its size is 1, 2, 4, 8, or 16 and its alignment is
+       at least its size (16-byte atomics use cmpxchg16b on x86_64, which requires 16-byte
+       alignment). Atomics whose alignment is less than their size are converted to calls to
+       the lock-based functions above by a pre-pass in the pizlonator
+       (convertMisalignedAtomicsToLibcalls in FilPizlonator.cpp), and atomics bigger than 16
+       bytes get libcalls from the frontend, so those are not lock-free. Note that all we can
+       go on is the pointer value we see; if the compiler had less alignment information at
+       compile time than the pointer happens to have at runtime, then the accesses use locks
+       even though we return 1 here. */
+    switch (size) {
+    case 1:
+    case 2:
+    case 4:
+    case 8:
+        return !((__UINTPTR_TYPE__)ptr & (size - 1));
+    case 16:
+        return !((__UINTPTR_TYPE__)ptr & 15);
+    default:
+        return 0;
+    }
+}
+

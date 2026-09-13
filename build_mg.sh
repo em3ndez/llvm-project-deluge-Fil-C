@@ -28,9 +28,13 @@
 set -e
 set -x
 
-cd projects/mg
-extract_source
+cd projects
+rm -rf mg/extracted-source
+../filc/projeny extract mg.projeny mg/extracted-source
+cd mg/extracted-source
 CC="$CCPREFIX$PWD/../../../build/bin/clang -O -g" ./configure --prefix=$PWD/../../../pizfix
 $MAKE -j $NCPU
-$MAKE install
+$MAKE -j $NCPU install
+cd ..
+rm -rf extracted-source
 

@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -39,7 +39,7 @@ PAS_API verse_heap_medium_page_header_object* verse_heap_medium_page_header_obje
 	verse_heap_medium_page_header_object* result;
 	
 	result = (verse_heap_medium_page_header_object*)
-		pas_utility_heap_allocate(VERSE_HEAP_MEDIUM_SEGREGATED_HEADER_OBJECT_SIZE, "verse_heap_medium_page_header_object");
+		pas_utility_heap_allocate_with_alignment(VERSE_HEAP_MEDIUM_SEGREGATED_HEADER_OBJECT_SIZE, PAS_PAIR_SIZE, "verse_heap_medium_page_header_object");
 
 	PAS_ASSERT(verse_heap_page_base_for_page_header(&result->verse) == &result->segregated.base);
 	PAS_ASSERT(verse_heap_page_header_for_segregated_page(&result->segregated) == &result->verse);

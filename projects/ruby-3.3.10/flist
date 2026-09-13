@@ -1,0 +1,11 @@
+./ext/psych/.gitignore
+./ext/zlib/.gitignore
+./test/rubygems/test_gem_ext_cargo_builder/custom_name/.gitignore
+./test/rubygems/test_gem_ext_cargo_builder/rust_ruby_example/.gitignore
+./yjit/.gitignore
+./tool/ruby_vm/tests/.gitkeep
+./tool/test_for_warn_bundled_gems/.gitignore
+./spec/bundler/realworld/fixtures/warbler/.gitignore
+./spec/ruby/.gitignore
+./spec/ruby/optional/capi/ext/.gitignore
+./spec/mspec/tool/sync/.gitignore

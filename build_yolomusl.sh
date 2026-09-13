@@ -29,7 +29,7 @@ set -e
 set -x
 
 cd projects/yolomusl
-./configure --prefix=$PWD/../../pizfix/yolo --syslibdir=$PWD/../../pizfix/yolo/lib
+./configure --prefix=$PWD/../../pizfix/yolo --syslibdir=$PWD/../../pizfix/yolo/lib LIBCC=$PWD/../../pizfix/lib/libyolort.a
 $MAKE clean
 $MAKE -j $NCPU
 $MAKE install
@@ -46,7 +46,7 @@ mv ../yolo/lib/rcrt1.o .
 mv ../yolo/lib/Scrt1.o .
 rm -f libyolom.a
 ar cr libyolom.a
-ln -fs libyoloc.so ld-yolo-x86_64.so
+ln -fs libyoloc.so ld-fil1-$ARCH.so
 
 cd ..
 rm -rf yolo-include

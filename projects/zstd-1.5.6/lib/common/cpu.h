@@ -22,10 +22,6 @@
 #include <intrin.h>
 #endif
 
-#ifdef __FILC__
-#include <cpuid.h>
-#endif
-
 typedef struct {
     U32 f1c;
     U32 f1d;
@@ -38,25 +34,6 @@ MEM_STATIC ZSTD_cpuid_t ZSTD_cpuid(void) {
     U32 f1d = 0;
     U32 f7b = 0;
     U32 f7c = 0;
-#ifdef __FILC__
-    unsigned eax;
-    unsigned ebx;
-    unsigned ecx;
-    unsigned edx;
-    unsigned n;
-    __get_cpuid(0, &eax, &ebx, &ecx, &edx);
-    n = eax;
-    if (n >= 1) {
-        __get_cpuid(1, &eax, &ebx, &ecx, &edx);
-        f1c = ecx;
-        f1d = edx;
-    }
-    if (n >= 7) {
-        __get_cpuid(7, &eax, &ebx, &ecx, &edx);
-        f7b = ebx;
-        f7c = ecx;
-    }
-#else /* __FILC__ -> so !__FILC__ */
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #if !defined(__clang__)
     int reg[4];
@@ -156,7 +133,6 @@ MEM_STATIC ZSTD_cpuid_t ZSTD_cpuid(void) {
               : "edx");
     }
 #endif
-#endif /* !__FILC__ */
     {
         ZSTD_cpuid_t cpuid;
         cpuid.f1c = f1c;

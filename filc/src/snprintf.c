@@ -1,6 +1,5 @@
-// Pizlonator was here. I fucked this shit up to use it as a varargs test. Because it's a low level
-// Deluge test, it's designed to depend on nothing. Then I made it a part of libdeluge so I can have
-// a low-level zprintf.
+// This is used for Fil-C's low-level snprintf needs. It sits below the libc and is used for stuff
+// zprintf and zerrorf.
 
 /*
  * NOTE: If you change this file, please merge it into rsync, samba, etc.
@@ -1334,5 +1333,15 @@ void zerrorf(const char* format, ...)
 	str = zvasprintf(format, args);
 	__builtin_va_end(args);
 	zerror(str);
+}
+
+void zsafety_errorf(const char* format, ...)
+{
+	char* str;
+	__builtin_va_list args;
+	__builtin_va_start(args, format);
+	str = zvasprintf(format, args);
+	__builtin_va_end(args);
+	zsafety_error(str);
 }
 

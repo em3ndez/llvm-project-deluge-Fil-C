@@ -1,6 +1,7 @@
 return:
-   failure
+   success
 output-includes:
-   Yesyes
-output-excludes:
-   Nono
+   - Yesyes
+   - Nono
+only-on-platform:
+  x86_64

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2025-2026 Epic Games, Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,7 +10,7 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -31,6 +31,7 @@
 
 #if PAS_ENABLE_FILC
 
+#include "filc_native.h"
 #include <dlfcn.h>
 
 filc_ptr filc_native_zsys_dlopen(filc_thread* my_thread, filc_ptr filename_ptr, int flags)
@@ -58,6 +59,15 @@ filc_ptr filc_native_zsys_dlvsym(filc_thread* my_thread, filc_ptr handle_ptr, fi
     PAS_UNUSED_PARAM(symbol_ptr);
     PAS_UNUSED_PARAM(version_ptr);
     filc_safety_panic(NULL, "cannot do dlvsym in static build.");
+}
+
+int filc_native_zsys_dladdr(filc_thread* my_thread, filc_ptr addr_ptr, filc_ptr info_ptr)
+{
+    PAS_UNUSED_PARAM(my_thread);
+    PAS_UNUSED_PARAM(addr_ptr);
+    PAS_UNUSED_PARAM(info_ptr);
+    filc_set_dlerror("dladdr not supported in static build", NULL);
+    return 0;
 }
 
 #endif /* PAS_ENABLE_FILC */

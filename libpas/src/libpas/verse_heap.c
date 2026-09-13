@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -40,16 +41,15 @@
 #include "pas_reserved_memory_provider.h"
 #include "pas_scavenger.h"
 #include "pas_try_allocate_common.h"
-#include "ue_include/verse_heap_config_ue.h"
-#include "ue_include/verse_heap_ue.h"
+#include "verse_heap_config.h"
 #include "verse_heap_chunk_map_entry.h"
 #include "verse_heap_inlines.h"
 #include "verse_heap_object_set_inlines.h"
 #include "verse_heap_object_set_set.h"
 #include "verse_heap_page_header_inlines.h"
 #include "verse_heap_runtime_config.h"
+#include "verse_local_allocator.h"
 #include <inttypes.h>
-#include "ue_include/verse_local_allocator_ue.h"
 
 #if PAS_ENABLE_VERSE
 
@@ -172,7 +172,7 @@ pas_heap* verse_heap_create(size_t min_align, size_t size, size_t alignment)
     verse_heap_object_set_set_construct(&config->object_sets);
     verse_heap_object_set_set_add_set(&config->object_sets, &verse_heap_all_objects);
 
-    heap = pas_immortal_heap_allocate(sizeof(pas_heap), "pas_heap", pas_object_allocation);
+    heap = (pas_heap*)pas_immortal_heap_allocate(sizeof(pas_heap), "pas_heap", pas_object_allocation);
     pas_zero_memory(heap, sizeof(pas_heap));
     heap->type = verse_heap_type_create(min_align);
     pas_segregated_heap_construct(&heap->segregated_heap, heap, &verse_heap_config, &config->base);
@@ -385,7 +385,7 @@ static pas_allocation_result try_allocate_large_in_transaction(
     return result;
 }
 
-static void* try_allocate_large(
+static pas_allocation_result try_allocate_large(
     pas_heap* heap, size_t size, size_t alignment, pas_allocation_result_filter result_filter)
 {
     pas_physical_memory_transaction transaction;
@@ -408,10 +408,10 @@ static void* try_allocate_large(
 
     pas_scavenger_notify_eligibility_if_needed();
 
-    return (void*)result_filter(result).begin;
+    return result_filter(result);
 }
 
-static PAS_ALWAYS_INLINE void* try_allocate_impl(
+static PAS_ALWAYS_INLINE pas_allocation_result try_allocate_impl(
     pas_heap* heap, size_t size, size_t alignment, pas_allocation_result_filter result_filter)
 {
     static const bool verbose = false;
@@ -459,11 +459,12 @@ static PAS_ALWAYS_INLINE void* try_allocate_impl(
         allocator.allocator = baseline_allocator_result.allocator;
     }
     
-    return (void*)pas_local_allocator_try_allocate(
-        allocator.allocator, size, alignment, VERSE_HEAP_CONFIG, &verse_heap_allocator_counts, result_filter).begin;
+    return pas_local_allocator_try_allocate(
+        (pas_local_allocator*)allocator.allocator, size, alignment, VERSE_HEAP_CONFIG, &verse_heap_allocator_counts,
+        result_filter);
 }
 
-void* verse_heap_try_allocate(pas_heap* heap, size_t size)
+pas_allocation_result verse_heap_try_allocate(pas_heap* heap, size_t size)
 {
     return try_allocate_impl(heap, size, 1, pas_allocation_result_identity);
 }
@@ -471,22 +472,29 @@ void* verse_heap_try_allocate(pas_heap* heap, size_t size)
 static PAS_ALWAYS_INLINE pas_allocation_result
 allocation_result_crash_on_error_for_filc(pas_allocation_result result)
 {
-    if (PAS_UNLIKELY(!result.did_succeed))
+    if (PAS_UNLIKELY(!result.did_succeed)) {
+#if PAS_ENABLE_FILC
         filc_safety_panic(NULL, "out of memory.");
+#else
+        pas_panic("out of memory.\n");
+#endif
+    }
     return result;
 }
 
-void* verse_heap_allocate(pas_heap* heap, size_t size)
+pas_allocation_result verse_heap_allocate(pas_heap* heap, size_t size)
 {
     return try_allocate_impl(heap, size, 1, allocation_result_crash_on_error_for_filc);
 }
 
-void* verse_heap_try_allocate_with_alignment(pas_heap* heap, size_t size, size_t alignment)
+pas_allocation_result verse_heap_try_allocate_with_alignment(pas_heap* heap, size_t size,
+                                                             size_t alignment)
 {
     return try_allocate_impl(heap, size, alignment, pas_allocation_result_identity);
 }
 
-void* verse_heap_allocate_with_alignment(pas_heap* heap, size_t size, size_t alignment)
+pas_allocation_result verse_heap_allocate_with_alignment(pas_heap* heap, size_t size,
+                                                         size_t alignment)
 {
     return try_allocate_impl(heap, size, alignment, allocation_result_crash_on_error_for_filc);
 }

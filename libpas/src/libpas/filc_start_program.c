@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -10,10 +11,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -23,6 +24,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
+#include "pas_config.h"
+
+#if LIBPAS_ENABLED && PAS_ENABLE_FILC
+
 #include "filc_native.h"
 #include "filc_runtime.h"
 #include <elf.h>
@@ -31,10 +36,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/auxv.h>
+#include <sys/resource.h>
 
 extern char** environ;
 
 static void really_start_program(
+    filc_stack_limit stack_limit,
     int argc, char** argv,
     pizlonated_getter pizlonated___libc_start_main,
     pizlonated_getter pizlonated_main)
@@ -47,7 +54,7 @@ static void really_start_program(
 
     PAS_ASSERT(argc >= 1);
 
-    filc_initialize();
+    filc_initialize(stack_limit);
     filc_thread* my_thread = filc_get_my_thread();
     filc_enter(my_thread);
 
@@ -120,7 +127,7 @@ static void really_start_program(
     }
     PAS_ASSERT(!auxv[num_entries - 1]);
 
-    filc_set_user_environment(my_thread, argc, pizlonated_argv, environ_ptr, auxv_ptr);
+    filc_set_user_environment(my_thread, argc, argv, pizlonated_argv, environ_ptr, auxv_ptr);
     
     if (pizlonated___libc_start_main) {
         __libc_start_main_ptr = pizlonated___libc_start_main(my_thread, NULL);
@@ -181,7 +188,8 @@ static void* thread_main(void* arg)
 
     bmalloc_deallocate(args);
 
-    really_start_program(argc, argv, pizlonated___libc_start_main, pizlonated_main);
+    really_start_program(
+        filc_compute_stack_limit(), argc, argv, pizlonated___libc_start_main, pizlonated_main);
     
     PAS_ASSERT(!"Should not get here");
     return NULL;
@@ -191,6 +199,17 @@ void filc_start_program(int argc, char** argv,
                         pizlonated_getter pizlonated___libc_start_main,
                         pizlonated_getter pizlonated_main)
 {
+    if (PAS_GLIBC) {
+        /* I trust glibc's main thread stack size measurement. But, I know that it won't work during
+           system startup. */
+        filc_stack_limit stack_limit = filc_try_compute_stack_limit();
+        if (filc_stack_limit_did_succeed(stack_limit)) {
+            really_start_program(
+                stack_limit, argc, argv, pizlonated___libc_start_main, pizlonated_main);
+            return;
+        }
+    }
+    
     struct args* args = (struct args*)bmalloc_allocate(sizeof(struct args));
     args->argc = argc;
     args->argv = argv;
@@ -199,6 +218,17 @@ void filc_start_program(int argc, char** argv,
 
     /* FIXME: Instead of starting a thread, we could just hop stack. */
 
+    pthread_attr_t attr;
+    PAS_ASSERT(!pthread_attr_init(&attr));
+
+    /* This is necessary to make `ulimit -s` work. */
+    struct rlimit stack_rlim;
+    intptr_t stack_min = PTHREAD_STACK_MIN;
+    PAS_ASSERT(stack_min > 0);
+    PAS_ASSERT(!getrlimit(RLIMIT_STACK, &stack_rlim));
+    PAS_ASSERT((intptr_t)stack_rlim.rlim_cur >= stack_min);
+    PAS_ASSERT(!pthread_attr_setstacksize(&attr, stack_rlim.rlim_cur));
+
     /* Make sure the phony main thread receives no signals and stash the true sigset for the main
        thread. */
     sigset_t allset;
@@ -206,10 +236,12 @@ void filc_start_program(int argc, char** argv,
     PAS_ASSERT(!pthread_sigmask(SIG_BLOCK, &allset, &args->oldset));
 
     pthread_t thread;
-    PAS_ASSERT(!pthread_create(&thread, NULL, thread_main, args));
+    PAS_ASSERT(!pthread_create(&thread, &attr, thread_main, args));
     PAS_ASSERT(!pthread_detach(thread));
+    PAS_ASSERT(!pthread_attr_destroy(&attr));
 
     /* We have to keep the main thread alive because otherwise /proc/self stops working. */
     for (;;) pause();
 }
 
+#endif /* LIBPAS_ENABLED && PAS_ENABLE_FILC */

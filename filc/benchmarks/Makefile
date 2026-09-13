@@ -9,7 +9,7 @@
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
 #
-# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS AND ANY
+# THIS SOFTWARE IS PROVIDED BY EPIC GAMES, INC. ``AS IS'' AND ANY
 # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
 # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL EPIC GAMES, INC. OR
@@ -27,12 +27,20 @@ all: \
 	../../pizfix/benchmarks/pcre_benchmark \
 	../../pizfix/benchmarks/deltablue \
 	../../pizfix/benchmarks/binarytrees \
-	../../pizfix/benchmarks/fannkuch-redux \
 	../../pizfix/benchmarks/fannkuch-redux-2 \
-	../../pizfix/benchmarks/n-body \
 	../../pizfix/benchmarks/n-body-2 \
-	../../pizfix/benchmarks/spectralnorm \
 	../../pizfix/benchmarks/reversecomplement
+
+# The fannkuch-redux, n-body, and spectralnorm benchmarks use x86_64 SIMD
+# intrinsics, so they are only built on x86_64.  On other architectures (e.g.
+# aarch64) they are omitted from the default build; their build rules below
+# are still defined so they can be built by hand where the intrinsics exist.
+ifeq ($(shell uname -m),x86_64)
+all: \
+	../../pizfix/benchmarks/fannkuch-redux \
+	../../pizfix/benchmarks/n-body \
+	../../pizfix/benchmarks/spectralnorm
+endif
 
 clean:
 	rm -f ../../pizfix/benchmarks/stepanov_container

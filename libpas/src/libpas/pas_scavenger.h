@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2019-2022 Apple Inc. All rights reserved.
  * Copyright (c) 2023 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -11,10 +12,10 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
@@ -28,12 +29,20 @@
 #define PAS_SCAVENGER_H
 
 #include "pas_utils.h"
-#include "ue_include/pas_scavenger_ue.h"
 #if PAS_OS(DARWIN)
 #include <sys/qos.h>
 #endif
 
 PAS_BEGIN_EXTERN_C;
+
+PAS_API extern unsigned pas_scavenger_should_suspend_count;
+
+PAS_API void pas_scavenger_suspend(void);
+PAS_API void pas_scavenger_resume(void);
+
+PAS_API void pas_scavenger_clear_local_tlcs(void);
+PAS_API void pas_scavenger_do_everything_except_remote_tlcs(void);
+PAS_API void pas_scavenger_run_synchronously_now(void);
 
 enum pas_scavenger_state {
     pas_scavenger_state_no_thread,
@@ -54,6 +63,7 @@ struct pas_scavenger_data {
 
 /* This is available extern for testing and debugging only. */
 PAS_API extern bool pas_scavenger_is_enabled;
+PAS_API extern bool pas_scavenger_shutdown_enabled;
 PAS_API extern bool pas_scavenger_eligibility_notification_has_been_deferred;
 PAS_API extern pas_scavenger_state pas_scavenger_current_state;
 PAS_API extern pas_scavenger_data* pas_scavenger_data_instance;
@@ -66,6 +76,9 @@ PAS_API extern double pas_scavenger_period_in_milliseconds; /* How long to sleep
                                                                scavenges. */
 PAS_API extern uint64_t pas_scavenger_max_epoch_delta; /* How much to subtract from the current epoch
                                                           to compute the max epoch. */
+
+PAS_API extern void (*pas_scavenger_handshake_callback)(void* arg);
+PAS_API extern void* pas_scavenger_handshake_callback_arg;
 
 #if PAS_OS(DARWIN)
 /* It's legal to set this anytime. */
@@ -120,6 +133,12 @@ typedef enum {
 
 PAS_API void pas_scavenger_perform_synchronous_operation(
     pas_scavenger_synchronous_operation_kind kind);
+
+PAS_API void pas_scavenger_lock_thread(void);
+
+/* Request that the scavenger thread runs the given function. Does nothing if the scavenger is
+   suspended. */
+PAS_API void pas_scavenger_handshake(void (*callback)(void* arg), void* arg);
 
 PAS_END_EXTERN_C;
 

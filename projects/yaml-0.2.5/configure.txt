@@ -1,0 +1,1 @@
+CC=$PWD/../../build/bin/clang CXX=$PWD/../../build/bin/clang++ ./configure --enable-shared --prefix=$PWD/../../pizfix

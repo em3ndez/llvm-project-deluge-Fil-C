@@ -16,6 +16,7 @@ int main()
         if (wait_result < 0)
             printf("wait error: %s\n", strerror(errno));
         ZASSERT(wait_result > 0);
+        ZASSERT(wait_result == fork_result);
         ZASSERT(WIFEXITED(status));
         ZASSERT(!WEXITSTATUS(status));
     } else

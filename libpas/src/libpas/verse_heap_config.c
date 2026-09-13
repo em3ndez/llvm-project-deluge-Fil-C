@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024 Epic Games, Inc. All Rights Reserved.
+ * Copyright (c) 2023-2026 Epic Games, Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -147,9 +147,9 @@ static pas_aligned_allocation_result small_segregated_page_allocate_aligned(size
 
     header_size = pas_max_uintptr(VERSE_HEAP_PAGE_SIZE, VERSE_HEAP_SMALL_SEGREGATED_PAGE_SIZE);
 
-    result.left_padding = (void*)allocation_result.begin + header_size;
+    result.left_padding = (char*)allocation_result.begin + header_size;
     result.left_padding_size = 0;
-    result.result = (void*)allocation_result.begin + header_size;
+    result.result = (char*)allocation_result.begin + header_size;
     result.result_size = VERSE_HEAP_SMALL_SEGREGATED_PAGE_SIZE;
     result.right_padding = (void*)(allocation_result.begin + header_size + VERSE_HEAP_SMALL_SEGREGATED_PAGE_SIZE);
     result.right_padding_size = VERSE_HEAP_CHUNK_SIZE - VERSE_HEAP_SMALL_SEGREGATED_PAGE_SIZE - header_size;
@@ -221,9 +221,7 @@ pas_segregated_shared_page_directory* verse_heap_segregated_shared_page_director
 
 void verse_heap_config_activate(void)
 {
-    PAS_ASSERT(VERSE_HEAP_PAGE_SIZE == pas_page_malloc_alignment());
     PAS_ASSERT(VERSE_HEAP_PAGE_SIZE == PAS_SYSTEM_PAGE_SIZE);
-    PAS_ASSERT(VERSE_HEAP_PAGE_SIZE_SHIFT == pas_page_malloc_alignment_shift());
     PAS_ASSERT(VERSE_HEAP_PAGE_SIZE_SHIFT == PAS_SYSTEM_PAGE_SIZE_SHIFT);
     PAS_ASSERT(PAS_COMPACT_TAGGED_PTR_SIZE <= 4);
     
